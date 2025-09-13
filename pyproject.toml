@@ -27,6 +27,7 @@ dependencies = [
   # go/keep-sorted start
   "google-genai>=1.21.1, <2.0.0",                           # Google GenAI SDK
   "google-adk",                                             # Google ADK
+  "redis>=5.0.0, <6.0.0",                                           # Redis for session storage
   # go/keep-sorted end
 ]
 dynamic = ["version"]
@@ -60,6 +61,12 @@ pyink-annotation-pragmas = [
 # poetry, setuptools,...). All backends are supported by `pip install`
 requires = ["flit_core >=3.8,<4"]
 build-backend = "flit_core.buildapi"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+]
 
 
 [tool.flit.sdist]
