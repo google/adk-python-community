@@ -18,10 +18,33 @@ then
 fi
 
 
-echo "Running isort to sort imports..."
-isort .
+echo '---------------------------------------'
+echo '|  Organizing imports for src/...'
+echo '---------------------------------------'
 
-echo "Running pyink to reformat code..."
-pyink .
+isort src/
+echo 'All done! ✨ 🍰 ✨'
+
+echo '---------------------------------------'
+echo '|  Organizing imports for tests/...'
+echo '---------------------------------------'
+
+isort tests/
+echo 'All done! ✨ 🍰 ✨'
+
+
+
+echo '---------------------------------------'
+echo '|  Auto-formatting src/...'
+echo '---------------------------------------'
+
+find -L src/ -not -path "*/.*" -type f -name "*.py" -exec pyink --config pyproject.toml {} +
+
+echo '---------------------------------------'
+echo '|  Auto-formatting tests/...'
+echo '---------------------------------------'
+
+find -L tests/ -not -path "*/.*" -type f -name "*.py" -exec pyink --config pyproject.toml {} +
+
 
 echo "Formatting complete."
