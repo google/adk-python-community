@@ -39,6 +39,11 @@ repository = "https://github.com/google/adk-python-community"
 changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.md"
 documentation = "https://google.github.io/adk-docs/"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.4.2",
+]
+
 
 [tool.pyink]
 # Format py files following Google style-guide
