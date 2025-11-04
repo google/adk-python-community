@@ -31,7 +31,7 @@ jobs:
           uv venv .venv
           source .venv/bin/activate
           # Install dependencies as recommended in CONTRIBUTING.md
-          uv sync --extra test --extra eval --extra a2a
+          uv sync --extra test 
 
       - name: Run unit tests with pytest
         run: |
