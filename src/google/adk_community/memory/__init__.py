@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import memory
-from . import sessions
-from . import version
-__version__ = version.__version__
+"""Community memory services for ADK."""
+
+from .open_memory_service import OpenMemoryService
+from .open_memory_service import OpenMemoryServiceConfig
+
+__all__ = [
+    "OpenMemoryService",
+    "OpenMemoryServiceConfig",
+]
+
