@@ -59,7 +59,7 @@ memory_service = OpenMemoryService(
 # Use with runner
 runner = Runner(
     app_name="my_app",
-    agent=my_agent,
+    agent=root_agent,
     memory_service=memory_service
 )
 ```
