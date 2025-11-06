@@ -45,7 +45,7 @@ class OpenMemoryService(BaseMemoryService):
 
   def __init__(
       self,
-      base_url: str = "http://localhost:3000",
+      base_url: str = "http://localhost:8080",
       api_key: str = "",  # Required parameter (empty string triggers validation)
       config: Optional[OpenMemoryServiceConfig] = None,
   ):
