@@ -94,6 +94,14 @@ The sample agent (`agent.py`) includes:
 - Auto-save callback that saves sessions to memory after each agent turn
 - Time context for the agent to use current time in responses
 
+## Sample Query
+- hello my name is Amy and i love gaming
+- I really love fps games like GameA and GameB, but my favourite is GameC. my favourite snack is doritos.
+
+Then in a new session
+- tell me everything you know about me
+(Agent recalled prior details ( my name, love for gaming and mentioned games ,snacks etc))
+
 ## Configuration Options
 
 ### OpenMemoryServiceConfig
