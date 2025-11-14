@@ -101,6 +101,7 @@ class TestRedisSessionService:
             mock_context_manager.__aenter__ = AsyncMock(return_value=mock_pipe)
             mock_context_manager.__aexit__ = AsyncMock(return_value=None)
             redis_service.cache.pipeline = MagicMock(return_value=mock_context_manager)
+
         redis_service.cache.srem = AsyncMock()
         redis_service.cache.get = AsyncMock(return_value=None)  # Default to no session
 
@@ -151,9 +152,11 @@ class TestRedisSessionService:
         assert session.user_id == user_id
         assert session.id is not None
         assert session.state == state
+
+        # Allow tiny float/clock rounding differences (~1ms)
         assert (
             session.last_update_time
-            <= datetime.now().astimezone(timezone.utc).timestamp()
+            <= datetime.now().astimezone(timezone.utc).timestamp() + 0.001
         )
 
         # Mock individual session retrieval
@@ -274,7 +277,9 @@ class TestRedisSessionService:
         test_content = types.Content(
             role="user",
             parts=[
-                types.Part.from_bytes(data=b"test_image_data", mime_type="image/png"),
+                types.Part.from_bytes(
+                    data=b"test_image_data", mime_type="image/png"
+                ),
             ],
         )
         test_grounding_metadata = types.GroundingMetadata(
@@ -314,7 +319,10 @@ class TestRedisSessionService:
         # Verify the binary content was preserved through serialization
         retrieved_event = retrieved_session.events[0]
         assert retrieved_event.content.parts[0].inline_data.data == b"test_image_data"
-        assert retrieved_event.content.parts[0].inline_data.mime_type == "image/png"
+        assert (
+            retrieved_event.content.parts[0].inline_data.mime_type
+            == "image/png"
+        )
         assert (
             retrieved_event.grounding_metadata.search_entry_point.sdk_blob
             == b"test_sdk_blob"
@@ -343,7 +351,10 @@ class TestRedisSessionService:
         # Test num_recent_events filter
         config = GetSessionConfig(num_recent_events=3)
         filtered_session = await redis_service.get_session(
-            app_name=app_name, user_id=user_id, session_id=session.id, config=config
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session.id,
+            config=config,
         )
 
         assert len(filtered_session.events) == 3
@@ -352,7 +363,10 @@ class TestRedisSessionService:
         # Test after_timestamp filter
         config = GetSessionConfig(after_timestamp=3.0)
         filtered_session = await redis_service.get_session(
-            app_name=app_name, user_id=user_id, session_id=session.id, config=config
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session.id,
+            config=config,
         )
 
         assert len(filtered_session.events) == 3  # Events 3, 4, 5
@@ -367,7 +381,9 @@ class TestRedisSessionService:
 
         self._setup_redis_mocks(redis_service)  # Empty sessions
         await redis_service.delete_session(
-            app_name=app_name, user_id=user_id, session_id=session_id
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
         )
         pipeline_mock = redis_service.cache.pipeline.return_value
         pipe_mock = await pipeline_mock.__aenter__()
@@ -377,7 +393,9 @@ class TestRedisSessionService:
         self._setup_redis_mocks(redis_service)
 
         await redis_service.delete_session(
-            app_name=app_name, user_id=user_id, session_id=session_id
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
         )
 
         pipeline_mock = redis_service.cache.pipeline.return_value
@@ -526,7 +544,10 @@ class TestRedisSessionService:
         session_id = "test_session"
 
         # Test with bytes response (decode_responses=False)
-        session_data = '{"app_name": "test_app", "user_id": "test_user", "id": "test_session", "state": {}, "events": [], "last_update_time": 1234567890}'
+        session_data = (
+            '{"app_name": "test_app", "user_id": "test_user", "id": "test_session", '
+            '"state": {}, "events": [], "last_update_time": 1234567890}'
+        )
         redis_service.cache.get = AsyncMock(return_value=session_data.encode())
         redis_service.cache.hgetall = AsyncMock(return_value={})
 
