@@ -44,7 +44,24 @@ OPENMEMORY_BASE_URL=http://localhost:8080
 
 ## Usage
 
-The sample provides an agent definition that you can use programmatically. The agent includes memory tools and auto-save functionality.
+### Option 1: Using `get_fast_api_app` with URI (Recommended - Easiest)
+
+The simplest way to use this sample is to run the included `main.py`:
+
+```bash
+python main.py
+```
+
+The `main.py` file demonstrates how to:
+- Register the OpenMemory service factory for the `openmemory://` URI scheme
+- Use the `openmemory://` URI scheme with `get_fast_api_app`
+- Build the URI from environment variables
+
+**Note:** The `adk web` CLI command won't work directly with this sample because it doesn't automatically register the OpenMemory service factory. You must use `main.py` which handles the registration.
+
+### Option 2: Using `Runner` Directly
+
+For programmatic usage, you can use `Runner` with OpenMemory service directly:
 
 ```python
 from google.adk_community.memory import OpenMemoryService, OpenMemoryServiceConfig
@@ -87,10 +104,21 @@ memory_service = OpenMemoryService(
 )
 ```
 
+## Sample Structure
+
+```
+open_memory/
+├── main.py                    # FastAPI server using get_fast_api_app (Option 1)
+├── open_memory_agent/
+│   ├── __init__.py            # Agent package initialization
+│   └── agent.py               # Agent definition with memory tools
+└── README.md                  # This file
+```
+
 ## Sample Agent
 
-The sample agent (`agent.py`) includes:
-- Memory tools (`load_memory_tool`, `preload_memory_tool`) for retrieving past conversations
+The sample agent (`open_memory_agent/agent.py`) includes:
+- Memory tools (`load_memory`, `preload_memory`) for retrieving past conversations
 - Auto-save callback that saves sessions to memory after each agent turn
 - Time context for the agent to use current time in responses
 
@@ -103,6 +131,12 @@ Then in a new session
 (Agent recalled prior details ( my name, love for gaming and mentioned games ,snacks etc))
 
 ## Configuration Options
+
+### OpenMemory URI Format
+
+When using `get_fast_api_app` (Option 1), you can use the `openmemory://` URI scheme:
+
+- `openmemory://localhost:8080` - API key must be set via `OPENMEMORY_API_KEY` environment variable
 
 ### OpenMemoryServiceConfig
 
