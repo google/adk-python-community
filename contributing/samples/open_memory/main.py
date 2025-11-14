@@ -42,14 +42,11 @@ get_service_registry().register_memory_service("openmemory", openmemory_factory)
 base_url = os.getenv('OPENMEMORY_BASE_URL', 'http://localhost:8080').replace('http://', '').replace('https://', '')
 MEMORY_SERVICE_URI = f"openmemory://{base_url}"
 
-# Allowed origins for CORS
-ALLOWED_ORIGINS = ["*"]
 
 # Create the FastAPI app using get_fast_api_app
 app: FastAPI = get_fast_api_app(
     agents_dir=".",
     memory_service_uri=MEMORY_SERVICE_URI,
-    allow_origins=ALLOWED_ORIGINS,
     web=True,
 )
 
