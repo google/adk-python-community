@@ -207,6 +207,8 @@ def function_declaration_to_openai_tool(
                 # Convert type string to OpenAI format (normalize to lowercase)
                 if "type" in value_dict:
                     type_value = value_dict["type"]
+                    original_type = type_value
+                    
                     # Handle enum types (e.g., Type.STRING -> "STRING")
                     if hasattr(type_value, "value"):
                         # It's an enum, get the value
@@ -215,14 +217,36 @@ def function_declaration_to_openai_tool(
                         # It's an enum, get the name
                         type_value = type_value.name
                     
-                    type_str = str(type_value).lower()
+                    # Convert to string and handle enum format like "Type.STRING"
+                    type_str = str(type_value)
                     
-                    # Handle enum format like "Type.STRING" or "STRING"
+                    # Handle enum format like "Type.STRING" - extract the part after the dot
                     if "." in type_str:
-                        # Extract the part after the dot (e.g., "Type.STRING" -> "string")
+                        # Extract the part after the dot (e.g., "Type.STRING" -> "STRING")
                         type_str = type_str.split(".")[-1]
                     
-                    if type_str in [
+                    # Normalize to lowercase
+                    type_str = type_str.lower()
+                    
+                    # Map common type names
+                    type_mapping = {
+                        "string": "string",
+                        "str": "string",
+                        "number": "number",
+                        "num": "number",
+                        "integer": "integer",
+                        "int": "integer",
+                        "boolean": "boolean",
+                        "bool": "boolean",
+                        "array": "array",
+                        "list": "array",
+                        "object": "object",
+                        "dict": "object",
+                    }
+                    
+                    if type_str in type_mapping:
+                        value_dict["type"] = type_mapping[type_str]
+                    elif type_str in [
                         "string",
                         "number",
                         "integer",
@@ -231,13 +255,9 @@ def function_declaration_to_openai_tool(
                         "object",
                     ]:
                         value_dict["type"] = type_str
-                    elif type_str == "int":
-                        value_dict["type"] = "integer"
                     else:
-                        # If type is not recognized, try to infer from other fields or default to string
-                        logger.warning(
-                            f"Unknown type '{value_dict['type']}' for parameter '{key}', defaulting to 'string'"
-                        )
+                        # If type is not recognized, default to string without warning
+                        # The original type might be valid but in an unexpected format
                         value_dict["type"] = "string"
                 properties[key] = value_dict
 
@@ -619,18 +639,40 @@ class OpenAI(BaseLlm):
                             }
                         else:
                             # If it's a Schema object, convert it
+                            schema_dict = None
                             try:
-                                schema_dict = response_schema.model_dump(
-                                    exclude_none=True
+                                # Try model_dump (Pydantic v2)
+                                if hasattr(response_schema, "model_dump"):
+                                    schema_dict = response_schema.model_dump(
+                                        exclude_none=True
+                                    )
+                                # Try dict() method (Pydantic v1)
+                                elif hasattr(response_schema, "dict"):
+                                    schema_dict = response_schema.dict(
+                                        exclude_none=True
+                                    )
+                                # Try __dict__ attribute
+                                elif hasattr(response_schema, "__dict__"):
+                                    schema_dict = {
+                                        k: v
+                                        for k, v in response_schema.__dict__.items()
+                                        if v is not None
+                                    }
+                                # Try converting to dict directly
+                                else:
+                                    schema_dict = dict(response_schema)
+                            except (AttributeError, TypeError, ValueError) as e:
+                                logger.warning(
+                                    f"Could not convert response_schema to OpenAI format: {e}. "
+                                    f"Schema type: {type(response_schema)}"
                                 )
+                                schema_dict = None
+                            
+                            if schema_dict is not None:
                                 request_params["response_format"] = {
                                     "type": "json_schema",
                                     "json_schema": schema_dict,
                                 }
-                            except (AttributeError, TypeError):
-                                logger.warning(
-                                    "Could not convert response_schema to OpenAI format"
-                                )
                     else:
                         # Also check for response_mime_type which might indicate JSON mode
                         response_mime_type = getattr(
