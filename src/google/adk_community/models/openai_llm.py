@@ -12,6 +12,7 @@ References: Azure/OpenAI client usage patterns and Files API differences.
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import logging
 import os
@@ -647,26 +648,76 @@ class OpenAI(BaseLlm):
                             # If it's a Schema object, convert it
                             schema_dict = None
                             try:
-                                # Try model_dump (Pydantic v2)
-                                if hasattr(response_schema, "model_dump"):
-                                    schema_dict = response_schema.model_dump(
-                                        exclude_none=True
+                                # Check if it's a Pydantic model class (not an instance)
+                                # First check if it's a class
+                                is_pydantic_class = False
+                                if inspect.isclass(response_schema):
+                                    # Check if it has Pydantic-specific methods (model_json_schema or schema)
+                                    # or if it's a subclass of BaseModel
+                                    has_pydantic_methods = (
+                                        hasattr(response_schema, "model_json_schema")
+                                        or hasattr(response_schema, "schema")
                                     )
-                                # Try dict() method (Pydantic v1)
-                                elif hasattr(response_schema, "dict"):
-                                    schema_dict = response_schema.dict(
-                                        exclude_none=True
-                                    )
-                                # Try __dict__ attribute
-                                elif hasattr(response_schema, "__dict__"):
-                                    schema_dict = {
-                                        k: v
-                                        for k, v in response_schema.__dict__.items()
-                                        if v is not None
-                                    }
-                                # Try converting to dict directly
+                                    # Check if any base class is BaseModel
+                                    is_base_model_subclass = False
+                                    try:
+                                        for base in response_schema.__mro__:
+                                            if hasattr(base, "__name__") and base.__name__ == "BaseModel":
+                                                is_base_model_subclass = True
+                                                break
+                                    except (AttributeError, TypeError):
+                                        pass
+                                    
+                                    is_pydantic_class = has_pydantic_methods or is_base_model_subclass
+                                
+                                if is_pydantic_class:
+                                    # It's a Pydantic model class, get JSON schema from the class
+                                    # Try model_json_schema (Pydantic v2)
+                                    if hasattr(response_schema, "model_json_schema"):
+                                        schema_dict = response_schema.model_json_schema()
+                                    # Try schema() method (Pydantic v1)
+                                    elif hasattr(response_schema, "schema"):
+                                        schema_dict = response_schema.schema()
+                                    else:
+                                        # Fallback: try to instantiate and get schema
+                                        # This might not work if required fields are missing
+                                        try:
+                                            # Create a minimal instance if possible
+                                            instance = response_schema()
+                                            if hasattr(instance, "model_json_schema"):
+                                                schema_dict = instance.model_json_schema()
+                                            elif hasattr(instance, "schema"):
+                                                schema_dict = instance.schema()
+                                        except Exception:
+                                            pass
                                 else:
-                                    schema_dict = dict(response_schema)
+                                    # It's an instance or other object
+                                    # Try model_dump (Pydantic v2 instance)
+                                    if hasattr(response_schema, "model_dump"):
+                                        schema_dict = response_schema.model_dump(
+                                            exclude_none=True
+                                        )
+                                    # Try dict() method (Pydantic v1 instance)
+                                    elif hasattr(response_schema, "dict"):
+                                        schema_dict = response_schema.dict(
+                                            exclude_none=True
+                                        )
+                                    # Try model_json_schema (Pydantic v2 instance)
+                                    elif hasattr(response_schema, "model_json_schema"):
+                                        schema_dict = response_schema.model_json_schema()
+                                    # Try schema() method (Pydantic v1 instance)
+                                    elif hasattr(response_schema, "schema"):
+                                        schema_dict = response_schema.schema()
+                                    # Try __dict__ attribute
+                                    elif hasattr(response_schema, "__dict__"):
+                                        schema_dict = {
+                                            k: v
+                                            for k, v in response_schema.__dict__.items()
+                                            if v is not None
+                                        }
+                                    # Try converting to dict directly
+                                    else:
+                                        schema_dict = dict(response_schema)
                             except (AttributeError, TypeError, ValueError) as e:
                                 logger.warning(
                                     f"Could not convert response_schema to OpenAI format: {e}. "
