@@ -208,25 +208,29 @@ def function_declaration_to_openai_tool(
                 if "type" in value_dict:
                     type_value = value_dict["type"]
                     original_type = type_value
+                    type_str = None
                     
                     # Handle enum types (e.g., Type.STRING -> "STRING")
-                    if hasattr(type_value, "value"):
+                    # Check if it's an enum instance (has name or value attribute)
+                    if hasattr(type_value, "name"):
+                        # It's an enum, get the name (e.g., Type.STRING.name -> "STRING")
+                        type_str = type_value.name.lower()
+                    elif hasattr(type_value, "value"):
                         # It's an enum, get the value
                         type_value = type_value.value
-                    elif hasattr(type_value, "name"):
-                        # It's an enum, get the name
-                        type_value = type_value.name
+                        type_str = str(type_value).lower()
                     
-                    # Convert to string and handle enum format like "Type.STRING"
-                    type_str = str(type_value)
-                    
-                    # Handle enum format like "Type.STRING" - extract the part after the dot
-                    if "." in type_str:
-                        # Extract the part after the dot (e.g., "Type.STRING" -> "STRING")
-                        type_str = type_str.split(".")[-1]
-                    
-                    # Normalize to lowercase
-                    type_str = type_str.lower()
+                    # If not an enum, convert to string and handle enum format like "Type.STRING"
+                    if type_str is None:
+                        type_str = str(type_value)
+                        
+                        # Handle enum format like "Type.STRING" - extract the part after the dot
+                        if "." in type_str:
+                            # Extract the part after the dot (e.g., "Type.STRING" -> "STRING")
+                            type_str = type_str.split(".")[-1]
+                        
+                        # Normalize to lowercase
+                        type_str = type_str.lower()
                     
                     # Map common type names
                     type_mapping = {
@@ -256,8 +260,10 @@ def function_declaration_to_openai_tool(
                     ]:
                         value_dict["type"] = type_str
                     else:
-                        # If type is not recognized, default to string without warning
-                        # The original type might be valid but in an unexpected format
+                        # If type is not recognized, log a warning and default to string
+                        logger.warning(
+                            f"Unknown type '{original_type}' for parameter '{key}', defaulting to 'string'"
+                        )
                         value_dict["type"] = "string"
                 properties[key] = value_dict
 
@@ -664,7 +670,8 @@ class OpenAI(BaseLlm):
                             except (AttributeError, TypeError, ValueError) as e:
                                 logger.warning(
                                     f"Could not convert response_schema to OpenAI format: {e}. "
-                                    f"Schema type: {type(response_schema)}"
+                                    f"Schema type: {type(response_schema)}, "
+                                    f"Schema value: {response_schema}"
                                 )
                                 schema_dict = None
                             
