@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import os
+import re
 import tempfile
 from typing import Any
 from typing import AsyncGenerator
@@ -205,8 +206,23 @@ def function_declaration_to_openai_tool(
                 value_dict = value.model_dump(exclude_none=True)
                 # Convert type string to OpenAI format (normalize to lowercase)
                 if "type" in value_dict:
-                    type_value = str(value_dict["type"]).lower()
-                    if type_value in [
+                    type_value = value_dict["type"]
+                    # Handle enum types (e.g., Type.STRING -> "STRING")
+                    if hasattr(type_value, "value"):
+                        # It's an enum, get the value
+                        type_value = type_value.value
+                    elif hasattr(type_value, "name"):
+                        # It's an enum, get the name
+                        type_value = type_value.name
+                    
+                    type_str = str(type_value).lower()
+                    
+                    # Handle enum format like "Type.STRING" or "STRING"
+                    if "." in type_str:
+                        # Extract the part after the dot (e.g., "Type.STRING" -> "string")
+                        type_str = type_str.split(".")[-1]
+                    
+                    if type_str in [
                         "string",
                         "number",
                         "integer",
@@ -214,11 +230,10 @@ def function_declaration_to_openai_tool(
                         "array",
                         "object",
                     ]:
-                        value_dict["type"] = type_value
-                    elif type_value == "int":
+                        value_dict["type"] = type_str
+                    elif type_str == "int":
                         value_dict["type"] = "integer"
-                    # Remove any invalid type fields if not recognized
-                    elif "type" in value_dict:
+                    else:
                         # If type is not recognized, try to infer from other fields or default to string
                         logger.warning(
                             f"Unknown type '{value_dict['type']}' for parameter '{key}', defaulting to 'string'"
@@ -488,6 +503,16 @@ class OpenAI(BaseLlm):
         # Prepare request parameters
         # NOTE: For Azure, `model` should be the deployment name (the name you configured in the Azure portal).
         request_model = llm_request.model or self.model
+        # Validate model name using supported_models patterns
+        supported_patterns = self.supported_models()
+        model_supported = any(
+            re.match(pattern, request_model) for pattern in supported_patterns
+        )
+        if not model_supported:
+            raise ValueError(
+                f"Invalid model name '{request_model}'. Model must match one of the supported patterns: "
+                f"{', '.join(supported_patterns)}."
+            )
         request_params = {
             "model": request_model,
             "messages": messages,
