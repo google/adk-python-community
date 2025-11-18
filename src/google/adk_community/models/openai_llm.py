@@ -1,11 +1,16 @@
 """OpenAI integration for GPT models in the ADK framework.
 
-This file is an adapted version of your original plugin with optional Azure OpenAI support.
-Key changes:
-- Detect Azure when `azure_endpoint` (or an Azure-looking `base_url`) is set.
-- Use `AsyncAzureOpenAI` when targeting Azure, `AsyncOpenAI` otherwise.
+This file uses OpenAI's Responses API which supports file inputs including PDFs
+and other document formats. The Responses API provides a unified interface for
+chat completions and assistants functionality.
 
-References: Azure/OpenAI client usage patterns.
+Key features:
+- Uses Responses API (client.responses.create)
+- Supports file inputs via Files API for documents (PDFs, Word docs, etc.)
+- Detects Azure when `azure_endpoint` (or an Azure-looking `base_url`) is set
+- Use `AsyncAzureOpenAI` when targeting Azure, `AsyncOpenAI` otherwise
+
+References: OpenAI Responses API, Azure/OpenAI client usage patterns.
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ import json
 import logging
 import os
 import re
+import tempfile
+from urllib.parse import urlparse
 from typing import Any
 from typing import AsyncGenerator
 from typing import Dict
@@ -50,22 +57,6 @@ def to_openai_role(role: Optional[str]) -> Literal["user", "assistant", "system"
         return "user"
 
 
-def to_google_genai_finish_reason(
-    openai_finish_reason: Optional[str],
-) -> types.FinishReason:
-    """Converts OpenAI finish reason to Google GenAI finish reason."""
-    if openai_finish_reason == "stop":
-        return "STOP"
-    elif openai_finish_reason == "length":
-        return "MAX_TOKENS"
-    elif openai_finish_reason == "content_filter":
-        return "SAFETY"
-    elif openai_finish_reason == "tool_calls":
-        return "STOP"
-    else:
-        return "FINISH_REASON_UNSPECIFIED"
-
-
 def _is_image_part(part: types.Part) -> bool:
     """Checks if a part contains image data."""
     return (
@@ -84,8 +75,8 @@ async def part_to_openai_content(
     OpenAI supports:
     - Text content
     - Images (base64 encoded)
-    - PDF files (base64 encoded for vision models)
-    - Other documents (base64 encoded for vision models)
+    - PDF files (via Files API or base64 for vision models)
+    - Other documents (via Files API or base64 for vision models)
     """
     if part.text:
         return {"type": "text", "text": part.text}
@@ -321,43 +312,217 @@ def function_declaration_to_openai_tool(
     return {"type": "function", "function": function_schema}
 
 
-def openai_response_to_llm_response(
+async def _fetch_url_content(url: str) -> Optional[bytes]:
+    """Fetches content from a URL asynchronously.
+    
+    Args:
+        url: The URL to fetch content from
+        
+    Returns:
+        The content as bytes, or None if fetching failed
+    """
+    try:
+        # Try to use aiohttp if available (optional dependency)
+        try:
+            import aiohttp  # type: ignore[import-untyped]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+                    else:
+                        logger.warning(f"Failed to fetch URL {url}: HTTP {resp.status}")
+                        return None
+        except ImportError:
+            # Fallback to httpx if aiohttp is not available
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        return resp.content
+                    else:
+                        logger.warning(f"Failed to fetch URL {url}: HTTP {resp.status_code}")
+                        return None
+            except ImportError:
+                # If neither is available, log warning and return None
+                logger.warning(
+                    "Neither aiohttp nor httpx is available. "
+                    "Cannot fetch image URLs. Install aiohttp or httpx to enable image URL fetching."
+                )
+                return None
+    except Exception as e:
+        logger.warning(f"Error fetching URL {url}: {e}")
+        return None
+
+
+async def _convert_media_content_to_part(
+    content_part: Any,
+) -> Optional[types.Part]:
+    """Converts OpenAI media content (image_url, etc.) to Google GenAI Part.
+    
+    Args:
+        content_part: The OpenAI content part with media content
+        
+    Returns:
+        A Google GenAI Part with inline_data, or None if conversion failed
+    """
+    if not hasattr(content_part, "type"):
+        return None
+    
+    # Handle image_url content
+    if content_part.type == "image_url" and hasattr(content_part, "image_url"):
+        image_url_obj = content_part.image_url
+        url = None
+        
+        # Extract URL from image_url object (can be string or object with url field)
+        if isinstance(image_url_obj, str):
+            url = image_url_obj
+        elif hasattr(image_url_obj, "url"):
+            url = image_url_obj.url
+        elif isinstance(image_url_obj, dict) and "url" in image_url_obj:
+            url = image_url_obj["url"]
+        
+        if not url:
+            logger.warning("image_url content part has no valid URL")
+            return None
+        
+        # Check if it's a data URI
+        if url.startswith("data:"):
+            # Parse data URI: data:[<mediatype>][;base64],<data>
+            try:
+                header, data = url.split(",", 1)
+                if ";base64" in header:
+                    # Base64 encoded data
+                    image_data = base64.b64decode(data)
+                    # Extract mime type from header
+                    mime_type = "image/png"  # Default
+                    if "data:" in header:
+                        mime_part = header.split("data:")[1].split(";")[0].strip()
+                        if mime_part:
+                            mime_type = mime_part
+                    return types.Part(
+                        inline_data=types.Blob(mime_type=mime_type, data=image_data)
+                    )
+                else:
+                    # URL-encoded data (less common)
+                    from urllib.parse import unquote
+                    image_data = unquote(data).encode("utf-8")
+                    mime_type = "image/png"  # Default
+                    if "data:" in header:
+                        mime_part = header.split("data:")[1].strip()
+                        if mime_part:
+                            mime_type = mime_part
+                    return types.Part(
+                        inline_data=types.Blob(mime_type=mime_type, data=image_data)
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to parse data URI: {e}")
+                return None
+        else:
+            # It's an actual URL - fetch the content
+            image_data = await _fetch_url_content(url)
+            if image_data:
+                # Try to determine MIME type from URL or content
+                mime_type = "image/png"  # Default
+                parsed_url = urlparse(url)
+                path = parsed_url.path.lower()
+                if path.endswith(".jpg") or path.endswith(".jpeg"):
+                    mime_type = "image/jpeg"
+                elif path.endswith(".png"):
+                    mime_type = "image/png"
+                elif path.endswith(".gif"):
+                    mime_type = "image/gif"
+                elif path.endswith(".webp"):
+                    mime_type = "image/webp"
+                # Could also check Content-Type header, but for now use file extension
+                
+                return types.Part(
+                    inline_data=types.Blob(mime_type=mime_type, data=image_data)
+                )
+            else:
+                logger.warning(f"Failed to fetch image from URL: {url}")
+                return None
+    
+    # Handle other media types if needed in the future
+    return None
+
+
+async def openai_response_to_llm_response(
     response: Any,
 ) -> LlmResponse:
-    """Converts OpenAI response to ADK LlmResponse."""
+    """Converts OpenAI Responses API response to ADK LlmResponse.
+    
+    Supports Responses API format (output list).
+    Handles multimodal responses including images and other media.
+    """
     logger.info("Received response from OpenAI.")
     logger.debug(f"OpenAI response: {response}")
 
     # Extract content from response
     content_parts = []
 
-    if hasattr(response, "choices") and response.choices:
-        choice = response.choices[0]
-        message = choice.message
-
-        if hasattr(message, "content") and message.content:
-            content_parts.append(types.Part(text=message.content))
-
-        # Handle tool calls
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            for tool_call in message.tool_calls:
-                if tool_call.type == "function":
-                    function_args = {}
-                    if tool_call.function.arguments:
-                        try:
-                            function_args = json.loads(tool_call.function.arguments)
-                        except json.JSONDecodeError:
-                            function_args = {"arguments": tool_call.function.arguments}
-
-                    content_parts.append(
-                        types.Part(
-                            function_call=types.FunctionCall(
-                                id=tool_call.id,
-                                name=tool_call.function.name,
-                                args=function_args,
+    # Parse Responses API format (has 'output' field)
+    if hasattr(response, "output"):
+        try:
+            output_value = response.output
+            if output_value:
+                # Responses API format
+                for output_item in output_value:
+                    # Handle text messages
+                    if hasattr(output_item, "type") and output_item.type == "message":
+                        if hasattr(output_item, "content") and output_item.content:
+                            # content is a list of content parts
+                            for content_part in output_item.content:
+                                if hasattr(content_part, "type"):
+                                    if content_part.type == "text" and hasattr(content_part, "text"):
+                                        content_parts.append(types.Part(text=content_part.text))
+                                    elif content_part.type == "image_url" or hasattr(content_part, "image_url"):
+                                        # Handle image_url and other media content
+                                        media_part = await _convert_media_content_to_part(content_part)
+                                        if media_part:
+                                            content_parts.append(media_part)
+                                        else:
+                                            logger.debug(
+                                                f"Could not convert media content to Part: {getattr(content_part, 'type', 'unknown')}"
+                                            )
+                                    else:
+                                        # Log unknown content part types for debugging
+                                        logger.debug(
+                                            f"Unknown content part type in response: {getattr(content_part, 'type', 'unknown')}"
+                                        )
+                    
+                    # Handle function tool calls
+                    elif hasattr(output_item, "type") and output_item.type == "function":
+                        function_args = {}
+                        if hasattr(output_item, "arguments") and output_item.arguments:
+                            if isinstance(output_item.arguments, str):
+                                try:
+                                    function_args = json.loads(output_item.arguments)
+                                except json.JSONDecodeError:
+                                    function_args = {"arguments": output_item.arguments}
+                            elif isinstance(output_item.arguments, dict):
+                                function_args = output_item.arguments
+                        
+                        call_id = getattr(output_item, "call_id", None) or getattr(output_item, "id", None)
+                        function_name = getattr(output_item, "name", "")
+                        
+                        content_parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    id=call_id,
+                                    name=function_name,
+                                    args=function_args,
+                                )
                             )
                         )
-                    )
+                    else:
+                        # Log unknown output item types for debugging
+                        logger.debug(
+                            f"Unknown output item type in Responses API: {getattr(output_item, 'type', 'unknown')}"
+                        )
+        except (AttributeError, TypeError) as e:
+            # output exists but is not accessible or is None/empty
+            logger.debug(f"Could not parse Responses API output format: {e}")
 
     # Create content
     content = (
@@ -367,37 +532,56 @@ def openai_response_to_llm_response(
     # Extract usage metadata
     usage_metadata = None
     if hasattr(response, "usage") and response.usage:
-        usage_metadata = types.GenerateContentResponseUsageMetadata(
-            prompt_token_count=response.usage.prompt_tokens,
-            candidates_token_count=response.usage.completion_tokens,
-            total_token_count=response.usage.total_tokens,
-        )
+        # Responses API format
+        if hasattr(response.usage, "input_tokens"):
+            usage_metadata = types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=getattr(response.usage, "input_tokens", 0),
+                candidates_token_count=getattr(response.usage, "output_tokens", 0),
+                total_token_count=getattr(response.usage, "input_tokens", 0) + getattr(response.usage, "output_tokens", 0),
+            )
 
     # Extract finish reason
     finish_reason = None
-    if hasattr(response, "choices") and response.choices:
-        choice = response.choices[0]
-        if hasattr(choice, "finish_reason"):
-            finish_reason = to_google_genai_finish_reason(choice.finish_reason)
+    if hasattr(response, "incomplete_details"):
+        # Responses API format - check if response is incomplete
+        if response.incomplete_details:
+            finish_reason = "MAX_TOKENS"  # Response was truncated
+        else:
+            finish_reason = "STOP"  # Response completed normally
+    elif hasattr(response, "error") and response.error:
+        # Responses API format - error occurred
+        finish_reason = "FINISH_REASON_UNSPECIFIED"
+        # Extract error details if available
+        error_code = None
+        error_message = None
+        if hasattr(response.error, "code"):
+            error_code = str(response.error.code)
+        if hasattr(response.error, "message"):
+            error_message = str(response.error.message)
+        # Return error response early if error details are available
+        if error_code or error_message:
+            return LlmResponse(
+                content=None,
+                usage_metadata=usage_metadata,
+                finish_reason=finish_reason,
+                error_code=error_code,
+                error_message=error_message,
+            )
+    else:
+        # Default to STOP if no finish reason available
+        finish_reason = "STOP"
 
-    # Extract model name and system fingerprint if available
+    # Extract model name if available
     model_name = None
     if hasattr(response, "model"):
         model_name = response.model
         logger.debug(f"Response from model: {model_name}")
 
+    # Extract system fingerprint if available
     system_fingerprint = None
     if hasattr(response, "system_fingerprint"):
         system_fingerprint = response.system_fingerprint
         logger.debug(f"System fingerprint: {system_fingerprint}")
-
-    # Extract logprobs if available (from choice)
-    logprobs = None
-    if hasattr(response, "choices") and response.choices:
-        choice = response.choices[0]
-        if hasattr(choice, "logprobs") and choice.logprobs:
-            logprobs = choice.logprobs
-            logger.debug(f"Logprobs available: {logprobs}")
 
     return LlmResponse(
         content=content, usage_metadata=usage_metadata, finish_reason=finish_reason
@@ -405,13 +589,17 @@ def openai_response_to_llm_response(
 
 
 class OpenAI(BaseLlm):
-    """Integration with OpenAI GPT models.
+    """Integration with OpenAI GPT models using the Responses API.
+
+    This implementation uses OpenAI's Responses API (introduced in 2025), which
+    supports file inputs including PDFs and other document formats. The Responses
+    API provides a unified interface for chat completions and assistants functionality.
 
     Configuration is read from environment variables and the GenerateContentConfig:
     - API keys: OPENAI_API_KEY or AZURE_OPENAI_API_KEY
     - Base URL: OPENAI_BASE_URL (for OpenAI) or AZURE_OPENAI_ENDPOINT (for Azure)
     - Azure API version: AZURE_OPENAI_API_VERSION (defaults to "2024-02-15-preview")
-    - max_tokens/max_completion_tokens (mapped from max_output_tokens, auto-selected based on model),
+    - max_output_tokens: Set via GenerateContentConfig (Responses API uses max_output_tokens directly),
       temperature: Set via GenerateContentConfig in the request
     - Additional parameters: top_p, frequency_penalty, presence_penalty, seed,
       candidate_count (maps to OpenAI's n), stop_sequences, logprobs can be set via GenerateContentConfig
@@ -420,6 +608,11 @@ class OpenAI(BaseLlm):
     - Tool choice: Configurable via tool_config.function_calling_config.mode in GenerateContentConfig
       (uses FunctionCallingConfigMode: NONE, AUTO, ANY, VALIDATED)
 
+    File Input Support:
+    - Documents (PDFs, Word docs, etc.) are uploaded via Files API when use_files_api=True
+    - Images use base64 encoding
+    - The Responses API supports file inputs directly in message content
+
     Structured Output Support:
     - JSON mode: Set response_mime_type="application/json" or response_format={"type": "json_object"}
     - Structured outputs with schema: Set response_schema with a JSON schema dict or Schema object
@@ -427,9 +620,12 @@ class OpenAI(BaseLlm):
 
     Attributes:
       model: The name of the OpenAI model or (for Azure) the deployment name.
+      use_files_api: Whether to use OpenAI's Files API for file uploads (default: True).
+                     The Responses API supports file inputs, so Files API is enabled by default.
     """
 
     model: str = "gpt-4o"
+    use_files_api: bool = True
 
     @classmethod
     @override
@@ -446,20 +642,6 @@ class OpenAI(BaseLlm):
             r"tts-.*",
             r"whisper-.*",
         ]
-
-    def _requires_max_completion_tokens(self, model: str) -> bool:
-        """Check if the model requires max_completion_tokens instead of max_tokens.
-        
-        o1-series models (o1-preview, o1-mini, etc.) require max_completion_tokens.
-        All other models use max_tokens.
-        
-        Args:
-            model: The model name to check
-            
-        Returns:
-            True if the model requires max_completion_tokens, False otherwise
-        """
-        return model.startswith("o1-") if model else False
 
     def _is_azure(self) -> bool:
         """Heuristic to decide whether we're talking to Azure OpenAI.
@@ -555,15 +737,14 @@ class OpenAI(BaseLlm):
         # Initialize OpenAI client
         client = self._get_openai_client()
 
-        # Convert request to OpenAI format
+        # Convert request to Responses API format
         messages = []
+        instructions = None
 
-        # Add system instruction if present
+        # Extract system instruction for Responses API (uses 'instructions' parameter)
         if llm_request.config and llm_request.config.system_instruction:
             if isinstance(llm_request.config.system_instruction, str):
-                messages.append(
-                    {"role": "system", "content": llm_request.config.system_instruction}
-                )
+                instructions = llm_request.config.system_instruction
 
         # Convert contents to messages
         # Track tool_call_ids from assistant messages to ensure they're all responded to
@@ -650,11 +831,17 @@ class OpenAI(BaseLlm):
                 f"Invalid model name '{request_model}'. Model must match one of the supported patterns: "
                 f"{', '.join(supported_patterns)}."
             )
+        # Responses API uses 'input' instead of 'messages'
+        # Input is a list of messages for the Responses API
         request_params = {
             "model": request_model,
-            "messages": messages,
+            "input": messages,  # Responses API accepts messages list in input
             "stream": stream,
         }
+        
+        # Add instructions if present (Responses API uses 'instructions' for system prompt)
+        if instructions:
+            request_params["instructions"] = instructions
 
         if tools:
             request_params["tools"] = tools
@@ -708,15 +895,11 @@ class OpenAI(BaseLlm):
             # This parameter exists only for backward compatibility with old API specs
             request_params["parallel_tool_calls"] = True
 
-        # Get max_tokens/max_completion_tokens and temperature from config
+        # Get max_output_tokens and temperature from config
         if llm_request.config:
             if llm_request.config.max_output_tokens:
-                # Map Google GenAI max_output_tokens to OpenAI's parameter
-                # o1-series models require max_completion_tokens, others use max_tokens
-                if self._requires_max_completion_tokens(request_model):
-                    request_params["max_completion_tokens"] = llm_request.config.max_output_tokens
-                else:
-                    request_params["max_tokens"] = llm_request.config.max_output_tokens
+                # Responses API uses max_output_tokens directly
+                request_params["max_output_tokens"] = llm_request.config.max_output_tokens
 
             if llm_request.config.temperature is not None:
                 request_params["temperature"] = llm_request.config.temperature
@@ -756,13 +939,87 @@ class OpenAI(BaseLlm):
                 request_params["stop"] = stop_sequences
 
             logprobs = getattr(llm_request.config, "logprobs", None)
+            # Handle response_logprobs: if True, enable logprobs if not already set
+            response_logprobs = getattr(llm_request.config, "response_logprobs", None)
+            if response_logprobs is True and logprobs is None:
+                # If response_logprobs is True but logprobs not set, use default value
+                # OpenAI Responses API: logprobs defaults to None (disabled), but if we want logprobs
+                # we need to set it to a positive integer (number of top logprobs to return)
+                # Default to 5 if response_logprobs is True
+                logprobs = 5
+                logger.debug("response_logprobs=True but logprobs not set, defaulting to logprobs=5")
             if logprobs is not None:
                 request_params["logprobs"] = logprobs
 
             # top_logprobs is OpenAI-specific and not available in Google GenAI - removed
-            # response_logprobs exists in Google GenAI but is a boolean flag, not equivalent to top_logprobs
             
             # user is OpenAI-specific and not available in Google GenAI - removed
+            
+            # Handle caching_config: Map to OpenAI Responses API cache parameters if available
+            caching_config = getattr(llm_request.config, "caching_config", None)
+            if caching_config is not None:
+                # OpenAI Responses API may support cache parameters
+                # Check if caching_config has enable_cache or similar
+                enable_cache = getattr(caching_config, "enable_cache", None)
+                if enable_cache is not None:
+                    # Try to map to OpenAI cache parameter (if it exists)
+                    # Note: OpenAI Responses API cache behavior may be automatic
+                    # If explicit cache control is needed, it might be via a 'cache' parameter
+                    # For now, log that caching_config was provided
+                    logger.debug(f"caching_config.enable_cache={enable_cache} - OpenAI Responses API cache behavior is automatic")
+                # Check for other cache-related fields
+                cache_ttl = getattr(caching_config, "ttl", None)
+                if cache_ttl is not None:
+                    logger.debug(f"caching_config.ttl={cache_ttl} - OpenAI Responses API does not support explicit TTL")
+            
+            # Handle grounding_config: Map to web search tool if applicable
+            grounding_config = getattr(llm_request.config, "grounding_config", None)
+            if grounding_config is not None:
+                # Check if grounding_config enables web search
+                # Google GenAI grounding_config may have web_search or similar fields
+                web_search_enabled = getattr(grounding_config, "web_search", None)
+                if web_search_enabled is True:
+                    # OpenAI Responses API supports web search via tools
+                    # Check if web search tool is already in tools list
+                    web_search_tool_exists = False
+                    current_tools = request_params.get("tools") or tools
+                    if current_tools:
+                        for tool in current_tools:
+                            if isinstance(tool, dict) and tool.get("type") == "web_search":
+                                web_search_tool_exists = True
+                                break
+                            elif hasattr(tool, "type") and tool.type == "web_search":
+                                web_search_tool_exists = True
+                                break
+                    
+                    if not web_search_tool_exists:
+                        # Add web search tool to tools list
+                        if current_tools is None:
+                            current_tools = []
+                        if not isinstance(current_tools, list):
+                            current_tools = list(current_tools) if current_tools else []
+                        web_search_tool = {"type": "web_search"}
+                        current_tools.append(web_search_tool)
+                        request_params["tools"] = current_tools
+                        # Update tools variable for consistency
+                        tools = current_tools
+                        logger.debug("grounding_config.web_search=True - added web_search tool to request")
+                else:
+                    # Other grounding features might not have direct equivalents
+                    logger.debug(f"grounding_config provided but web_search not enabled - other grounding features may not be supported")
+            
+            # Handle safety_settings: OpenAI Responses API may have moderation features
+            safety_settings = getattr(llm_request.config, "safety_settings", None)
+            if safety_settings is not None:
+                # Google GenAI safety_settings is a list of SafetySetting objects
+                # OpenAI Responses API may have moderation parameters
+                # Check if OpenAI supports explicit moderation settings
+                # For now, note that OpenAI has built-in moderation that cannot be disabled
+                # but specific safety thresholds might not be configurable
+                if isinstance(safety_settings, list) and len(safety_settings) > 0:
+                    logger.debug(f"safety_settings provided with {len(safety_settings)} settings - OpenAI Responses API uses built-in moderation (not configurable)")
+                else:
+                    logger.debug("safety_settings provided - OpenAI Responses API uses built-in moderation (not configurable)")
 
             # Handle structured output / response format
             # Priority: Google GenAI types (response_schema, response_mime_type) first
@@ -941,7 +1198,7 @@ class OpenAI(BaseLlm):
                 logger.warning(f"Error checking structured output config: {e}")
 
         logger.info(
-            "Sending request to OpenAI, model: %s, stream: %s",
+            "Sending request to OpenAI Responses API, model: %s, stream: %s",
             request_params["model"],
             stream,
         )
@@ -964,97 +1221,105 @@ class OpenAI(BaseLlm):
 
         try:
             if stream:
-                # Handle streaming response
-                stream_response = await client.chat.completions.create(**request_params)
+                # Handle streaming response using Responses API
+                stream_response = await client.responses.create(**request_params)
 
-                # Accumulate content and tool calls across chunks
+                # Accumulate content and tool calls across events
                 accumulated_text = ""
                 accumulated_tool_calls: Dict[str, Dict[str, Any]] = {}
                 finish_reason = None
                 usage_metadata = None
                 model_name = None
+                response_id = None
                 system_fingerprint = None
 
-                async for chunk in stream_response:
-                    if chunk.choices:
-                        choice = chunk.choices[0]
-                        delta = choice.delta if hasattr(choice, "delta") else None
-
-                        # Track model name and system fingerprint from first chunk
-                        if model_name is None and hasattr(chunk, "model"):
-                            model_name = chunk.model
-                        if (
-                            system_fingerprint is None
-                            and hasattr(chunk, "system_fingerprint")
-                        ):
-                            system_fingerprint = chunk.system_fingerprint
-
-                        # Handle text content deltas
-                        if delta and hasattr(delta, "content") and delta.content:
-                            accumulated_text += delta.content
-                            # Create partial response with accumulated text
-                            partial_content = types.Content(
-                                role="model",
-                                parts=[types.Part(text=accumulated_text)],
-                            )
-                            yield LlmResponse(
-                                content=partial_content,
-                                partial=True,
-                                turn_complete=False,
-                            )
-
-                        # Handle tool call deltas
-                        if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
-                            for tool_call_delta in delta.tool_calls:
-                                tool_call_id = (
-                                    tool_call_delta.id
-                                    if hasattr(tool_call_delta, "id")
-                                    else None
+                async for event in stream_response:
+                    # Track model name and response ID from response.created event
+                    if hasattr(event, "type"):
+                        event_type = getattr(event, "type", None)
+                        
+                        # Handle response.created event
+                        if event_type == "response.created":
+                            if hasattr(event, "response") and hasattr(event.response, "model"):
+                                model_name = event.response.model
+                            if hasattr(event, "response") and hasattr(event.response, "id"):
+                                response_id = event.response.id
+                        
+                        # Handle content part added events (text content)
+                        elif event_type == "response.content_part.added":
+                            if hasattr(event, "part"):
+                                part = event.part
+                                if hasattr(part, "type"):
+                                    if part.type == "text" and hasattr(part, "text"):
+                                        accumulated_text += part.text
+                                        # Create partial response with accumulated text
+                                        partial_content = types.Content(
+                                            role="model",
+                                            parts=[types.Part(text=accumulated_text)],
+                                        )
+                                        yield LlmResponse(
+                                            content=partial_content,
+                                            partial=True,
+                                            turn_complete=False,
+                                        )
+                        
+                        # Handle reasoning text done events
+                        elif event_type == "response.reasoning_text.done":
+                            if hasattr(event, "text"):
+                                accumulated_text += event.text
+                                partial_content = types.Content(
+                                    role="model",
+                                    parts=[types.Part(text=accumulated_text)],
                                 )
-                                if tool_call_id:
-                                    if tool_call_id not in accumulated_tool_calls:
-                                        accumulated_tool_calls[tool_call_id] = {
-                                            "id": tool_call_id,
-                                            "type": "function",
-                                            "function": {"name": "", "arguments": ""},
-                                        }
-                                    tool_call = accumulated_tool_calls[tool_call_id]
-
-                                    # Update function name if present
-                                    if (
-                                        hasattr(tool_call_delta, "function")
-                                        and hasattr(tool_call_delta.function, "name")
-                                        and tool_call_delta.function.name
-                                    ):
-                                        tool_call["function"]["name"] = (
-                                            tool_call_delta.function.name
+                                yield LlmResponse(
+                                    content=partial_content,
+                                    partial=True,
+                                    turn_complete=False,
+                                )
+                        
+                        # Handle function tool call events
+                        elif event_type == "response.function_call.added":
+                            if hasattr(event, "function_call"):
+                                func_call = event.function_call
+                                call_id = getattr(func_call, "call_id", None) or getattr(func_call, "id", None)
+                                if call_id:
+                                    accumulated_tool_calls[call_id] = {
+                                        "id": call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": getattr(func_call, "name", ""),
+                                            "arguments": getattr(func_call, "arguments", ""),
+                                        },
+                                    }
+                        
+                        # Handle function arguments delta events
+                        elif event_type == "response.function_call.arguments_delta":
+                            if hasattr(event, "delta") and hasattr(event, "call_id"):
+                                call_id = event.call_id
+                                if call_id in accumulated_tool_calls:
+                                    delta_text = getattr(event.delta, "text", "") or getattr(event.delta, "", "")
+                                    accumulated_tool_calls[call_id]["function"]["arguments"] += delta_text
+                        
+                        # Handle response done event
+                        elif event_type == "response.done":
+                            if hasattr(event, "response"):
+                                resp = event.response
+                                # Extract usage metadata
+                                if hasattr(resp, "usage") and resp.usage:
+                                    if hasattr(resp.usage, "input_tokens"):
+                                        usage_metadata = types.GenerateContentResponseUsageMetadata(
+                                            prompt_token_count=getattr(resp.usage, "input_tokens", 0),
+                                            candidates_token_count=getattr(resp.usage, "output_tokens", 0),
+                                            total_token_count=getattr(resp.usage, "input_tokens", 0) + getattr(resp.usage, "output_tokens", 0),
                                         )
-
-                                    # Accumulate function arguments
-                                    if (
-                                        hasattr(tool_call_delta, "function")
-                                        and hasattr(
-                                            tool_call_delta.function, "arguments"
-                                        )
-                                        and tool_call_delta.function.arguments
-                                    ):
-                                        tool_call["function"]["arguments"] += (
-                                            tool_call_delta.function.arguments
-                                        )
-
-                        # Track finish reason
-                        if hasattr(choice, "finish_reason") and choice.finish_reason:
-                            finish_reason = to_google_genai_finish_reason(
-                                choice.finish_reason
-                            )
-
-                    # Track usage metadata if available
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        usage_metadata = types.GenerateContentResponseUsageMetadata(
-                            prompt_token_count=chunk.usage.prompt_tokens or 0,
-                            candidates_token_count=chunk.usage.completion_tokens or 0,
-                            total_token_count=chunk.usage.total_tokens or 0,
-                        )
+                                
+                                # Extract finish reason
+                                if hasattr(resp, "incomplete_details") and resp.incomplete_details:
+                                    finish_reason = "MAX_TOKENS"
+                                elif hasattr(resp, "error") and resp.error:
+                                    finish_reason = "FINISH_REASON_UNSPECIFIED"
+                                else:
+                                    finish_reason = "STOP"
 
                 # Build final complete response with all accumulated data
                 final_parts = []
@@ -1108,23 +1373,108 @@ class OpenAI(BaseLlm):
 
                 yield final_response
             else:
-                # Handle non-streaming response
-                response = await client.chat.completions.create(**request_params)
-                llm_response = openai_response_to_llm_response(response)
+                # Handle non-streaming response using Responses API
+                response = await client.responses.create(**request_params)
+                llm_response = await openai_response_to_llm_response(response)
                 yield llm_response
 
         except Exception as e:
             logger.error(f"Error calling OpenAI API: {e}")
             yield LlmResponse(error_code="OPENAI_API_ERROR", error_message=str(e))
 
+    def _get_file_extension(self, mime_type: str) -> str:
+        """Get file extension from MIME type."""
+        mime_to_ext = {
+            "application/pdf": ".pdf",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "text/plain": ".txt",
+            "text/markdown": ".md",
+            "application/json": ".json",
+            "application/msword": ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        }
+        return mime_to_ext.get(mime_type, ".bin")
+
+    async def _upload_file_to_openai(
+        self, file_data: bytes, mime_type: str, display_name: Optional[str] = None
+    ) -> str:
+        """Upload a file to OpenAI's Files API and return the file ID.
+
+        This is used with the Responses API which supports file inputs.
+
+        Args:
+            file_data: The file data as bytes.
+            mime_type: The MIME type of the file.
+            display_name: Optional display name for the file.
+
+        Returns:
+            The file ID from OpenAI.
+
+        Raises:
+            ValueError: If use_files_api is False.
+        """
+        if not self.use_files_api:
+            raise ValueError(
+                "Files API is disabled. Set use_files_api=True to enable file uploads."
+            )
+
+        client = self._get_openai_client()
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(
+            mode="wb", delete=False, suffix=self._get_file_extension(mime_type)
+        ) as temp_file:
+            temp_file.write(file_data)
+            temp_file_path = temp_file.name
+
+        try:
+            # Use the client.files.create API
+            with open(temp_file_path, "rb") as f:
+                uploaded_file = await client.files.create(
+                    file=f, purpose="assistants"
+                )
+
+            logger.info(
+                f"Uploaded file to OpenAI: {uploaded_file.id} ({display_name or 'unnamed'})"
+            )
+            return uploaded_file.id
+
+        finally:
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+
     async def _handle_file_data(self, part: types.Part) -> Union[Dict[str, Any], str]:
-        """Handle file data by converting to base64 encoding."""
+        """Handle file data using Files API (for documents) or base64 encoding (for images)."""
         if part.inline_data:
             # Handle inline data
             mime_type = part.inline_data.mime_type or "application/octet-stream"
             data = part.inline_data.data
+            display_name = part.inline_data.display_name
 
-            # Use base64 encoding for all file types
+            # For documents (PDFs, Word docs, etc.), use Files API if enabled
+            if self.use_files_api and mime_type in [
+                "application/pdf",
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ]:
+                try:
+                    file_id = await self._upload_file_to_openai(
+                        data, mime_type, display_name
+                    )
+                    # Responses API supports file inputs in message content
+                    return {
+                        "type": "file",
+                        "file_id": file_id,
+                    }
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to upload file to OpenAI Files API: {e}. Falling back to base64 encoding."
+                    )
+
+            # For images or when Files API is disabled, use base64 encoding
             if mime_type.startswith("image/"):
                 data_b64 = base64.b64encode(data).decode()
                 return {
@@ -1146,7 +1496,7 @@ class OpenAI(BaseLlm):
             mime_type = part.file_data.mime_type or "unknown"
 
             logger.warning(
-                f"OpenAI Chat API does not support file references. "
+                f"OpenAI Responses API does not support file references. "
                 f"File '{display_name}' ({file_uri}) converted to text description."
             )
 
@@ -1155,7 +1505,7 @@ class OpenAI(BaseLlm):
                 "text": f"[FILE REFERENCE: {display_name}]\n"
                 f"URI: {file_uri}\n"
                 f"Type: {mime_type}\n"
-                f"Note: OpenAI Chat API does not support file references.",
+                f"Note: OpenAI Responses API does not support file references.",
             }
 
         return {"type": "text", "text": str(part)}

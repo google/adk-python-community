@@ -33,7 +33,6 @@ from google.adk_community.models.openai_llm import (
     function_declaration_to_openai_tool,
     openai_response_to_llm_response,
     part_to_openai_content,
-    to_google_genai_finish_reason,
     to_openai_role,
 )
 from google.genai import types
@@ -49,21 +48,6 @@ class TestHelperFunctions:
         assert to_openai_role("user") == "user"
         assert to_openai_role(None) == "user"
         assert to_openai_role("unknown") == "user"
-
-    def test_to_google_genai_finish_reason(self):
-        """Test finish reason conversion from OpenAI to Google GenAI format."""
-        assert to_google_genai_finish_reason("stop") == "STOP"
-        assert to_google_genai_finish_reason("length") == "MAX_TOKENS"
-        assert to_google_genai_finish_reason("content_filter") == "SAFETY"
-        assert to_google_genai_finish_reason("tool_calls") == "STOP"
-        assert (
-            to_google_genai_finish_reason(None)
-            == "FINISH_REASON_UNSPECIFIED"
-        )
-        assert (
-            to_google_genai_finish_reason("unknown")
-            == "FINISH_REASON_UNSPECIFIED"
-        )
 
     def test_is_image_part(self):
         """Test image part detection."""
@@ -297,23 +281,25 @@ class TestHelperFunctions:
         # Note: Due to Schema enum conversion, number and boolean may also default to "string"
         # This is expected behavior when the code can't recognize the enum format
 
-    def test_openai_response_to_llm_response_text(self):
-        """Test conversion of OpenAI response with text to LlmResponse."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_text(self):
+        """Test conversion of OpenAI Responses API response with text to LlmResponse."""
         mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = "Hello, world!"
-        mock_message.tool_calls = None
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
+        # Responses API format: output is a list of output items
+        mock_output_item = MagicMock()
+        mock_output_item.type = "message"
+        mock_content_part = MagicMock()
+        mock_content_part.type = "text"
+        mock_content_part.text = "Hello, world!"
+        mock_output_item.content = [mock_content_part]
+        mock_response.output = [mock_output_item]
         mock_usage = MagicMock()
-        mock_usage.prompt_tokens = 10
-        mock_usage.completion_tokens = 5
-        mock_usage.total_tokens = 15
+        mock_usage.input_tokens = 10
+        mock_usage.output_tokens = 5
         mock_response.usage = mock_usage
+        mock_response.incomplete_details = None  # Response completed normally
 
-        llm_response = openai_response_to_llm_response(mock_response)
+        llm_response = await openai_response_to_llm_response(mock_response)
         assert llm_response.content is not None
         assert llm_response.content.role == "model"
         assert len(llm_response.content.parts) == 1
@@ -323,38 +309,36 @@ class TestHelperFunctions:
         assert llm_response.usage_metadata.candidates_token_count == 5
         assert llm_response.finish_reason == "STOP"
 
-    def test_openai_response_to_llm_response_with_tool_calls(self):
-        """Test conversion of OpenAI response with tool calls."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_with_tool_calls(self):
+        """Test conversion of OpenAI Responses API response with tool calls."""
         mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = None
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_123"
-        mock_tool_call.type = "function"
-        mock_tool_call.function = MagicMock()
-        mock_tool_call.function.name = "get_weather"
-        mock_tool_call.function.arguments = '{"location": "SF"}'
-        mock_message.tool_calls = [mock_tool_call]
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "tool_calls"
-        mock_response.choices = [mock_choice]
+        # Responses API format: output is a list of output items
+        mock_output_item = MagicMock()
+        mock_output_item.type = "function"
+        mock_output_item.call_id = "call_123"
+        mock_output_item.name = "get_weather"
+        mock_output_item.arguments = '{"location": "SF"}'
+        mock_response.output = [mock_output_item]
         mock_response.usage = None
+        mock_response.incomplete_details = None  # Response completed normally
 
-        llm_response = openai_response_to_llm_response(mock_response)
+        llm_response = await openai_response_to_llm_response(mock_response)
         assert llm_response.content is not None
         assert len(llm_response.content.parts) == 1
         assert llm_response.content.parts[0].function_call is not None
         assert llm_response.content.parts[0].function_call.name == "get_weather"
         assert llm_response.finish_reason == "STOP"
 
-    def test_openai_response_to_llm_response_empty(self):
-        """Test conversion of empty OpenAI response."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_empty(self):
+        """Test conversion of empty OpenAI Responses API response."""
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []  # Empty output list
         mock_response.usage = None
+        mock_response.incomplete_details = None
 
-        llm_response = openai_response_to_llm_response(mock_response)
+        llm_response = await openai_response_to_llm_response(mock_response)
         assert llm_response.content is None
 
 
@@ -374,7 +358,7 @@ class TestOpenAIClass:
         openai_client = OpenAI()
         assert openai_client._is_azure() is True
 
-    @patch.dict(os.environ, {"OPENAI_BASE_URL": "https://test.openai.azure.com/v1/chat/completions"})
+    @patch.dict(os.environ, {"OPENAI_BASE_URL": "https://test.openai.azure.com/v1/"})
     def test_is_azure_with_azure_base_url(self):
         """Test Azure detection with Azure-looking base_url from env."""
         openai_client = OpenAI()
@@ -462,6 +446,15 @@ class TestOpenAIClass:
             openai_client._get_openai_client()
         assert "openai>=2.7.2" in str(exc_info.value)
 
+    def test_get_file_extension(self):
+        """Test file extension mapping from MIME type."""
+        openai_client = OpenAI()
+        assert openai_client._get_file_extension("application/pdf") == ".pdf"
+        assert openai_client._get_file_extension("image/jpeg") == ".jpg"
+        assert openai_client._get_file_extension("image/png") == ".png"
+        assert openai_client._get_file_extension("text/plain") == ".txt"
+        assert openai_client._get_file_extension("unknown/type") == ".bin"
+
     def test_preprocess_request(self):
         """Test request preprocessing."""
         openai_client = OpenAI(model="gpt-4")
@@ -518,22 +511,22 @@ class TestOpenAIClass:
             ]
         )
 
-        # Mock OpenAI client and response
+        # Mock OpenAI client and response (Responses API format)
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = "Hi there!"
-        mock_message.tool_calls = None
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
+        mock_output_item = MagicMock()
+        mock_output_item.type = "message"
+        mock_content_part = MagicMock()
+        mock_content_part.type = "text"
+        mock_content_part.text = "Hi there!"
+        mock_output_item.content = [mock_content_part]
+        mock_response.output = [mock_output_item]
         mock_usage = MagicMock()
-        mock_usage.prompt_tokens = 5
-        mock_usage.completion_tokens = 3
-        mock_usage.total_tokens = 8
+        mock_usage.input_tokens = 5
+        mock_usage.output_tokens = 3
         mock_response.usage = mock_usage
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -563,27 +556,47 @@ class TestOpenAIClass:
             ]
         )
 
-        # Mock streaming response
+        # Mock streaming response (Responses API format)
         mock_client = AsyncMock()
-        mock_chunk1 = MagicMock()
-        mock_delta1 = MagicMock()
-        mock_delta1.content = "Hi"
-        mock_choice1 = MagicMock()
-        mock_choice1.delta = mock_delta1
-        mock_chunk1.choices = [mock_choice1]
-
-        mock_chunk2 = MagicMock()
-        mock_delta2 = MagicMock()
-        mock_delta2.content = " there!"
-        mock_choice2 = MagicMock()
-        mock_choice2.delta = mock_delta2
-        mock_chunk2.choices = [mock_choice2]
+        # First event: response.created
+        mock_event1 = MagicMock()
+        mock_event1.type = "response.created"
+        mock_event1.response = MagicMock()
+        mock_event1.response.model = "gpt-4o"
+        mock_event1.response.id = "resp_123"
+        
+        # Second event: content part added
+        mock_event2 = MagicMock()
+        mock_event2.type = "response.content_part.added"
+        mock_part2 = MagicMock()
+        mock_part2.type = "text"
+        mock_part2.text = "Hi"
+        mock_event2.part = mock_part2
+        
+        # Third event: content part added
+        mock_event3 = MagicMock()
+        mock_event3.type = "response.content_part.added"
+        mock_part3 = MagicMock()
+        mock_part3.type = "text"
+        mock_part3.text = " there!"
+        mock_event3.part = mock_part3
+        
+        # Fourth event: response.done
+        mock_event4 = MagicMock()
+        mock_event4.type = "response.done"
+        mock_event4.response = MagicMock()
+        mock_event4.response.usage = MagicMock()
+        mock_event4.response.usage.input_tokens = 5
+        mock_event4.response.usage.output_tokens = 3
+        mock_event4.response.incomplete_details = None
 
         async def mock_stream():
-            yield mock_chunk1
-            yield mock_chunk2
+            yield mock_event1
+            yield mock_event2
+            yield mock_event3
+            yield mock_event4
 
-        mock_client.chat.completions.create = AsyncMock(
+        mock_client.responses.create = AsyncMock(
             return_value=mock_stream()
         )
 
@@ -625,9 +638,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -640,12 +654,15 @@ class TestOpenAIClass:
                 pass
 
         # Verify system instruction was added
-        call_args = mock_client.chat.completions.create.call_args[1]
-        messages = call_args["messages"]
-        assert messages[0]["role"] == "system"
-        assert (
-            messages[0]["content"] == "You are a helpful assistant."
-        )
+        call_args = mock_client.responses.create.call_args[1]
+        # Responses API uses 'instructions' parameter for system prompt
+        assert "instructions" in call_args
+        assert call_args["instructions"] == "You are a helpful assistant."
+        # Verify input (messages) is present
+        assert "input" in call_args
+        messages = call_args["input"]
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -669,9 +686,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -684,7 +702,7 @@ class TestOpenAIClass:
                 pass
 
         # Verify tools were added
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "tools" in call_args
         assert len(call_args["tools"]) == 1
         assert call_args["tool_choice"] == "auto"
@@ -705,7 +723,7 @@ class TestOpenAIClass:
         )
 
         mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(
+        mock_client.responses.create = AsyncMock(
             side_effect=Exception("API Error")
         )
 
@@ -722,10 +740,177 @@ class TestOpenAIClass:
         assert responses[0].error_code == "OPENAI_API_ERROR"
         assert "API Error" in responses[0].error_message
 
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_handle_file_data_with_pdf(self):
-        """Test handling PDF file with base64 encoding."""
-        openai_client = OpenAI()
+    async def test_upload_file_to_openai_disabled(self):
+        """Test file upload when Files API is disabled."""
+        openai_client = OpenAI(use_files_api=False)
+        with pytest.raises(ValueError, match="Files API is disabled"):
+            await openai_client._upload_file_to_openai(
+                b"test data", "application/pdf", "test.pdf"
+            )
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_upload_file_to_openai_enabled(self):
+        """Test file upload when Files API is enabled."""
+        openai_client = OpenAI(use_files_api=True)
+
+        mock_client = AsyncMock()
+        mock_file = MagicMock()
+        mock_file.id = "file-123"
+        mock_client.files.create = AsyncMock(return_value=mock_file)
+
+        import tempfile
+        import os
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            # Create a real temp file that will be used
+            real_temp = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".pdf"
+            )
+            real_temp.write(b"test data")
+            real_temp.close()
+            real_temp_path = real_temp.name
+
+            try:
+                # Mock tempfile.NamedTemporaryFile to return our real file
+                def mock_named_tempfile(*args, **kwargs):
+                    mock_file = MagicMock()
+                    mock_file.name = real_temp_path
+                    mock_file.write = Mock()
+                    mock_file.__enter__ = Mock(return_value=mock_file)
+                    mock_file.__exit__ = Mock(return_value=None)
+                    return mock_file
+
+                with patch(
+                    "google.adk_community.models.openai_llm.tempfile.NamedTemporaryFile",
+                    side_effect=mock_named_tempfile,
+                ):
+                    # Mock open to return the file handle
+                    with patch("builtins.open") as mock_open:
+                        mock_file_handle = open(real_temp_path, "rb")
+                        mock_open.return_value.__enter__ = Mock(
+                            return_value=mock_file_handle
+                        )
+                        mock_open.return_value.__exit__ = Mock(return_value=None)
+
+                        # Mock os.path.exists and os.unlink
+                        with patch("os.path.exists", return_value=True):
+                            with patch("os.unlink"):
+                                file_id = await openai_client._upload_file_to_openai(
+                                    b"test data",
+                                    "application/pdf",
+                                    "test.pdf",
+                                )
+
+                    assert file_id == "file-123"
+                    mock_client.files.create.assert_called_once()
+            finally:
+                # Clean up
+                if os.path.exists(real_temp_path):
+                    os.unlink(real_temp_path)
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_handle_file_data_with_files_api_pdf(self):
+        """Test handling PDF file with Files API enabled."""
+        openai_client = OpenAI(use_files_api=True)
+        pdf_data = b"fake_pdf_data"
+        part = types.Part(
+            inline_data=types.Blob(
+                mime_type="application/pdf",
+                data=pdf_data,
+                display_name="test.pdf",
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_file = MagicMock()
+        mock_file.id = "file-123"
+        mock_client.files.create = AsyncMock(return_value=mock_file)
+
+        import tempfile
+        import os
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            # Create a real temp file that will be used
+            real_temp = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".pdf"
+            )
+            real_temp.write(pdf_data)
+            real_temp.close()
+            real_temp_path = real_temp.name
+
+            try:
+                # Mock tempfile.NamedTemporaryFile to return our real file
+                def mock_named_tempfile(*args, **kwargs):
+                    mock_file = MagicMock()
+                    mock_file.name = real_temp_path
+                    mock_file.write = Mock()
+                    mock_file.__enter__ = Mock(return_value=mock_file)
+                    mock_file.__exit__ = Mock(return_value=None)
+                    return mock_file
+
+                with patch(
+                    "google.adk_community.models.openai_llm.tempfile.NamedTemporaryFile",
+                    side_effect=mock_named_tempfile,
+                ):
+                    # Mock open to return the file handle
+                    with patch("builtins.open") as mock_open:
+                        mock_file_handle = open(real_temp_path, "rb")
+                        mock_open.return_value.__enter__ = Mock(
+                            return_value=mock_file_handle
+                        )
+                        mock_open.return_value.__exit__ = Mock(return_value=None)
+
+                        # Mock os.path.exists and os.unlink
+                        with patch("os.path.exists", return_value=True):
+                            with patch("os.unlink"):
+                                result = await openai_client._handle_file_data(part)
+
+                    # Should return file type with file_id
+                    assert result["type"] == "file"
+                    assert result["file_id"] == "file-123"
+            finally:
+                # Clean up
+                if os.path.exists(real_temp_path):
+                    os.unlink(real_temp_path)
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_handle_file_data_files_api_fallback(self):
+        """Test Files API fallback to base64 on error."""
+        openai_client = OpenAI(use_files_api=True)
+        pdf_data = b"fake_pdf_data"
+        part = types.Part(
+            inline_data=types.Blob(
+                mime_type="application/pdf",
+                data=pdf_data,
+                display_name="test.pdf",
+            )
+        )
+
+        mock_client = AsyncMock()
+        mock_client.files.create = AsyncMock(side_effect=Exception("Upload failed"))
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            result = await openai_client._handle_file_data(part)
+
+        # Should fallback to base64
+        assert result["type"] == "image_url"
+        assert "base64" in result["image_url"]["url"]
+
+    @pytest.mark.asyncio
+    async def test_handle_file_data_with_pdf_disabled(self):
+        """Test handling PDF file with Files API disabled (base64 fallback)."""
+        openai_client = OpenAI(use_files_api=False)
         pdf_data = b"fake_pdf_data"
         part = types.Part(
             inline_data=types.Blob(
@@ -737,7 +922,7 @@ class TestOpenAIClass:
 
         result = await openai_client._handle_file_data(part)
 
-        # Should use base64 encoding
+        # Should use base64 encoding when Files API is disabled
         assert result["type"] == "image_url"
         assert "base64" in result["image_url"]["url"]
         assert "data:application/pdf;base64," in result["image_url"]["url"]
@@ -795,42 +980,33 @@ class TestOpenAIClass:
         tool = function_declaration_to_openai_tool(func_decl)
         assert tool["function"]["description"] == ""
 
-    def test_openai_response_to_llm_response_no_content(self):
-        """Test conversion of OpenAI response with no content."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_no_content(self):
+        """Test conversion of OpenAI Responses API response with no content."""
         mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = None
-        mock_message.tool_calls = None
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "stop"
-        mock_response.choices = [mock_choice]
+        mock_response.output = []  # Empty output
         mock_response.usage = None
+        mock_response.incomplete_details = None
 
-        llm_response = openai_response_to_llm_response(mock_response)
+        llm_response = await openai_response_to_llm_response(mock_response)
         # When there are no content parts, content is None
         assert llm_response.content is None
         assert llm_response.finish_reason == "STOP"
 
-    def test_openai_response_to_llm_response_invalid_json_tool_call(self):
-        """Test conversion with invalid JSON in tool call arguments."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_invalid_json_tool_call(self):
+        """Test conversion with invalid JSON in tool call arguments (Responses API format)."""
         mock_response = MagicMock()
-        mock_choice = MagicMock()
-        mock_message = MagicMock()
-        mock_message.content = None
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_123"
-        mock_tool_call.type = "function"
-        mock_tool_call.function = MagicMock()
-        mock_tool_call.function.name = "test_func"
-        mock_tool_call.function.arguments = "invalid json {"
-        mock_message.tool_calls = [mock_tool_call]
-        mock_choice.message = mock_message
-        mock_choice.finish_reason = "tool_calls"
-        mock_response.choices = [mock_choice]
+        mock_output_item = MagicMock()
+        mock_output_item.type = "function"
+        mock_output_item.call_id = "call_123"
+        mock_output_item.name = "test_func"
+        mock_output_item.arguments = "invalid json {"
+        mock_response.output = [mock_output_item]
         mock_response.usage = None
+        mock_response.incomplete_details = None
 
-        llm_response = openai_response_to_llm_response(mock_response)
+        llm_response = await openai_response_to_llm_response(mock_response)
         assert llm_response.content is not None
         assert len(llm_response.content.parts) == 1
         # Should handle invalid JSON gracefully
@@ -842,7 +1018,7 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_config_max_tokens(self):
-        """Test content generation with max_tokens from config (mapped from max_output_tokens)."""
+        """Test content generation with max_output_tokens from config (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
             contents=[
@@ -855,9 +1031,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -869,13 +1046,13 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
-        assert call_args["max_tokens"] == 200
+        call_args = mock_client.responses.create.call_args[1]
+        assert call_args["max_output_tokens"] == 200
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_config_max_completion_tokens_o1(self):
-        """Test content generation with max_completion_tokens for o1 models."""
+        """Test content generation with max_output_tokens for o1 models (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
             model="o1-preview",
@@ -889,9 +1066,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -903,14 +1081,13 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
-        assert call_args["max_completion_tokens"] == 200
-        assert "max_tokens" not in call_args
+        call_args = mock_client.responses.create.call_args[1]
+        assert call_args["max_output_tokens"] == 200
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_config_max_completion_tokens_o1_mini(self):
-        """Test content generation with max_completion_tokens for o1-mini model."""
+        """Test content generation with max_output_tokens for o1-mini model (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
             model="o1-mini",
@@ -924,9 +1101,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -938,9 +1116,8 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
-        assert call_args["max_completion_tokens"] == 150
-        assert "max_tokens" not in call_args
+        call_args = mock_client.responses.create.call_args[1]
+        assert call_args["max_output_tokens"] == 150
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -958,9 +1135,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -972,7 +1150,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["temperature"] == 0.9
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -991,9 +1169,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1005,7 +1184,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         assert call_args["response_format"] == {"type": "json_object"}
 
@@ -1036,9 +1215,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1050,7 +1230,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         assert call_args["response_format"] == {"type": "json_object"}
 
@@ -1081,9 +1261,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1095,7 +1276,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         assert call_args["response_format"]["type"] == "json_schema"
         assert "json_schema" in call_args["response_format"]
@@ -1122,9 +1303,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1136,7 +1318,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["top_p"] == 0.9
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -1156,9 +1338,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1170,7 +1353,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["frequency_penalty"] == 0.5
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -1190,9 +1373,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1204,7 +1388,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["presence_penalty"] == 0.3
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -1224,9 +1408,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1237,7 +1422,7 @@ class TestOpenAIClass:
                 llm_request, stream=False
             ):
                 pass
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["seed"] == 42
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -1259,9 +1444,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1273,7 +1459,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["stop"] == ["\n", "END"]
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -1306,9 +1492,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1320,7 +1507,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert call_args["tool_choice"] == "required"
         assert call_args["parallel_tool_calls"] is True
 
@@ -1337,63 +1524,48 @@ class TestOpenAIClass:
             ],
         )
 
-        # Create mock streaming chunks with tool calls
-        # Use proper mock structure with actual string values
-        mock_function1 = MagicMock()
-        mock_function1.name = "test_function"
-        mock_function1.arguments = '{"key": "val'
+        # Create mock streaming events with tool calls (Responses API format)
+        # First event: response.created
+        mock_event1 = MagicMock()
+        mock_event1.type = "response.created"
+        mock_event1.response = MagicMock()
+        mock_event1.response.model = "gpt-4o"
+        mock_event1.response.id = "resp_123"
         
-        mock_tool_call1 = MagicMock()
-        mock_tool_call1.id = "call_123"
-        mock_tool_call1.type = "function"
-        mock_tool_call1.function = mock_function1
+        # Second event: function call added
+        mock_event2 = MagicMock()
+        mock_event2.type = "response.function_call.added"
+        mock_func_call = MagicMock()
+        mock_func_call.call_id = "call_123"
+        mock_func_call.name = "test_function"
+        mock_func_call.arguments = '{"key": "val'
+        mock_event2.function_call = mock_func_call
         
-        mock_delta1 = MagicMock()
-        mock_delta1.content = None
-        mock_delta1.tool_calls = [mock_tool_call1]
+        # Third event: function arguments delta
+        mock_event3 = MagicMock()
+        mock_event3.type = "response.function_call.arguments_delta"
+        mock_event3.call_id = "call_123"
+        mock_delta = MagicMock()
+        mock_delta.text = 'ue"}'
+        mock_event3.delta = mock_delta
         
-        mock_choice1 = MagicMock()
-        mock_choice1.delta = mock_delta1
-        mock_choice1.finish_reason = None
-        
-        mock_chunk1 = MagicMock()
-        mock_chunk1.choices = [mock_choice1]
-        mock_chunk1.model = "gpt-4o"
-        mock_chunk1.system_fingerprint = "fp_123"
-        mock_chunk1.usage = None
-
-        mock_function2 = MagicMock()
-        mock_function2.name = None
-        mock_function2.arguments = 'ue"}'
-        
-        mock_tool_call2 = MagicMock()
-        mock_tool_call2.id = "call_123"
-        mock_tool_call2.type = "function"
-        mock_tool_call2.function = mock_function2
-        
-        mock_delta2 = MagicMock()
-        mock_delta2.content = None
-        mock_delta2.tool_calls = [mock_tool_call2]
-        
-        mock_choice2 = MagicMock()
-        mock_choice2.delta = mock_delta2
-        mock_choice2.finish_reason = "tool_calls"
-        
-        mock_chunk2 = MagicMock()
-        mock_chunk2.choices = [mock_choice2]
-        mock_chunk2.model = None
-        mock_chunk2.system_fingerprint = None
-        mock_chunk2.usage = MagicMock()
-        mock_chunk2.usage.prompt_tokens = 10
-        mock_chunk2.usage.completion_tokens = 5
-        mock_chunk2.usage.total_tokens = 15
+        # Fourth event: response.done
+        mock_event4 = MagicMock()
+        mock_event4.type = "response.done"
+        mock_event4.response = MagicMock()
+        mock_event4.response.usage = MagicMock()
+        mock_event4.response.usage.input_tokens = 10
+        mock_event4.response.usage.output_tokens = 5
+        mock_event4.response.incomplete_details = None
 
         async def mock_stream():
-            yield mock_chunk1
-            yield mock_chunk2
+            yield mock_event1
+            yield mock_event2
+            yield mock_event3
+            yield mock_event4
 
         mock_client = AsyncMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_stream())
+        mock_client.responses.create = AsyncMock(return_value=mock_stream())
 
         with patch.object(
             openai_client, "_get_openai_client", return_value=mock_client
@@ -1416,22 +1588,25 @@ class TestOpenAIClass:
             )
             assert has_tool_call
 
-    def test_openai_response_to_llm_response_with_model(self):
-        """Test response conversion includes model name."""
+    @pytest.mark.asyncio
+    async def test_openai_response_to_llm_response_with_model(self):
+        """Test response conversion includes model name (Responses API format)."""
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message = MagicMock()
-        mock_response.choices[0].message.content = "Hello"
-        mock_response.choices[0].message.tool_calls = None
-        mock_response.choices[0].finish_reason = "stop"
+        mock_output_item = MagicMock()
+        mock_output_item.type = "message"
+        mock_content_part = MagicMock()
+        mock_content_part.type = "text"
+        mock_content_part.text = "Hello"
+        mock_output_item.content = [mock_content_part]
+        mock_response.output = [mock_output_item]
         mock_response.usage = MagicMock()
-        mock_response.usage.prompt_tokens = 10
-        mock_response.usage.completion_tokens = 5
-        mock_response.usage.total_tokens = 15
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 5
         mock_response.model = "gpt-4o"
+        mock_response.incomplete_details = None
         mock_response.system_fingerprint = "fp_123"
 
-        result = openai_response_to_llm_response(mock_response)
+        result = await openai_response_to_llm_response(mock_response)
         assert result.content is not None
         assert result.usage_metadata is not None
 
@@ -1461,9 +1636,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1475,7 +1651,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         json_schema = call_args["response_format"]["json_schema"]
         # Should use title from schema as name
@@ -1507,9 +1683,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1521,7 +1698,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         json_schema = call_args["response_format"]["json_schema"]
         # Should use the already-formatted schema as-is
@@ -1563,9 +1740,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1578,8 +1756,8 @@ class TestOpenAIClass:
                 pass
 
         # Verify the message sequence
-        call_args = mock_client.chat.completions.create.call_args[1]
-        messages = call_args["messages"]
+        call_args = mock_client.responses.create.call_args[1]
+        messages = call_args["input"]  # Responses API uses 'input' instead of 'messages'
         # Should have assistant message with tool_calls
         assert messages[0]["role"] == "assistant"
         assert "tool_calls" in messages[0]
@@ -1636,9 +1814,10 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_response = MagicMock()
-        mock_response.choices = []
+        mock_response.output = []
         mock_response.usage = None
-        mock_client.chat.completions.create = AsyncMock(
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1650,7 +1829,7 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.chat.completions.create.call_args[1]
+        call_args = mock_client.responses.create.call_args[1]
         assert "response_format" in call_args
         json_schema = call_args["response_format"]["json_schema"]
         # Should extract name from Pydantic model class
