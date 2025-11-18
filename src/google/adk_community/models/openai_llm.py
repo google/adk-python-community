@@ -639,15 +639,35 @@ class OpenAI(BaseLlm):
                     )
                     if response_schema is not None:
                         # Convert ADK schema to OpenAI JSON schema format
+                        # OpenAI requires: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
+                        schema_name = None
+                        schema_dict = None
+                        
                         if isinstance(response_schema, dict):
-                            request_params["response_format"] = {
-                                "type": "json_schema",
-                                "json_schema": response_schema,
-                            }
+                            # If it's already a dict, check if it's already in OpenAI format
+                            if "name" in response_schema and "schema" in response_schema:
+                                # Already in OpenAI format
+                                request_params["response_format"] = {
+                                    "type": "json_schema",
+                                    "json_schema": response_schema,
+                                }
+                            else:
+                                # It's a raw JSON schema dict, need to wrap it
+                                schema_dict = response_schema
+                                schema_name = response_schema.get("title", "ResponseSchema")
                         else:
                             # If it's a Schema object, convert it
-                            schema_dict = None
                             try:
+                                # Get schema name from the class/object
+                                if inspect.isclass(response_schema):
+                                    schema_name = getattr(response_schema, "__name__", "ResponseSchema")
+                                else:
+                                    schema_name = getattr(
+                                        response_schema, "__class__", type(response_schema)
+                                    ).__name__
+                                    if schema_name == "dict":
+                                        schema_name = "ResponseSchema"
+                                
                                 # Check if it's a Pydantic model class (not an instance)
                                 # First check if it's a class
                                 is_pydantic_class = False
@@ -726,11 +746,19 @@ class OpenAI(BaseLlm):
                                 )
                                 schema_dict = None
                             
-                            if schema_dict is not None:
-                                request_params["response_format"] = {
-                                    "type": "json_schema",
-                                    "json_schema": schema_dict,
-                                }
+                        # Wrap schema in OpenAI's required format
+                        if schema_dict is not None:
+                            # Use schema title if available, otherwise use the name we extracted
+                            if isinstance(schema_dict, dict) and "title" in schema_dict:
+                                schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
+                            
+                            request_params["response_format"] = {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": schema_name or "ResponseSchema",
+                                    "schema": schema_dict,
+                                },
+                            }
                     else:
                         # Also check for response_mime_type which might indicate JSON mode
                         response_mime_type = getattr(
