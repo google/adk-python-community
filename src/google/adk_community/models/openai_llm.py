@@ -533,8 +533,11 @@ class OpenAI(BaseLlm):
             try:
                 return openai.AsyncAzureOpenAI(**azure_kwargs)
             except AttributeError:
-                # Fallback: older SDKs may not expose AsyncAzureOpenAI; try AzureOpenAI
-                return openai.AzureOpenAI(**azure_kwargs)
+                # If AsyncAzureOpenAI is not available, raise an error as the sync client is not compatible.
+                raise ImportError(
+                    "The installed `openai` version is too old for Azure async support. "
+                    "Please upgrade to `openai>=1.2.0`."
+                )
 
         # Default (OpenAI) path
         client_kwargs: Dict[str, Any] = {}
@@ -1172,7 +1175,7 @@ class OpenAI(BaseLlm):
 
         # Create temporary file
         with tempfile.NamedTemporaryFile(
-            delete=False, suffix=self._get_file_extension(mime_type)
+            mode="wb", delete=False, suffix=self._get_file_extension(mime_type)
         ) as temp_file:
             temp_file.write(file_data)
             temp_file_path = temp_file.name
