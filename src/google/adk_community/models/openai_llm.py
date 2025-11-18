@@ -536,7 +536,7 @@ class OpenAI(BaseLlm):
                 # If AsyncAzureOpenAI is not available, raise an error as the sync client is not compatible.
                 raise ImportError(
                     "The installed `openai` version is too old for Azure async support. "
-                    "Please upgrade to `openai>=1.2.0`."
+                    "Please upgrade to `openai>=2.7.2`."
                 )
 
         # Default (OpenAI) path
@@ -949,9 +949,6 @@ class OpenAI(BaseLlm):
             except Exception as e:
                 # If there's any issue accessing config attributes, log and continue
                 logger.debug(f"Error checking structured output config: {e}")
-                # Re-raise to see what's happening in tests
-                if os.getenv("DEBUG_STRUCTURED_OUTPUT"):
-                    raise
 
         logger.info(
             "Sending request to OpenAI, model: %s, stream: %s",

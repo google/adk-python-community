@@ -453,14 +453,14 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/"})
     @patch("openai.AsyncAzureOpenAI")
     def test_get_openai_client_azure_fallback(self, mock_azure_openai_class):
-        """Test Azure client fallback when AsyncAzureOpenAI not available."""
+        """Test that ImportError is raised when AsyncAzureOpenAI not available."""
         mock_azure_openai_class.side_effect = AttributeError(
             "No AsyncAzureOpenAI"
         )
-        with patch("openai.AzureOpenAI") as mock_azure_sync:
-            openai_client = OpenAI()
-            client = openai_client._get_openai_client()
-            mock_azure_sync.assert_called_once()
+        openai_client = OpenAI()
+        with pytest.raises(ImportError) as exc_info:
+            openai_client._get_openai_client()
+        assert "openai>=2.7.2" in str(exc_info.value)
 
     def test_get_file_extension(self):
         """Test file extension mapping from MIME type."""
@@ -791,17 +791,11 @@ class TestOpenAIClass:
                         # Mock os.path.exists and os.unlink
                         with patch("os.path.exists", return_value=True):
                             with patch("os.unlink"):
-                                # In async context, the method may return a coroutine
-                                result = openai_client._upload_file_to_openai(
+                                file_id = await openai_client._upload_file_to_openai(
                                     b"test data",
                                     "application/pdf",
                                     "test.pdf",
                                 )
-                                # If it's a coroutine, await it
-                                if asyncio.iscoroutine(result):
-                                    file_id = await result
-                                else:
-                                    file_id = result
 
                     assert file_id == "file-123"
                     mock_client.files.create.assert_called_once()
