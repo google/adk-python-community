@@ -312,11 +312,12 @@ def function_declaration_to_openai_tool(
     return {"type": "function", "function": function_schema}
 
 
-async def _fetch_url_content(url: str) -> Optional[bytes]:
+async def _fetch_url_content(url: str, timeout: float = 30.0) -> Optional[bytes]:
     """Fetches content from a URL asynchronously.
     
     Args:
         url: The URL to fetch content from
+        timeout: Timeout in seconds for the HTTP request (default: 30.0)
         
     Returns:
         The content as bytes, or None if fetching failed
@@ -326,7 +327,7 @@ async def _fetch_url_content(url: str) -> Optional[bytes]:
         try:
             import aiohttp  # type: ignore[import-untyped]
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
                     if resp.status == 200:
                         return await resp.read()
                     else:
@@ -336,7 +337,7 @@ async def _fetch_url_content(url: str) -> Optional[bytes]:
             # Fallback to httpx if aiohttp is not available
             try:
                 import httpx
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.get(url)
                     if resp.status_code == 200:
                         return resp.content
@@ -357,11 +358,13 @@ async def _fetch_url_content(url: str) -> Optional[bytes]:
 
 async def _convert_media_content_to_part(
     content_part: Any,
+    timeout: float = 30.0,
 ) -> Optional[types.Part]:
     """Converts OpenAI media content (image_url, etc.) to Google GenAI Part.
     
     Args:
         content_part: The OpenAI content part with media content
+        timeout: Timeout in seconds for fetching external URLs (default: 30.0)
         
     Returns:
         A Google GenAI Part with inline_data, or None if conversion failed
@@ -420,7 +423,7 @@ async def _convert_media_content_to_part(
                 return None
         else:
             # It's an actual URL - fetch the content
-            image_data = await _fetch_url_content(url)
+            image_data = await _fetch_url_content(url, timeout=timeout)
             if image_data:
                 # Try to determine MIME type from URL or content
                 mime_type = "image/png"  # Default
@@ -449,11 +452,16 @@ async def _convert_media_content_to_part(
 
 async def openai_response_to_llm_response(
     response: Any,
+    url_fetch_timeout: float = 30.0,
 ) -> LlmResponse:
     """Converts OpenAI Responses API response to ADK LlmResponse.
     
     Supports Responses API format (output list).
     Handles multimodal responses including images and other media.
+    
+    Args:
+        response: The OpenAI Responses API response object
+        url_fetch_timeout: Timeout in seconds for fetching external image URLs (default: 30.0)
     """
     logger.info("Received response from OpenAI.")
     logger.debug(f"OpenAI response: {response}")
@@ -478,7 +486,7 @@ async def openai_response_to_llm_response(
                                         content_parts.append(types.Part(text=content_part.text))
                                     elif content_part.type == "image_url" or hasattr(content_part, "image_url"):
                                         # Handle image_url and other media content
-                                        media_part = await _convert_media_content_to_part(content_part)
+                                        media_part = await _convert_media_content_to_part(content_part, timeout=url_fetch_timeout)
                                         if media_part:
                                             content_parts.append(media_part)
                                         else:
@@ -622,10 +630,13 @@ class OpenAI(BaseLlm):
       model: The name of the OpenAI model or (for Azure) the deployment name.
       use_files_api: Whether to use OpenAI's Files API for file uploads (default: True).
                      The Responses API supports file inputs, so Files API is enabled by default.
+      url_fetch_timeout: Timeout in seconds for fetching external image URLs (default: 30.0).
+                         This is used when converting image_url content parts from external URLs.
     """
 
     model: str = "gpt-4o"
     use_files_api: bool = True
+    url_fetch_timeout: float = 30.0
 
     @classmethod
     @override
@@ -1370,7 +1381,7 @@ class OpenAI(BaseLlm):
             else:
                 # Handle non-streaming response using Responses API
                 response = await client.responses.create(**request_params)
-                llm_response = await openai_response_to_llm_response(response)
+                llm_response = await openai_response_to_llm_response(response, url_fetch_timeout=self.url_fetch_timeout)
                 yield llm_response
 
         except openai.APIError as e:

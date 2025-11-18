@@ -17,6 +17,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from unittest.mock import Mock
 
+import openai
 import pytest
 
 try:
@@ -724,7 +725,7 @@ class TestOpenAIClass:
 
         mock_client = AsyncMock()
         mock_client.responses.create = AsyncMock(
-            side_effect=Exception("API Error")
+            side_effect=openai.APIError("API Error", request=None, body=None)
         )
 
         with patch.object(
