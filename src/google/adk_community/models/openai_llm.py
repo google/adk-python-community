@@ -1100,8 +1100,8 @@ class OpenAI(BaseLlm):
                                             if hasattr(base, "__name__") and base.__name__ == "BaseModel":
                                                 is_base_model_subclass = True
                                                 break
-                                    except (AttributeError, TypeError):
-                                        pass
+                                    except (AttributeError, TypeError) as e:
+                                        logger.debug(f"Could not inspect MRO for schema: {e}")
                                     
                                     is_pydantic_class = has_pydantic_methods or is_base_model_subclass
                                 
@@ -1123,8 +1123,8 @@ class OpenAI(BaseLlm):
                                                 schema_dict = instance.model_json_schema()
                                             elif hasattr(instance, "schema"):
                                                 schema_dict = instance.schema()
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.debug(f"Could not get schema from instantiated model: {e}")
                                 else:
                                     # It's an instance or other object
                                     # Try model_dump (Pydantic v2 instance)
