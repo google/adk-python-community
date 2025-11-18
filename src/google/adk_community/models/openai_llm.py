@@ -994,12 +994,7 @@ class OpenAI(BaseLlm):
                     
                     if not web_search_tool_exists:
                         # Add web search tool to tools list
-                        if current_tools is None:
-                            current_tools = []
-                        if not isinstance(current_tools, list):
-                            current_tools = list(current_tools) if current_tools else []
-                        web_search_tool = {"type": "web_search"}
-                        current_tools.append(web_search_tool)
+                        current_tools.append({"type": "web_search"})
                         request_params["tools"] = current_tools
                         # Update tools variable for consistency
                         tools = current_tools
@@ -1217,7 +1212,7 @@ class OpenAI(BaseLlm):
                 if tool_calls:
                     for tc in tool_calls:
                         logger.debug(f"    tool_call: id={tc.get('id')}, name={tc.get('function', {}).get('name')}")
-        logger.debug(f"OpenAI request params (excluding messages): { {k: v for k, v in request_params.items() if k != 'messages'} }")
+        logger.debug(f"OpenAI request params (excluding input): { {k: v for k, v in request_params.items() if k != 'input'} }")
 
         try:
             if stream:
@@ -1297,7 +1292,7 @@ class OpenAI(BaseLlm):
                             if hasattr(event, "delta") and hasattr(event, "call_id"):
                                 call_id = event.call_id
                                 if call_id in accumulated_tool_calls:
-                                    delta_text = getattr(event.delta, "text", "") or getattr(event.delta, "", "")
+                                    delta_text = getattr(event.delta, "text", "")
                                     accumulated_tool_calls[call_id]["function"]["arguments"] += delta_text
                         
                         # Handle response done event
