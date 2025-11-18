@@ -21,6 +21,7 @@ import tempfile
 from typing import Any
 from typing import AsyncGenerator
 from typing import Dict
+from typing import List
 from typing import Literal
 from typing import Optional
 from typing import TYPE_CHECKING
@@ -140,11 +141,16 @@ async def part_to_openai_content(
 async def content_to_openai_message(
     content: types.Content,
     openai_instance: Optional[OpenAI] = None,
-) -> Dict[str, Any]:
-    """Converts ADK Content to OpenAI message format."""
+) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    """Converts ADK Content to OpenAI message format.
+    
+    Returns a single message dict, or a list of messages if there are multiple
+    function responses that need separate tool messages.
+    """
     message_content = []
     tool_calls = []
-    tool_call_id = None
+    function_responses = []  # Collect all function responses
+    regular_parts = []  # Collect regular content parts
 
     for part in content.parts or []:
         if part.function_call:
@@ -164,34 +170,80 @@ async def content_to_openai_message(
                 }
             )
         elif part.function_response:
-            # Handle function responses
-            tool_call_id = part.function_response.id
-            message_content.append(
-                {
-                    "type": "text",
-                    "text": (
-                        json.dumps(part.function_response.response)
-                        if isinstance(part.function_response.response, dict)
-                        else str(part.function_response.response)
-                    ),
-                }
-            )
+            # Collect function responses - each needs its own tool message
+            function_responses.append(part.function_response)
         else:
-            # Handle regular content
+            # Collect regular content parts
+            regular_parts.append(part)
+
+    # If we have function responses, create tool messages for each
+    if function_responses:
+        tool_messages = []
+        for func_response in function_responses:
+            # For tool messages, content should be a string
+            response_text = (
+                json.dumps(func_response.response)
+                if isinstance(func_response.response, dict)
+                else str(func_response.response)
+            )
+            
+            # Validate that we have a tool_call_id
+            if not func_response.id:
+                logger.warning(
+                    f"Function response missing id, cannot create tool message. "
+                    f"Response: {response_text[:100]}"
+                )
+                continue
+            
+            tool_message = {
+                "role": "tool",
+                "content": response_text,
+                "tool_call_id": func_response.id,
+            }
+            tool_messages.append(tool_message)
+            logger.debug(
+                f"Created tool message for tool_call_id={func_response.id}, "
+                f"content_length={len(response_text)}"
+            )
+        
+        # If there are also regular parts, we need to create a regular message too
+        # But typically function responses are in separate Content objects
+        if regular_parts:
+            # Process regular parts
+            for part in regular_parts:
+                openai_content = await part_to_openai_content(part, openai_instance)
+                if isinstance(openai_content, dict):
+                    message_content.append(openai_content)
+                else:
+                    message_content.append({"type": "text", "text": openai_content})
+            
+            # Create regular message and prepend it to tool messages
+            regular_message = {
+                "role": to_openai_role(content.role),
+                "content": message_content,
+            }
+            if tool_calls:
+                regular_message["tool_calls"] = tool_calls
+            
+            return [regular_message] + tool_messages
+        else:
+            # Only function responses, return list of tool messages
+            return tool_messages
+    else:
+        # No function responses, create regular message
+        for part in regular_parts:
             openai_content = await part_to_openai_content(part, openai_instance)
             if isinstance(openai_content, dict):
                 message_content.append(openai_content)
             else:
                 message_content.append({"type": "text", "text": openai_content})
-
-    message = {"role": to_openai_role(content.role), "content": message_content}
-
-    if tool_calls:
-        message["tool_calls"] = tool_calls
-    if tool_call_id:
-        message["tool_call_id"] = tool_call_id
-
-    return message
+        
+        message = {"role": to_openai_role(content.role), "content": message_content}
+        
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+        
+        return message
 
 
 def function_declaration_to_openai_tool(
@@ -514,9 +566,67 @@ class OpenAI(BaseLlm):
                 )
 
         # Convert contents to messages
+        # Track tool_call_ids from assistant messages to ensure they're all responded to
+        pending_tool_call_ids = set()
+        
         for content in llm_request.contents:
-            message = await content_to_openai_message(content, self)
-            messages.append(message)
+            # content_to_openai_message may return a list if there are multiple function responses
+            message_or_messages = await content_to_openai_message(content, self)
+            
+            if isinstance(message_or_messages, list):
+                for msg in message_or_messages:
+                    messages.append(msg)
+                    # Track tool calls and responses
+                    if msg.get("role") == "assistant" and "tool_calls" in msg:
+                        # Add all tool_call_ids to pending set
+                        for tool_call in msg["tool_calls"]:
+                            pending_tool_call_ids.add(tool_call["id"])
+                    elif msg.get("role") == "tool" and "tool_call_id" in msg:
+                        # Remove from pending when we get a tool response
+                        pending_tool_call_ids.discard(msg["tool_call_id"])
+            else:
+                messages.append(message_or_messages)
+                # Track tool calls and responses
+                if message_or_messages.get("role") == "assistant" and "tool_calls" in message_or_messages:
+                    # Add all tool_call_ids to pending set
+                    for tool_call in message_or_messages["tool_calls"]:
+                        pending_tool_call_ids.add(tool_call["id"])
+                elif message_or_messages.get("role") == "tool" and "tool_call_id" in message_or_messages:
+                    # Remove from pending when we get a tool response
+                    pending_tool_call_ids.discard(message_or_messages["tool_call_id"])
+        
+        # Validate message sequence: after assistant messages with tool_calls, 
+        # the next messages must be tool messages
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                tool_call_ids = {tc["id"] for tc in msg["tool_calls"]}
+                # Check that the following messages are tool messages for these tool_call_ids
+                j = i + 1
+                found_tool_call_ids = set()
+                while j < len(messages) and messages[j].get("role") == "tool":
+                    tool_call_id = messages[j].get("tool_call_id")
+                    if tool_call_id:
+                        found_tool_call_ids.add(tool_call_id)
+                    j += 1
+                
+                missing_ids = tool_call_ids - found_tool_call_ids
+                if missing_ids:
+                    logger.warning(
+                        f"Assistant message at index {i} has tool_calls, but missing tool responses "
+                        f"for tool_call_ids: {missing_ids}. Found responses for: {found_tool_call_ids}"
+                    )
+                    # Log the actual message sequence for debugging
+                    logger.debug(
+                        f"Message sequence around index {i}: "
+                        f"{[{'idx': idx, 'role': m.get('role'), 'tool_call_id': m.get('tool_call_id'), 'has_tool_calls': 'tool_calls' in m} for idx, m in enumerate(messages[max(0, i-1):min(len(messages), i+5)])]}"
+                    )
+        
+        # Log warning if there are pending tool calls without responses
+        if pending_tool_call_ids:
+            logger.warning(
+                f"Found {len(pending_tool_call_ids)} tool call(s) without responses: {pending_tool_call_ids}. "
+                "This may cause OpenAI API errors."
+            )
 
         # Prepare tools if present
         tools = []
@@ -790,7 +900,22 @@ class OpenAI(BaseLlm):
             request_params["model"],
             stream,
         )
-        logger.debug(f"OpenAI request: {request_params}")
+        # Log message sequence for debugging tool call issues
+        if messages:
+            logger.debug(f"Message sequence ({len(messages)} messages):")
+            for i, msg in enumerate(messages):
+                role = msg.get("role", "unknown")
+                tool_calls = msg.get("tool_calls")
+                tool_call_id = msg.get("tool_call_id")
+                logger.debug(
+                    f"  [{i}] role={role}, "
+                    f"tool_calls={len(tool_calls) if tool_calls else 0}, "
+                    f"tool_call_id={tool_call_id}"
+                )
+                if tool_calls:
+                    for tc in tool_calls:
+                        logger.debug(f"    tool_call: id={tc.get('id')}, name={tc.get('function', {}).get('name')}")
+        logger.debug(f"OpenAI request params (excluding messages): { {k: v for k, v in request_params.items() if k != 'messages'} }")
 
         try:
             if stream:
