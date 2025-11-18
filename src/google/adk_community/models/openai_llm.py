@@ -428,12 +428,14 @@ class OpenAI(BaseLlm):
     - API keys: OPENAI_API_KEY or AZURE_OPENAI_API_KEY
     - Base URL: OPENAI_BASE_URL (for OpenAI) or AZURE_OPENAI_ENDPOINT (for Azure)
     - Azure API version: AZURE_OPENAI_API_VERSION (defaults to "2024-02-15-preview")
-    - max_tokens, temperature: Set via GenerateContentConfig in the request
-    - Additional parameters: top_p, frequency_penalty, presence_penalty, logit_bias,
-      seed, n, stop, logprobs, top_logprobs, user can be set via GenerateContentConfig
-    - Structured outputs: Supported via response_format, response_schema, or response_mime_type
-      in GenerateContentConfig
-    - Tool choice: Configurable via tool_choice in GenerateContentConfig (none, auto, required, or function)
+    - max_tokens/max_completion_tokens (mapped from max_output_tokens, auto-selected based on model),
+      temperature: Set via GenerateContentConfig in the request
+    - Additional parameters: top_p, frequency_penalty, presence_penalty, seed,
+      candidate_count (maps to OpenAI's n), stop_sequences, logprobs can be set via GenerateContentConfig
+    - Note: logit_bias, top_logprobs, and user are OpenAI-specific and not supported in Google GenAI
+    - Structured outputs: Supported via response_schema or response_mime_type in GenerateContentConfig
+    - Tool choice: Configurable via tool_config.function_calling_config.mode in GenerateContentConfig
+      (uses FunctionCallingConfigMode: NONE, AUTO, ANY, VALIDATED)
 
     Structured Output Support:
     - JSON mode: Set response_mime_type="application/json" or response_format={"type": "json_object"}
@@ -463,6 +465,20 @@ class OpenAI(BaseLlm):
             r"tts-.*",
             r"whisper-.*",
         ]
+
+    def _requires_max_completion_tokens(self, model: str) -> bool:
+        """Check if the model requires max_completion_tokens instead of max_tokens.
+        
+        o1-series models (o1-preview, o1-mini, etc.) require max_completion_tokens.
+        All other models use max_tokens.
+        
+        Args:
+            model: The model name to check
+            
+        Returns:
+            True if the model requires max_completion_tokens, False otherwise
+        """
+        return model.startswith("o1-") if model else False
 
     def _is_azure(self) -> bool:
         """Heuristic to decide whether we're talking to Azure OpenAI.
@@ -658,20 +674,65 @@ class OpenAI(BaseLlm):
 
         if tools:
             request_params["tools"] = tools
-            # Support configurable tool_choice (none, auto, required, or specific function)
+            # Support configurable tool_choice using Google GenAI types only
+            # Use tool_config.function_calling_config.mode (strict Google GenAI format)
             tool_choice = "auto"  # Default
             if llm_request.config:
-                tool_choice_config = getattr(
-                    llm_request.config, "tool_choice", None
-                )
-                if tool_choice_config is not None:
-                    tool_choice = tool_choice_config
+                # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
+                tool_config = getattr(llm_request.config, "tool_config", None)
+                if tool_config is not None:
+                    # Extract function_calling_config from ToolConfig
+                    function_calling_config = getattr(tool_config, "function_calling_config", None)
+                    if function_calling_config is not None:
+                        # Extract mode from FunctionCallingConfig
+                        if hasattr(function_calling_config, "mode") and function_calling_config.mode is not None:
+                            mode = function_calling_config.mode
+                            # Get mode name/value for comparison (handle both enum and string)
+                            mode_name = None
+                            if hasattr(mode, "name"):
+                                mode_name = mode.name
+                            elif hasattr(mode, "value"):
+                                mode_name = str(mode.value)
+                            elif isinstance(mode, str):
+                                mode_name = mode.upper()
+                            
+                            logger.debug(f"Function calling config mode: {mode}, mode_name: {mode_name}")
+                            
+                            # Map Google GenAI FunctionCallingConfigMode to OpenAI tool_choice
+                            if mode_name == "NONE" or mode == types.FunctionCallingConfigMode.NONE:
+                                tool_choice = "none"
+                            elif mode_name == "AUTO" or mode == types.FunctionCallingConfigMode.AUTO:
+                                tool_choice = "auto"
+                            elif mode_name in ("ANY", "VALIDATED") or mode in (types.FunctionCallingConfigMode.ANY, types.FunctionCallingConfigMode.VALIDATED):
+                                tool_choice = "required"  # ANY/VALIDATED means tools should be called, similar to required
+                            
+                            # Check for allowed_function_names for specific function selection
+                            if hasattr(function_calling_config, "allowed_function_names") and function_calling_config.allowed_function_names:
+                                # OpenAI supports function-specific tool_choice as a dict
+                                if len(function_calling_config.allowed_function_names) == 1:
+                                    tool_choice = {
+                                        "type": "function",
+                                        "function": {"name": function_calling_config.allowed_function_names[0]}
+                                    }
+                        else:
+                            logger.debug("Function calling config found but mode is None or missing")
+                    else:
+                        logger.debug("Tool config found but function_calling_config is None or missing")
+                # No fallback - only use Google GenAI tool_config format
             request_params["tool_choice"] = tool_choice
+            # Force parallel_tool_calls to True - all modern models support parallel tool calls
+            # This parameter exists only for backward compatibility with old API specs
+            request_params["parallel_tool_calls"] = True
 
-        # Get max_tokens and temperature from config
+        # Get max_tokens/max_completion_tokens and temperature from config
         if llm_request.config:
             if llm_request.config.max_output_tokens:
-                request_params["max_tokens"] = llm_request.config.max_output_tokens
+                # Map Google GenAI max_output_tokens to OpenAI's parameter
+                # o1-series models require max_completion_tokens, others use max_tokens
+                if self._requires_max_completion_tokens(request_model):
+                    request_params["max_completion_tokens"] = llm_request.config.max_output_tokens
+                else:
+                    request_params["max_tokens"] = llm_request.config.max_output_tokens
 
             if llm_request.config.temperature is not None:
                 request_params["temperature"] = llm_request.config.temperature
@@ -692,55 +753,58 @@ class OpenAI(BaseLlm):
             if presence_penalty is not None:
                 request_params["presence_penalty"] = presence_penalty
 
-            logit_bias = getattr(llm_request.config, "logit_bias", None)
-            if logit_bias is not None:
-                request_params["logit_bias"] = logit_bias
-
+            # logit_bias is OpenAI-specific and not available in Google GenAI - removed
+            
             seed = getattr(llm_request.config, "seed", None)
             if seed is not None:
                 request_params["seed"] = seed
 
-            n = getattr(llm_request.config, "n", None)
-            if n is not None:
-                request_params["n"] = n
+            # Use candidate_count (Google GenAI format) instead of n
+            candidate_count = getattr(llm_request.config, "candidate_count", None)
+            if candidate_count is not None:
+                # Map Google GenAI candidate_count to OpenAI's n parameter
+                request_params["n"] = candidate_count
 
-            stop = getattr(llm_request.config, "stop", None)
-            if stop is not None:
-                # stop can be a string or list of strings
-                request_params["stop"] = stop
+            # Use stop_sequences (Google GenAI format) - strict Google GenAI types only
+            stop_sequences = getattr(llm_request.config, "stop_sequences", None)
+            if stop_sequences is not None:
+                # stop_sequences can be a list of strings
+                request_params["stop"] = stop_sequences
 
             logprobs = getattr(llm_request.config, "logprobs", None)
             if logprobs is not None:
                 request_params["logprobs"] = logprobs
 
-            top_logprobs = getattr(llm_request.config, "top_logprobs", None)
-            if top_logprobs is not None:
-                request_params["top_logprobs"] = top_logprobs
-
-            user = getattr(llm_request.config, "user", None)
-            if user is not None:
-                request_params["user"] = user
+            # top_logprobs is OpenAI-specific and not available in Google GenAI - removed
+            # response_logprobs exists in Google GenAI but is a boolean flag, not equivalent to top_logprobs
+            
+            # user is OpenAI-specific and not available in Google GenAI - removed
 
             # Handle structured output / response format
+            # Priority: Google GenAI types (response_schema, response_mime_type) first
+            # Then check for response_format (OpenAI-specific, for direct API compatibility)
             # OpenAI supports two types of structured outputs:
             # 1. JSON mode: {"type": "json_object"}
             # 2. Structured outputs with schema: {"type": "json_schema", "json_schema": {...}}
             
-            # Check for response_format in config (if available in ADK)
-            # Use getattr with None default to safely check for attribute
-            # Check it's actually a dict with expected structure to avoid MagicMock issues
             try:
                 response_format_set = False
-                # Try to get response_format from config
-                response_format = getattr(llm_request.config, "response_format", None)
-                # Check if it's a dict and has the expected structure (not a MagicMock)
-                if (
-                    response_format is not None
-                    and isinstance(response_format, dict)
-                    and "type" in response_format
-                ):
-                    request_params["response_format"] = response_format
-                    response_format_set = True
+                # First, check for Google GenAI response_schema or response_mime_type
+                # (These are handled below in the response_schema section)
+                
+                # Then check for response_format (OpenAI-specific, for direct API compatibility)
+                # Use getattr with None default to safely check for attribute
+                # Check it's actually a dict with expected structure to avoid MagicMock issues
+                if not response_format_set:
+                    response_format = getattr(llm_request.config, "response_format", None)
+                    # Check if it's a dict and has the expected structure (not a MagicMock)
+                    if (
+                        response_format is not None
+                        and isinstance(response_format, dict)
+                        and "type" in response_format
+                    ):
+                        request_params["response_format"] = response_format
+                        response_format_set = True
                 
                 if not response_format_set:
                     # Check for response_schema (JSON schema for structured outputs)

@@ -19,6 +19,12 @@ from unittest.mock import Mock
 
 import pytest
 
+try:
+    from pydantic import BaseModel
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+
 from google.adk.models.llm_request import LlmRequest
 from google.adk_community.models.openai_llm import (
     OpenAI,
@@ -199,7 +205,7 @@ class TestHelperFunctions:
 
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_function_response(self):
-        """Test conversion of content with function response to OpenAI message."""
+        """Test conversion of content with function response to OpenAI tool message."""
         content = types.Content(
             role="user",
             parts=[
@@ -211,9 +217,60 @@ class TestHelperFunctions:
             ],
         )
         message = await content_to_openai_message(content)
-        assert message["role"] == "user"
-        assert message["tool_call_id"] == "call_123"
-        assert len(message["content"]) == 1
+        # Function responses should create tool messages
+        assert isinstance(message, list)
+        assert len(message) == 1
+        tool_message = message[0]
+        assert tool_message["role"] == "tool"
+        assert tool_message["tool_call_id"] == "call_123"
+        # Tool message content should be a string, not an array
+        assert isinstance(tool_message["content"], str)
+        assert "temperature" in tool_message["content"]
+
+    @pytest.mark.asyncio
+    async def test_content_to_openai_message_with_multiple_function_responses(self):
+        """Test conversion of content with multiple function responses."""
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        id="call_123", response={"result": "first"}
+                    )
+                ),
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        id="call_456", response={"result": "second"}
+                    )
+                ),
+            ],
+        )
+        messages = await content_to_openai_message(content)
+        # Should return a list of tool messages
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "tool"
+        assert messages[0]["tool_call_id"] == "call_123"
+        assert messages[1]["role"] == "tool"
+        assert messages[1]["tool_call_id"] == "call_456"
+
+    @pytest.mark.asyncio
+    async def test_content_to_openai_message_with_function_response_no_id(self):
+        """Test that function response without id is skipped with warning."""
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        id=None, response={"result": "test"}
+                    )
+                )
+            ],
+        )
+        messages = await content_to_openai_message(content)
+        # Should return empty list when function_response has no id
+        assert isinstance(messages, list)
+        assert len(messages) == 0
 
     def test_function_declaration_to_openai_tool(self):
         """Test conversion of function declaration to OpenAI tool."""
@@ -667,6 +724,7 @@ class TestOpenAIClass:
         assert "tools" in call_args
         assert len(call_args["tools"]) == 1
         assert call_args["tool_choice"] == "auto"
+        assert call_args["parallel_tool_calls"] is True
 
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
@@ -705,7 +763,7 @@ class TestOpenAIClass:
         """Test file upload when Files API is disabled."""
         openai_client = OpenAI(use_files_api=False)
         with pytest.raises(ValueError, match="Files API is disabled"):
-            openai_client._upload_file_to_openai(
+            await openai_client._upload_file_to_openai(
                 b"test data", "application/pdf", "test.pdf"
             )
 
@@ -972,7 +1030,7 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_config_max_tokens(self):
-        """Test content generation with max_tokens from config."""
+        """Test content generation with max_tokens from config (mapped from max_output_tokens)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
             contents=[
@@ -1001,6 +1059,76 @@ class TestOpenAIClass:
 
         call_args = mock_client.chat.completions.create.call_args[1]
         assert call_args["max_tokens"] == 200
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_config_max_completion_tokens_o1(self):
+        """Test content generation with max_completion_tokens for o1 models."""
+        openai_client = OpenAI()
+        llm_request = LlmRequest(
+            model="o1-preview",
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Hello!")]
+                )
+            ],
+            config=types.GenerateContentConfig(max_output_tokens=200),
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.chat.completions.create.call_args[1]
+        assert call_args["max_completion_tokens"] == 200
+        assert "max_tokens" not in call_args
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_config_max_completion_tokens_o1_mini(self):
+        """Test content generation with max_completion_tokens for o1-mini model."""
+        openai_client = OpenAI()
+        llm_request = LlmRequest(
+            model="o1-mini",
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Hello!")]
+                )
+            ],
+            config=types.GenerateContentConfig(max_output_tokens=150),
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.chat.completions.create.call_args[1]
+        assert call_args["max_completion_tokens"] == 150
+        assert "max_tokens" not in call_args
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1072,21 +1200,18 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_response_format(self):
-        """Test content generation with explicit response_format."""
+        """Test content generation with explicit response_format.
+        
+        Note: response_format is OpenAI-specific. For Google GenAI format,
+        use response_mime_type or response_schema instead. This test uses
+        object.__setattr__ to test the OpenAI-specific response_format field.
+        """
         openai_client = OpenAI()
-        # Create a simple config object with response_format
-        # Use a simple object instead of MagicMock to avoid attribute access issues
-        class MockConfig:
-            def __init__(self):
-                self.response_format = {"type": "json_object"}
-                self.max_output_tokens = None
-                self.temperature = None
-                self.system_instruction = None
-                self.tools = None
-                self.response_schema = None
-                self.response_mime_type = None
-
-        mock_config = MockConfig()
+        # response_format is not a standard GenerateContentConfig field,
+        # but we support it for direct OpenAI API compatibility
+        # Use object.__setattr__ to set it for testing
+        config = types.GenerateContentConfig()
+        object.__setattr__(config, "response_format", {"type": "json_object"})
 
         llm_request = LlmRequest(
             contents=[
@@ -1094,7 +1219,7 @@ class TestOpenAIClass:
                     role="user", parts=[types.Part(text="Return JSON")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1172,7 +1297,11 @@ class TestOpenAIClass:
         assert "response_format" in call_args
         assert call_args["response_format"]["type"] == "json_schema"
         assert "json_schema" in call_args["response_format"]
-        assert call_args["response_format"]["json_schema"]["type"] == "object"
+        json_schema = call_args["response_format"]["json_schema"]
+        # OpenAI requires "name" and "schema" fields
+        assert "name" in json_schema
+        assert "schema" in json_schema
+        assert json_schema["schema"]["type"] == "object"
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1331,7 +1460,6 @@ class TestOpenAIClass:
                 llm_request, stream=False
             ):
                 pass
-
         call_args = mock_client.chat.completions.create.call_args[1]
         assert call_args["seed"] == 42
 
@@ -1340,20 +1468,16 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_stop(self):
         """Test content generation with stop sequences."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.stop = ["\n", "END"]
-                self.max_output_tokens = None
-                self.temperature = None
+        # Use proper Google GenAI format with stop_sequences
+        config = types.GenerateContentConfig(stop_sequences=["\n", "END"])
 
-        mock_config = MockConfig()
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1386,21 +1510,21 @@ class TestOpenAIClass:
         )
         tool = types.Tool(function_declarations=[func_decl])
 
-        class MockConfig:
-            def __init__(self):
-                self.tools = [tool]
-                self.tool_choice = "required"
-                self.max_output_tokens = None
-                self.temperature = None
+        # Use proper Google GenAI format with tool_config
+        # tool_config is a ToolConfig that contains function_calling_config
+        function_calling_config = types.FunctionCallingConfig(
+            mode=types.FunctionCallingConfigMode.ANY  # ANY maps to "required" in OpenAI
+        )
+        tool_config = types.ToolConfig(function_calling_config=function_calling_config)
+        config = types.GenerateContentConfig(tools=[tool], tool_config=tool_config)
 
-        mock_config = MockConfig()
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1421,6 +1545,7 @@ class TestOpenAIClass:
 
         call_args = mock_client.chat.completions.create.call_args[1]
         assert call_args["tool_choice"] == "required"
+        assert call_args["parallel_tool_calls"] is True
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1436,32 +1561,49 @@ class TestOpenAIClass:
         )
 
         # Create mock streaming chunks with tool calls
+        # Use proper mock structure with actual string values
+        mock_function1 = MagicMock()
+        mock_function1.name = "test_function"
+        mock_function1.arguments = '{"key": "val'
+        
+        mock_tool_call1 = MagicMock()
+        mock_tool_call1.id = "call_123"
+        mock_tool_call1.type = "function"
+        mock_tool_call1.function = mock_function1
+        
+        mock_delta1 = MagicMock()
+        mock_delta1.content = None
+        mock_delta1.tool_calls = [mock_tool_call1]
+        
+        mock_choice1 = MagicMock()
+        mock_choice1.delta = mock_delta1
+        mock_choice1.finish_reason = None
+        
         mock_chunk1 = MagicMock()
-        mock_chunk1.choices = [MagicMock()]
-        mock_chunk1.choices[0].delta = MagicMock()
-        mock_chunk1.choices[0].delta.content = None
-        mock_chunk1.choices[0].delta.tool_calls = [
-            MagicMock(
-                id="call_123",
-                function=MagicMock(name="test_function", arguments='{"key": "val'),
-            )
-        ]
-        mock_chunk1.choices[0].finish_reason = None
+        mock_chunk1.choices = [mock_choice1]
         mock_chunk1.model = "gpt-4o"
         mock_chunk1.system_fingerprint = "fp_123"
         mock_chunk1.usage = None
 
+        mock_function2 = MagicMock()
+        mock_function2.name = None
+        mock_function2.arguments = 'ue"}'
+        
+        mock_tool_call2 = MagicMock()
+        mock_tool_call2.id = "call_123"
+        mock_tool_call2.type = "function"
+        mock_tool_call2.function = mock_function2
+        
+        mock_delta2 = MagicMock()
+        mock_delta2.content = None
+        mock_delta2.tool_calls = [mock_tool_call2]
+        
+        mock_choice2 = MagicMock()
+        mock_choice2.delta = mock_delta2
+        mock_choice2.finish_reason = "tool_calls"
+        
         mock_chunk2 = MagicMock()
-        mock_chunk2.choices = [MagicMock()]
-        mock_chunk2.choices[0].delta = MagicMock()
-        mock_chunk2.choices[0].delta.content = None
-        mock_chunk2.choices[0].delta.tool_calls = [
-            MagicMock(
-                id="call_123",
-                function=MagicMock(name=None, arguments='ue"}'),
-            )
-        ]
-        mock_chunk2.choices[0].finish_reason = "tool_calls"
+        mock_chunk2.choices = [mock_choice2]
         mock_chunk2.model = None
         mock_chunk2.system_fingerprint = None
         mock_chunk2.usage = MagicMock()
@@ -1515,4 +1657,256 @@ class TestOpenAIClass:
         result = openai_response_to_llm_response(mock_response)
         assert result.content is not None
         assert result.usage_metadata is not None
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_response_schema_with_title(self):
+        """Test content generation with JSON schema that has a title."""
+        openai_client = OpenAI()
+        class MockConfig:
+            def __init__(self):
+                self.response_format = None
+                self.response_schema = {
+                    "title": "PersonSchema",
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "age": {"type": "integer"},
+                    },
+                }
+                self.max_output_tokens = None
+                self.temperature = None
+                self.system_instruction = None
+                self.tools = None
+                self.response_mime_type = None
+
+        mock_config = MockConfig()
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Return structured data")]
+                )
+            ],
+            config=mock_config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.chat.completions.create.call_args[1]
+        assert "response_format" in call_args
+        json_schema = call_args["response_format"]["json_schema"]
+        # Should use title from schema as name
+        assert json_schema["name"] == "PersonSchema"
+        assert "schema" in json_schema
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_response_schema_already_formatted(self):
+        """Test content generation with response_schema already in OpenAI format."""
+        openai_client = OpenAI()
+        class MockConfig:
+            def __init__(self):
+                self.response_format = None
+                self.response_schema = {
+                    "name": "MySchema",
+                    "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    },
+                }
+                self.max_output_tokens = None
+                self.temperature = None
+                self.system_instruction = None
+                self.tools = None
+                self.response_mime_type = None
+
+        mock_config = MockConfig()
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Return structured data")]
+                )
+            ],
+            config=mock_config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.chat.completions.create.call_args[1]
+        assert "response_format" in call_args
+        json_schema = call_args["response_format"]["json_schema"]
+        # Should use the already-formatted schema as-is
+        assert json_schema["name"] == "MySchema"
+        assert "schema" in json_schema
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_tool_calls_and_responses(self):
+        """Test content generation with tool calls followed by tool responses."""
+        openai_client = OpenAI()
+        # Create a request with assistant message (tool calls) and tool responses
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="call_123",
+                                name="get_weather",
+                                args={"location": "SF"},
+                            )
+                        )
+                    ],
+                ),
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                id="call_123", response={"temp": 72}
+                            )
+                        )
+                    ],
+                ),
+            ],
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        # Verify the message sequence
+        call_args = mock_client.chat.completions.create.call_args[1]
+        messages = call_args["messages"]
+        # Should have assistant message with tool_calls
+        assert messages[0]["role"] == "assistant"
+        assert "tool_calls" in messages[0]
+        # Should have tool message following
+        assert messages[1]["role"] == "tool"
+        assert messages[1]["tool_call_id"] == "call_123"
+
+    @pytest.mark.asyncio
+    async def test_content_to_openai_message_with_function_response_and_regular_parts(self):
+        """Test content with both function response and regular parts."""
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part(text="Here's the result:"),
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        id="call_123", response={"result": "success"}
+                    )
+                ),
+            ],
+        )
+        messages = await content_to_openai_message(content)
+        # Should return list with regular message and tool message
+        assert isinstance(messages, list)
+        assert len(messages) == 2
+        # First should be regular message
+        assert messages[0]["role"] == "user"
+        assert len(messages[0]["content"]) > 0
+        # Second should be tool message
+        assert messages[1]["role"] == "tool"
+        assert messages[1]["tool_call_id"] == "call_123"
+
+    @pytest.mark.skipif(not PYDANTIC_AVAILABLE, reason="Pydantic not available")
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_pydantic_model_schema(self):
+        """Test content generation with Pydantic model as response schema."""
+        from pydantic import BaseModel, Field
+
+        class PersonModel(BaseModel):
+            name: str = Field(description="Person's name")
+            age: int = Field(description="Person's age")
+
+        openai_client = OpenAI()
+        class MockConfig:
+            def __init__(self):
+                self.response_format = None
+                self.response_schema = PersonModel
+                self.max_output_tokens = None
+                self.temperature = None
+                self.system_instruction = None
+                self.tools = None
+                self.response_mime_type = None
+
+        mock_config = MockConfig()
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Return a person")]
+                )
+            ],
+            config=mock_config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.choices = []
+        mock_response.usage = None
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.chat.completions.create.call_args[1]
+        assert "response_format" in call_args
+        json_schema = call_args["response_format"]["json_schema"]
+        # Should extract name from Pydantic model class
+        assert json_schema["name"] == "PersonModel"
+        assert "schema" in json_schema
+        # Schema should have properties from Pydantic model
+        schema_props = json_schema["schema"].get("properties", {})
+        assert "name" in schema_props
+        assert "age" in schema_props
 
