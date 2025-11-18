@@ -462,15 +462,6 @@ class TestOpenAIClass:
             openai_client._get_openai_client()
         assert "openai>=2.7.2" in str(exc_info.value)
 
-    def test_get_file_extension(self):
-        """Test file extension mapping from MIME type."""
-        openai_client = OpenAI()
-        assert openai_client._get_file_extension("application/pdf") == ".pdf"
-        assert openai_client._get_file_extension("image/jpeg") == ".jpg"
-        assert openai_client._get_file_extension("image/png") == ".png"
-        assert openai_client._get_file_extension("text/plain") == ".txt"
-        assert openai_client._get_file_extension("unknown/type") == ".bin"
-
     def test_preprocess_request(self):
         """Test request preprocessing."""
         openai_client = OpenAI(model="gpt-4")
@@ -488,7 +479,7 @@ class TestOpenAIClass:
     @pytest.mark.asyncio
     async def test_handle_file_data_inline_image(self):
         """Test handling inline image data."""
-        openai_client = OpenAI(use_files_api=False)
+        openai_client = OpenAI()
         image_data = b"fake_image_data"
         part = types.Part(
             inline_data=types.Blob(
@@ -732,83 +723,9 @@ class TestOpenAIClass:
         assert "API Error" in responses[0].error_message
 
     @pytest.mark.asyncio
-    async def test_upload_file_to_openai_disabled(self):
-        """Test file upload when Files API is disabled."""
-        openai_client = OpenAI(use_files_api=False)
-        with pytest.raises(ValueError, match="Files API is disabled"):
-            await openai_client._upload_file_to_openai(
-                b"test data", "application/pdf", "test.pdf"
-            )
-
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @pytest.mark.asyncio
-    async def test_upload_file_to_openai_enabled(self):
-        """Test file upload when Files API is enabled."""
-        openai_client = OpenAI(use_files_api=True)
-
-        mock_client = AsyncMock()
-        mock_file = MagicMock()
-        mock_file.id = "file-123"
-        mock_client.files.create = AsyncMock(return_value=mock_file)
-
-        import tempfile
-        import os
-        import asyncio
-
-        with patch.object(
-            openai_client, "_get_openai_client", return_value=mock_client
-        ):
-            # Create a real temp file that will be used
-            real_temp = tempfile.NamedTemporaryFile(
-                delete=False, suffix=".pdf"
-            )
-            real_temp.write(b"test data")
-            real_temp.close()
-            real_temp_path = real_temp.name
-
-            try:
-                # Mock tempfile.NamedTemporaryFile to return our real file
-                def mock_named_tempfile(*args, **kwargs):
-                    mock_file = MagicMock()
-                    mock_file.name = real_temp_path
-                    mock_file.write = Mock()
-                    mock_file.__enter__ = Mock(return_value=mock_file)
-                    mock_file.__exit__ = Mock(return_value=None)
-                    return mock_file
-
-                with patch(
-                    "google.adk_community.models.openai_llm.tempfile.NamedTemporaryFile",
-                    side_effect=mock_named_tempfile,
-                ):
-                    # Mock open to return the file handle
-                    with patch("builtins.open") as mock_open:
-                        mock_file_handle = open(real_temp_path, "rb")
-                        mock_open.return_value.__enter__ = Mock(
-                            return_value=mock_file_handle
-                        )
-                        mock_open.return_value.__exit__ = Mock(return_value=None)
-
-                        # Mock os.path.exists and os.unlink
-                        with patch("os.path.exists", return_value=True):
-                            with patch("os.unlink"):
-                                file_id = await openai_client._upload_file_to_openai(
-                                    b"test data",
-                                    "application/pdf",
-                                    "test.pdf",
-                                )
-
-                    assert file_id == "file-123"
-                    mock_client.files.create.assert_called_once()
-            finally:
-                # Clean up
-                if os.path.exists(real_temp_path):
-                    os.unlink(real_temp_path)
-
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @pytest.mark.asyncio
-    async def test_handle_file_data_with_files_api_pdf(self):
-        """Test handling PDF file with Files API enabled."""
-        openai_client = OpenAI(use_files_api=True)
+    async def test_handle_file_data_with_pdf(self):
+        """Test handling PDF file with base64 encoding."""
+        openai_client = OpenAI()
         pdf_data = b"fake_pdf_data"
         part = types.Part(
             inline_data=types.Blob(
@@ -818,89 +735,17 @@ class TestOpenAIClass:
             )
         )
 
-        mock_client = AsyncMock()
-        mock_file = MagicMock()
-        mock_file.id = "file-123"
-        mock_client.files.create = AsyncMock(return_value=mock_file)
+        result = await openai_client._handle_file_data(part)
 
-        import tempfile
-        import os
-
-        with patch.object(
-            openai_client, "_get_openai_client", return_value=mock_client
-        ):
-            # Create a real temp file that will be used
-            real_temp = tempfile.NamedTemporaryFile(
-                delete=False, suffix=".pdf"
-            )
-            real_temp.write(pdf_data)
-            real_temp.close()
-            real_temp_path = real_temp.name
-
-            try:
-                # Mock tempfile.NamedTemporaryFile to return our real file
-                def mock_named_tempfile(*args, **kwargs):
-                    mock_file = MagicMock()
-                    mock_file.name = real_temp_path
-                    mock_file.write = Mock()
-                    mock_file.__enter__ = Mock(return_value=mock_file)
-                    mock_file.__exit__ = Mock(return_value=None)
-                    return mock_file
-
-                with patch(
-                    "google.adk_community.models.openai_llm.tempfile.NamedTemporaryFile",
-                    side_effect=mock_named_tempfile,
-                ):
-                    # Mock open to return the file handle
-                    with patch("builtins.open") as mock_open:
-                        mock_file_handle = open(real_temp_path, "rb")
-                        mock_open.return_value.__enter__ = Mock(
-                            return_value=mock_file_handle
-                        )
-                        mock_open.return_value.__exit__ = Mock(return_value=None)
-
-                        # Mock os.path.exists and os.unlink
-                        with patch("os.path.exists", return_value=True):
-                            with patch("os.unlink"):
-                                result = await openai_client._handle_file_data(part)
-
-                    assert result["type"] == "text"
-                    assert "file-123" in result["text"]
-            finally:
-                # Clean up
-                if os.path.exists(real_temp_path):
-                    os.unlink(real_temp_path)
-
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
-    @pytest.mark.asyncio
-    async def test_handle_file_data_files_api_fallback(self):
-        """Test Files API fallback to base64 on error."""
-        openai_client = OpenAI(use_files_api=True)
-        pdf_data = b"fake_pdf_data"
-        part = types.Part(
-            inline_data=types.Blob(
-                mime_type="application/pdf",
-                data=pdf_data,
-                display_name="test.pdf",
-            )
-        )
-
-        mock_client = AsyncMock()
-        mock_client.files.create = AsyncMock(side_effect=Exception("Upload failed"))
-
-        with patch.object(
-            openai_client, "_get_openai_client", return_value=mock_client
-        ):
-            result = await openai_client._handle_file_data(part)
-
-        # Should fallback to base64
+        # Should use base64 encoding
         assert result["type"] == "image_url"
         assert "base64" in result["image_url"]["url"]
+        assert "data:application/pdf;base64," in result["image_url"]["url"]
 
     @pytest.mark.asyncio
     async def test_part_to_openai_content_with_openai_instance(self):
         """Test part conversion with OpenAI instance for file handling."""
-        openai_client = OpenAI(use_files_api=False)
+        openai_client = OpenAI()
         image_data = b"fake_image_data"
         part = types.Part(
             inline_data=types.Blob(
@@ -914,7 +759,7 @@ class TestOpenAIClass:
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_openai_instance(self):
         """Test content conversion with OpenAI instance."""
-        openai_client = OpenAI(use_files_api=False)
+        openai_client = OpenAI()
         content = types.Content(
             role="user",
             parts=[

@@ -4,9 +4,8 @@ This file is an adapted version of your original plugin with optional Azure Open
 Key changes:
 - Detect Azure when `azure_endpoint` (or an Azure-looking `base_url`) is set.
 - Use `AsyncAzureOpenAI` when targeting Azure, `AsyncOpenAI` otherwise.
-- Keep the existing Files API flow but note Azure-specific differences in comments.
 
-References: Azure/OpenAI client usage patterns and Files API differences.
+References: Azure/OpenAI client usage patterns.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import json
 import logging
 import os
 import re
-import tempfile
 from typing import Any
 from typing import AsyncGenerator
 from typing import Dict
@@ -86,8 +84,8 @@ async def part_to_openai_content(
     OpenAI supports:
     - Text content
     - Images (base64 encoded)
-    - PDF files (via Files API or base64 for vision models)
-    - Other documents (via Files API or base64 for vision models)
+    - PDF files (base64 encoded for vision models)
+    - Other documents (base64 encoded for vision models)
     """
     if part.text:
         return {"type": "text", "text": part.text}
@@ -429,11 +427,9 @@ class OpenAI(BaseLlm):
 
     Attributes:
       model: The name of the OpenAI model or (for Azure) the deployment name.
-      use_files_api: Whether to use OpenAI's Files API for file uploads (default: False).
     """
 
     model: str = "gpt-4o"
-    use_files_api: bool = False
 
     @classmethod
     @override
@@ -1121,86 +1117,14 @@ class OpenAI(BaseLlm):
             logger.error(f"Error calling OpenAI API: {e}")
             yield LlmResponse(error_code="OPENAI_API_ERROR", error_message=str(e))
 
-    def _get_file_extension(self, mime_type: str) -> str:
-        """Get file extension from MIME type."""
-        mime_to_ext = {
-            "application/pdf": ".pdf",
-            "image/jpeg": ".jpg",
-            "image/png": ".png",
-            "image/gif": ".gif",
-            "image/webp": ".webp",
-            "text/plain": ".txt",
-            "text/markdown": ".md",
-            "application/json": ".json",
-            "application/msword": ".doc",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-        }
-        return mime_to_ext.get(mime_type, ".bin")
-
-    async def _upload_file_to_openai(
-        self, file_data: bytes, mime_type: str, display_name: Optional[str] = None
-    ) -> str:
-        """Upload a file to OpenAI's Files API and return the file ID.
-
-        This is a fully async implementation that uploads files to OpenAI's Files API.
-        Azure: Files API exists but may differ in accepted purposes or API-version;
-        consult Azure docs if you plan to upload files to an Azure OpenAI resource.
-
-        Args:
-            file_data: The file data as bytes.
-            mime_type: The MIME type of the file.
-            display_name: Optional display name for the file.
-
-        Returns:
-            The file ID from OpenAI.
-
-        Raises:
-            ValueError: If use_files_api is False.
-        """
-        if not self.use_files_api:
-            raise ValueError(
-                "Files API is disabled. Set use_files_api=True to enable file uploads."
-            )
-
-        client = self._get_openai_client()
-
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(
-            mode="wb", delete=False, suffix=self._get_file_extension(mime_type)
-        ) as temp_file:
-            temp_file.write(file_data)
-            temp_file_path = temp_file.name
-
-        try:
-            # Use the client.files.create API (supported both by OpenAI and Azure OpenAI REST endpoints)
-            with open(temp_file_path, "rb") as f:
-                uploaded_file = await client.files.create(
-                    file=f, purpose="assistants"
-                )
-
-            logger.info(
-                f"Uploaded file to OpenAI: {uploaded_file.id} ({display_name or 'unnamed'})"
-            )
-            return uploaded_file.id
-
-        finally:
-            if os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
-
     async def _handle_file_data(self, part: types.Part) -> Union[Dict[str, Any], str]:
-        """Handle file data by uploading to OpenAI Files API or converting to base64."""
+        """Handle file data by converting to base64 encoding."""
         if part.inline_data:
             # Handle inline data
             mime_type = part.inline_data.mime_type or "application/octet-stream"
             data = part.inline_data.data
-            display_name = part.inline_data.display_name
 
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to upload file to OpenAI Files API: {e}. Falling back to base64 encoding."
-                    )
-
-            # For images or when Files API is disabled, use base64 encoding
+            # Use base64 encoding for all file types
             if mime_type.startswith("image/"):
                 data_b64 = base64.b64encode(data).decode()
                 return {
@@ -1223,8 +1147,7 @@ class OpenAI(BaseLlm):
 
             logger.warning(
                 f"OpenAI Chat API does not support file references. "
-                f"File '{display_name}' ({file_uri}) converted to text description. "
-                f"Consider uploading the file directly or using OpenAI's Files API."
+                f"File '{display_name}' ({file_uri}) converted to text description."
             )
 
             return {
@@ -1232,8 +1155,7 @@ class OpenAI(BaseLlm):
                 "text": f"[FILE REFERENCE: {display_name}]\n"
                 f"URI: {file_uri}\n"
                 f"Type: {mime_type}\n"
-                f"Note: OpenAI Chat API does not support file references. "
-                f"Consider uploading the file directly or using OpenAI's Files API.",
+                f"Note: OpenAI Chat API does not support file references.",
             }
 
         return {"type": "text", "text": str(part)}
