@@ -1201,20 +1201,6 @@ class OpenAI(BaseLlm):
             data = part.inline_data.data
             display_name = part.inline_data.display_name
 
-            if self.use_files_api and mime_type in [
-                "application/pdf",
-                "application/msword",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ]:
-                # Upload documents to Files API
-                try:
-                    file_id = await self._upload_file_to_openai(
-                        data, mime_type, display_name
-                    )
-                    return {
-                        "type": "text",
-                        "text": f"[File uploaded to OpenAI: {display_name or 'unnamed file'} (ID: {file_id})]",
-                    }
                 except Exception as e:
                     logger.warning(
                         f"Failed to upload file to OpenAI Files API: {e}. Falling back to base64 encoding."
