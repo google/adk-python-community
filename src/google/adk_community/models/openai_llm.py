@@ -2,7 +2,7 @@
 
 This file uses OpenAI's Responses API which supports file inputs including PDFs
 and other document formats. The Responses API provides a unified interface for
-chat completions and assistants functionality.
+assistants functionality.
 
 Key features:
 - Uses Responses API (client.responses.create)
@@ -593,7 +593,7 @@ class OpenAI(BaseLlm):
 
     This implementation uses OpenAI's Responses API (introduced in 2025), which
     supports file inputs including PDFs and other document formats. The Responses
-    API provides a unified interface for chat completions and assistants functionality.
+    API provides a unified interface for assistants functionality.
 
     Configuration is read from environment variables and the GenerateContentConfig:
     - API keys: OPENAI_API_KEY or AZURE_OPENAI_API_KEY
