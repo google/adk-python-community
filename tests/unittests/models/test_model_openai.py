@@ -101,31 +101,6 @@ class TestHelperFunctions:
         result = await part_to_openai_content(part)
         assert result == {"type": "text", "text": "Hello, world!"}
 
-    @pytest.mark.asyncio
-    async def test_part_to_openai_content_function_call(self):
-        """Test conversion of function call part to OpenAI content."""
-        part = types.Part(
-            function_call=types.FunctionCall(name="test_function", args={})
-        )
-        result = await part_to_openai_content(part)
-        assert result == {
-            "type": "text",
-            "text": "Function call: test_function",
-        }
-
-    @pytest.mark.asyncio
-    async def test_part_to_openai_content_function_response(self):
-        """Test conversion of function response part to OpenAI content."""
-        part = types.Part(
-            function_response=types.FunctionResponse(
-                id="call_123", response={"result": "success"}
-            )
-        )
-        result = await part_to_openai_content(part)
-        assert result == {
-            "type": "text",
-            "text": "Function response: {'result': 'success'}",
-        }
 
     @pytest.mark.asyncio
     async def test_part_to_openai_content_inline_image(self):
@@ -496,20 +471,18 @@ class TestOpenAIClass:
         assert openai_client._get_file_extension("text/plain") == ".txt"
         assert openai_client._get_file_extension("unknown/type") == ".bin"
 
-    @pytest.mark.asyncio
-    async def test_preprocess_request(self):
+    def test_preprocess_request(self):
         """Test request preprocessing."""
         openai_client = OpenAI(model="gpt-4")
         llm_request = LlmRequest(contents=[])
-        await openai_client._preprocess_request(llm_request)
+        openai_client._preprocess_request(llm_request)
         assert llm_request.model == "gpt-4"
 
-    @pytest.mark.asyncio
-    async def test_preprocess_request_with_existing_model(self):
+    def test_preprocess_request_with_existing_model(self):
         """Test request preprocessing doesn't override existing model."""
         openai_client = OpenAI(model="gpt-4")
         llm_request = LlmRequest(contents=[], model="gpt-3.5-turbo")
-        await openai_client._preprocess_request(llm_request)
+        openai_client._preprocess_request(llm_request)
         assert llm_request.model == "gpt-3.5-turbo"
 
     @pytest.mark.asyncio
@@ -1247,26 +1220,16 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_response_schema(self):
         """Test content generation with JSON schema for structured outputs."""
         openai_client = OpenAI()
-        # Create a simple config object with response_schema
-        # Use a simple object instead of MagicMock to avoid attribute access issues
-        class MockConfig:
-            def __init__(self):
-                self.response_format = None
-                self.response_schema = {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "age": {"type": "integer"},
-                    },
-                    "required": ["name"],
-                }
-                self.max_output_tokens = None
-                self.temperature = None
-                self.system_instruction = None
-                self.tools = None
-                self.response_mime_type = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer"},
+                },
+                "required": ["name"],
+            }
+        )
 
         llm_request = LlmRequest(
             contents=[
@@ -1274,7 +1237,7 @@ class TestOpenAIClass:
                     role="user", parts=[types.Part(text="Return structured data")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1308,21 +1271,14 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_top_p(self):
         """Test content generation with top_p parameter."""
         openai_client = OpenAI()
-        # Create a simple config object with top_p
-        class MockConfig:
-            def __init__(self):
-                self.top_p = 0.9
-                self.max_output_tokens = None
-                self.temperature = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(top_p=0.9)
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1349,20 +1305,14 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_frequency_penalty(self):
         """Test content generation with frequency_penalty parameter."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.frequency_penalty = 0.5
-                self.max_output_tokens = None
-                self.temperature = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(frequency_penalty=0.5)
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1389,20 +1339,14 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_presence_penalty(self):
         """Test content generation with presence_penalty parameter."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.presence_penalty = 0.3
-                self.max_output_tokens = None
-                self.temperature = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(presence_penalty=0.3)
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1429,20 +1373,14 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_seed(self):
         """Test content generation with seed parameter."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.seed = 42
-                self.max_output_tokens = None
-                self.temperature = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(seed=42)
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Hello!")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1663,31 +1601,23 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_response_schema_with_title(self):
         """Test content generation with JSON schema that has a title."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.response_format = None
-                self.response_schema = {
-                    "title": "PersonSchema",
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "age": {"type": "integer"},
-                    },
-                }
-                self.max_output_tokens = None
-                self.temperature = None
-                self.system_instruction = None
-                self.tools = None
-                self.response_mime_type = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(
+            response_schema={
+                "title": "PersonSchema",
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer"},
+                },
+            }
+        )
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Return structured data")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1718,30 +1648,22 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_response_schema_already_formatted(self):
         """Test content generation with response_schema already in OpenAI format."""
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.response_format = None
-                self.response_schema = {
-                    "name": "MySchema",
-                    "schema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                    },
-                }
-                self.max_output_tokens = None
-                self.temperature = None
-                self.system_instruction = None
-                self.tools = None
-                self.response_mime_type = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(
+            response_schema={
+                "name": "MySchema",
+                "schema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            }
+        )
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Return structured data")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()
@@ -1863,24 +1785,14 @@ class TestOpenAIClass:
             age: int = Field(description="Person's age")
 
         openai_client = OpenAI()
-        class MockConfig:
-            def __init__(self):
-                self.response_format = None
-                self.response_schema = PersonModel
-                self.max_output_tokens = None
-                self.temperature = None
-                self.system_instruction = None
-                self.tools = None
-                self.response_mime_type = None
-
-        mock_config = MockConfig()
+        config = types.GenerateContentConfig(response_schema=PersonModel)
         llm_request = LlmRequest(
             contents=[
                 types.Content(
                     role="user", parts=[types.Part(text="Return a person")]
                 )
             ],
-            config=mock_config,
+            config=config,
         )
 
         mock_client = AsyncMock()

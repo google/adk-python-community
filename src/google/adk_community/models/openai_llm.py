@@ -91,15 +91,6 @@ async def part_to_openai_content(
     """
     if part.text:
         return {"type": "text", "text": part.text}
-    elif part.function_call:
-        # Function calls are handled separately in the message structure
-        return {"type": "text", "text": f"Function call: {part.function_call.name}"}
-    elif part.function_response:
-        # Function responses are handled separately in the message structure
-        return {
-            "type": "text",
-            "text": f"Function response: {part.function_response.response}",
-        }
     elif part.inline_data or part.file_data:
         # Handle file data using the OpenAI instance's file handling
         if openai_instance:
@@ -565,7 +556,7 @@ class OpenAI(BaseLlm):
 
         Detects Azure vs OpenAI automatically and uses the appropriate async client.
         """
-        await self._preprocess_request(llm_request)
+        self._preprocess_request(llm_request)
         self._maybe_append_user_content(llm_request)
 
         # Initialize OpenAI client
@@ -1267,7 +1258,7 @@ class OpenAI(BaseLlm):
 
         return {"type": "text", "text": str(part)}
 
-    async def _preprocess_request(self, llm_request: LlmRequest):
+    def _preprocess_request(self, llm_request: LlmRequest):
         """Preprocesses the request before sending to OpenAI."""
         # Set model if not specified
         if not llm_request.model:
