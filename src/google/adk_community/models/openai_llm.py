@@ -10,6 +10,23 @@ Key features:
 - Detects Azure when `azure_endpoint` (or an Azure-looking `base_url`) is set
 - Use `AsyncAzureOpenAI` when targeting Azure, `AsyncOpenAI` otherwise
 
+Content Type Mapping (Google GenAI ↔ OpenAI Responses API):
+- Google GenAI → OpenAI:
+  - text → input_text (user/system) or output_text (assistant/model)
+  - inline_data (images) → input_image
+  - file_data → input_file
+  
+- OpenAI → Google GenAI:
+  - input_text/output_text → text (Part)
+  - input_image/computer_screenshot → inline_data (Part with Blob)
+  - input_file → file_data (Part) or text placeholder if file_id not mappable
+  - refusal → text (Part) with [REFUSAL] prefix
+  - summary_text → text (Part) with [SUMMARY] prefix
+
+Note: Some OpenAI-specific types (refusal, computer_screenshot, summary_text)
+are converted to text with semantic markers, as Google GenAI doesn't have direct
+equivalents. File references using OpenAI's file_id may need special handling.
+
 References: OpenAI Responses API, Azure/OpenAI client usage patterns.
 """
 
@@ -64,7 +81,13 @@ def _convert_content_type_for_responses_api(
     
     Responses API requires specific content types:
     - input_text, input_image, input_file for user/system messages
-    - output_text for assistant/model messages
+    - output_text, refusal, summary_text for assistant/model messages
+    - computer_screenshot (can be input or output)
+    
+    Mapping from Google GenAI to OpenAI Responses API:
+    - text → input_text (user/system) or output_text (assistant/model)
+    - image_url → input_image (user/system) or output_text (assistant/model)
+    - file → input_file (user/system)
     
     Args:
         content: Content dict with 'type' field
@@ -538,9 +561,23 @@ async def openai_response_to_llm_response(
                             # content is a list of content parts
                             for content_part in output_item.content:
                                 if hasattr(content_part, "type"):
-                                    if content_part.type == "text" and hasattr(content_part, "text"):
-                                        content_parts.append(types.Part(text=content_part.text))
-                                    elif content_part.type == "image_url":
+                                    content_type = content_part.type
+                                    
+                                    # Handle text-based content types
+                                    if content_type in ("text", "input_text", "output_text", "refusal", "summary_text"):
+                                        text_content = getattr(content_part, "text", "")
+                                        if text_content:
+                                            # For refusal and summary_text, preserve semantic meaning in text
+                                            if content_type == "refusal":
+                                                # Mark refusal content for potential safety handling
+                                                text_content = f"[REFUSAL] {text_content}"
+                                            elif content_type == "summary_text":
+                                                # Mark summary content
+                                                text_content = f"[SUMMARY] {text_content}"
+                                            content_parts.append(types.Part(text=text_content))
+                                    
+                                    # Handle image content types
+                                    elif content_type in ("image_url", "input_image", "computer_screenshot"):
                                         # Handle image_url and other media content
                                         media_part = await _convert_media_content_to_part(content_part, timeout=url_fetch_timeout)
                                         if media_part:
@@ -549,6 +586,26 @@ async def openai_response_to_llm_response(
                                             logger.debug(
                                                 f"Could not convert media content to Part: {getattr(content_part, 'type', 'unknown')}"
                                             )
+                                    
+                                    # Handle file content
+                                    elif content_type == "input_file":
+                                        # OpenAI Responses API file content
+                                        file_id = getattr(content_part, "file_id", None)
+                                        if file_id:
+                                            # Convert file reference to Google GenAI format
+                                            # Note: Google GenAI uses file_data with file_uri, not file_id
+                                            # We'll need to handle this differently - for now, log a warning
+                                            logger.warning(
+                                                f"OpenAI file_id ({file_id}) cannot be directly mapped to Google GenAI file_data. "
+                                                f"File references may need to be handled separately."
+                                            )
+                                            # Create a text placeholder indicating file reference
+                                            content_parts.append(
+                                                types.Part(text=f"[FILE_REFERENCE: {file_id}]")
+                                            )
+                                        else:
+                                            logger.debug("input_file content part missing file_id")
+                                    
                                     else:
                                         # Log unknown content part types for debugging
                                         logger.debug(
