@@ -57,15 +57,6 @@ def to_openai_role(role: Optional[str]) -> Literal["user", "assistant", "system"
         return "user"
 
 
-def _is_image_part(part: types.Part) -> bool:
-    """Checks if a part contains image data."""
-    return (
-        part.inline_data
-        and part.inline_data.mime_type
-        and part.inline_data.mime_type.startswith("image")
-    )
-
-
 async def part_to_openai_content(
     part: types.Part,
     openai_instance: Optional[OpenAI] = None,
@@ -129,9 +120,17 @@ async def content_to_openai_message(
     for part in content.parts or []:
         if part.function_call:
             # Handle function calls
+            tool_call_id = part.function_call.id
+            if not tool_call_id:
+                tool_call_id = f"call_{len(tool_calls)}"
+                logger.warning(
+                    "Function call part is missing an 'id'. A temporary one '%s' was generated. "
+                    "This may cause issues if a function_response needs to reference it.",
+                    tool_call_id,
+                )
             tool_calls.append(
                 {
-                    "id": part.function_call.id or f"call_{len(tool_calls)}",
+                    "id": tool_call_id,
                     "type": "function",
                     "function": {
                         "name": part.function_call.name,
@@ -220,6 +219,78 @@ async def content_to_openai_message(
         return message
 
 
+def _convert_param_type(type_value: Any) -> str:
+    """Converts a parameter type value to OpenAI format string.
+    
+    Handles enum types, string representations, and maps common type names
+    to OpenAI-compatible type strings.
+    
+    Args:
+        type_value: The type value to convert (can be enum, string, etc.)
+        
+    Returns:
+        A lowercase string representing the OpenAI-compatible type
+    """
+    original_type = type_value
+    type_str = None
+    
+    # Handle enum types (e.g., Type.STRING -> "STRING")
+    # Check if it's an enum instance (has name or value attribute)
+    if hasattr(type_value, "name"):
+        # It's an enum, get the name (e.g., Type.STRING.name -> "STRING")
+        type_str = type_value.name.lower()
+    elif hasattr(type_value, "value"):
+        # It's an enum, get the value
+        type_value = type_value.value
+        type_str = str(type_value).lower()
+    
+    # If not an enum, convert to string and handle enum format like "Type.STRING"
+    if type_str is None:
+        type_str = str(type_value)
+        
+        # Handle enum format like "Type.STRING" - extract the part after the dot
+        if "." in type_str:
+            # Extract the part after the dot (e.g., "Type.STRING" -> "STRING")
+            type_str = type_str.split(".")[-1]
+        
+        # Normalize to lowercase
+        type_str = type_str.lower()
+    
+    # Map common type names
+    type_mapping = {
+        "string": "string",
+        "str": "string",
+        "number": "number",
+        "num": "number",
+        "integer": "integer",
+        "int": "integer",
+        "boolean": "boolean",
+        "bool": "boolean",
+        "array": "array",
+        "list": "array",
+        "object": "object",
+        "dict": "object",
+    }
+    
+    if type_str in type_mapping:
+        return type_mapping[type_str]
+    elif type_str in [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "object",
+    ]:
+        return type_str
+    else:
+        # If type is not recognized, log a warning and default to string
+        logger.warning(
+            f"Unknown type '{original_type}', defaulting to 'string'"
+        )
+        return "string"
+
+
 def function_declaration_to_openai_tool(
     function_declaration: types.FunctionDeclaration,
 ) -> Dict[str, Any]:
@@ -233,65 +304,7 @@ def function_declaration_to_openai_tool(
                 value_dict = value.model_dump(exclude_none=True)
                 # Convert type string to OpenAI format (normalize to lowercase)
                 if "type" in value_dict:
-                    type_value = value_dict["type"]
-                    original_type = type_value
-                    type_str = None
-                    
-                    # Handle enum types (e.g., Type.STRING -> "STRING")
-                    # Check if it's an enum instance (has name or value attribute)
-                    if hasattr(type_value, "name"):
-                        # It's an enum, get the name (e.g., Type.STRING.name -> "STRING")
-                        type_str = type_value.name.lower()
-                    elif hasattr(type_value, "value"):
-                        # It's an enum, get the value
-                        type_value = type_value.value
-                        type_str = str(type_value).lower()
-                    
-                    # If not an enum, convert to string and handle enum format like "Type.STRING"
-                    if type_str is None:
-                        type_str = str(type_value)
-                        
-                        # Handle enum format like "Type.STRING" - extract the part after the dot
-                        if "." in type_str:
-                            # Extract the part after the dot (e.g., "Type.STRING" -> "STRING")
-                            type_str = type_str.split(".")[-1]
-                        
-                        # Normalize to lowercase
-                        type_str = type_str.lower()
-                    
-                    # Map common type names
-                    type_mapping = {
-                        "string": "string",
-                        "str": "string",
-                        "number": "number",
-                        "num": "number",
-                        "integer": "integer",
-                        "int": "integer",
-                        "boolean": "boolean",
-                        "bool": "boolean",
-                        "array": "array",
-                        "list": "array",
-                        "object": "object",
-                        "dict": "object",
-                    }
-                    
-                    if type_str in type_mapping:
-                        value_dict["type"] = type_mapping[type_str]
-                    elif type_str in [
-                        "string",
-                        "number",
-                        "integer",
-                        "boolean",
-                        "array",
-                        "object",
-                    ]:
-                        value_dict["type"] = type_str
-                    else:
-                        # If type is not recognized, log a warning and default to string
-                        logger.warning(
-                            f"Unknown type '{original_type}' for parameter '{key}', defaulting to 'string'"
-                        )
-                        value_dict["type"] = "string"
+                    value_dict["type"] = _convert_param_type(value_dict["type"])
                 properties[key] = value_dict
 
         if function_declaration.parameters.required:
@@ -484,7 +497,7 @@ async def openai_response_to_llm_response(
                                 if hasattr(content_part, "type"):
                                     if content_part.type == "text" and hasattr(content_part, "text"):
                                         content_parts.append(types.Part(text=content_part.text))
-                                    elif content_part.type == "image_url" or hasattr(content_part, "image_url"):
+                                    elif content_part.type == "image_url":
                                         # Handle image_url and other media content
                                         media_part = await _convert_media_content_to_part(content_part, timeout=url_fetch_timeout)
                                         if media_part:
@@ -1081,11 +1094,9 @@ class OpenAI(BaseLlm):
                             try:
                                 # Get schema name from the class/object
                                 if inspect.isclass(response_schema):
-                                    schema_name = getattr(response_schema, "__name__", "ResponseSchema")
+                                    schema_name = response_schema.__name__
                                 else:
-                                    schema_name = getattr(
-                                        response_schema, "__class__", type(response_schema)
-                                    ).__name__
+                                    schema_name = type(response_schema).__name__
                                     if schema_name == "dict":
                                         schema_name = "ResponseSchema"
                                 

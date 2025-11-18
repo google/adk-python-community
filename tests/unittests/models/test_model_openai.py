@@ -29,7 +29,6 @@ except ImportError:
 from google.adk.models.llm_request import LlmRequest
 from google.adk_community.models.openai_llm import (
     OpenAI,
-    _is_image_part,
     content_to_openai_message,
     function_declaration_to_openai_tool,
     openai_response_to_llm_response,
@@ -49,35 +48,6 @@ class TestHelperFunctions:
         assert to_openai_role("user") == "user"
         assert to_openai_role(None) == "user"
         assert to_openai_role("unknown") == "user"
-
-    def test_is_image_part(self):
-        """Test image part detection."""
-        # Test with image part
-        image_part = types.Part(
-            inline_data=types.Blob(
-                mime_type="image/png", data=b"fake_data"
-            )
-        )
-        assert _is_image_part(image_part) is True
-
-        # Test with non-image part
-        text_part = types.Part(text="Hello")
-        # Function returns None (falsy) when inline_data is None
-        assert not _is_image_part(text_part)
-
-        # Test with part without mime_type
-        blob_part = types.Part(inline_data=types.Blob(data=b"fake_data"))
-        # Function returns None (falsy) when mime_type is None
-        assert not _is_image_part(blob_part)
-
-        # Test with part with non-image mime_type
-        pdf_part = types.Part(
-            inline_data=types.Blob(
-                mime_type="application/pdf", data=b"fake_data"
-            )
-        )
-        # Function returns False when mime_type doesn't start with "image"
-        assert _is_image_part(pdf_part) is False
 
     @pytest.mark.asyncio
     async def test_part_to_openai_content_text(self):
