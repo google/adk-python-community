@@ -57,6 +57,40 @@ def to_openai_role(role: Optional[str]) -> Literal["user", "assistant", "system"
         return "user"
 
 
+def _convert_content_type_for_responses_api(
+    content: Dict[str, Any], role: Optional[str]
+) -> Dict[str, Any]:
+    """Converts content type to Responses API format based on role.
+    
+    Responses API requires specific content types:
+    - input_text, input_image, input_file for user/system messages
+    - output_text for assistant/model messages
+    
+    Args:
+        content: Content dict with 'type' field
+        role: The role of the message ('user', 'system', 'model', 'assistant')
+    
+    Returns:
+        Content dict with updated type field
+    """
+    if not isinstance(content, dict) or "type" not in content:
+        return content
+    
+    content_type = content["type"]
+    is_input = role in ("user", "system")
+    
+    # Map content types for Responses API
+    if content_type == "text":
+        content["type"] = "input_text" if is_input else "output_text"
+    elif content_type == "image_url":
+        content["type"] = "input_image"  # Images are typically input
+    elif content_type == "file":
+        content["type"] = "input_file"  # Files are input
+    # Other types like "function" should remain as-is
+    
+    return content
+
+
 async def part_to_openai_content(
     part: types.Part,
     openai_instance: Optional[OpenAI] = None,
@@ -186,9 +220,18 @@ async def content_to_openai_message(
             for part in regular_parts:
                 openai_content = await part_to_openai_content(part, openai_instance)
                 if isinstance(openai_content, dict):
-                    message_content.append(openai_content)
+                    # Convert content type for Responses API
+                    converted_content = _convert_content_type_for_responses_api(
+                        openai_content.copy(), content.role
+                    )
+                    message_content.append(converted_content)
                 else:
-                    message_content.append({"type": "text", "text": openai_content})
+                    # Convert string content to dict and apply Responses API type
+                    text_content = {"type": "text", "text": openai_content}
+                    converted_content = _convert_content_type_for_responses_api(
+                        text_content, content.role
+                    )
+                    message_content.append(converted_content)
             
             # Create regular message and prepend it to tool messages
             regular_message = {
@@ -207,9 +250,18 @@ async def content_to_openai_message(
         for part in regular_parts:
             openai_content = await part_to_openai_content(part, openai_instance)
             if isinstance(openai_content, dict):
-                message_content.append(openai_content)
+                # Convert content type for Responses API
+                converted_content = _convert_content_type_for_responses_api(
+                    openai_content.copy(), content.role
+                )
+                message_content.append(converted_content)
             else:
-                message_content.append({"type": "text", "text": openai_content})
+                # Convert string content to dict and apply Responses API type
+                text_content = {"type": "text", "text": openai_content}
+                converted_content = _convert_content_type_for_responses_api(
+                    text_content, content.role
+                )
+                message_content.append(converted_content)
         
         message = {"role": to_openai_role(content.role), "content": message_content}
         
@@ -274,15 +326,6 @@ def _convert_param_type(type_value: Any) -> str:
     
     if type_str in type_mapping:
         return type_mapping[type_str]
-    elif type_str in [
-        "string",
-        "number",
-        "integer",
-        "boolean",
-        "array",
-        "object",
-    ]:
-        return type_str
     else:
         # If type is not recognized, log a warning and default to string
         logger.warning(
@@ -1370,7 +1413,7 @@ class OpenAI(BaseLlm):
                 final_content = (
                     types.Content(role="model", parts=final_parts)
                     if final_parts
-                    else types.Content(role="model", parts=[])
+                    else None
                 )
 
                 # Create final response with all metadata

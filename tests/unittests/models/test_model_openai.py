@@ -108,7 +108,20 @@ class TestHelperFunctions:
         message = await content_to_openai_message(content)
         assert message["role"] == "user"
         assert len(message["content"]) == 1
-        assert message["content"][0] == {"type": "text", "text": "Hello!"}
+        # Responses API uses input_text for user/system messages
+        assert message["content"][0] == {"type": "input_text", "text": "Hello!"}
+
+    @pytest.mark.asyncio
+    async def test_content_to_openai_message_text_model_role(self):
+        """Test conversion of text content with model role uses output_text."""
+        content = types.Content(
+            role="model", parts=[types.Part(text="Hello from model!")]
+        )
+        message = await content_to_openai_message(content)
+        assert message["role"] == "assistant"
+        assert len(message["content"]) == 1
+        # Responses API uses output_text for assistant/model messages
+        assert message["content"][0] == {"type": "output_text", "text": "Hello from model!"}
 
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_function_call(self):
@@ -929,7 +942,8 @@ class TestOpenAIClass:
         message = await content_to_openai_message(content, openai_client)
         assert message["role"] == "user"
         assert len(message["content"]) == 1
-        assert message["content"][0]["type"] == "image_url"
+        # Responses API uses input_image for user/system messages
+        assert message["content"][0]["type"] == "input_image"
 
     def test_function_declaration_to_openai_tool_no_parameters(self):
         """Test function declaration conversion without parameters."""
@@ -1757,6 +1771,8 @@ class TestOpenAIClass:
         # First should be regular message
         assert messages[0]["role"] == "user"
         assert len(messages[0]["content"]) > 0
+        # Content should use input_text for user role
+        assert messages[0]["content"][0]["type"] == "input_text"
         # Second should be tool message
         assert messages[1]["role"] == "tool"
         assert messages[1]["tool_call_id"] == "call_123"
