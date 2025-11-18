@@ -484,7 +484,7 @@ async def openai_response_to_llm_response(
                                 if hasattr(content_part, "type"):
                                     if content_part.type == "text" and hasattr(content_part, "text"):
                                         content_parts.append(types.Part(text=content_part.text))
-                                    elif content_part.type == "image_url" or hasattr(content_part, "image_url"):
+                                    elif content_part.type == "image_url":
                                         # Handle image_url and other media content
                                         media_part = await _convert_media_content_to_part(content_part, timeout=url_fetch_timeout)
                                         if media_part:
