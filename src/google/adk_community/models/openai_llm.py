@@ -101,16 +101,10 @@ async def part_to_openai_content(
                 mime_type = part.inline_data.mime_type or "application/octet-stream"
                 data = base64.b64encode(part.inline_data.data).decode()
 
-                if mime_type.startswith("image/"):
-                    return {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{data}"},
-                    }
-                else:
-                    return {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{data}"},
-                    }
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{data}"},
+                }
             else:
                 return {
                     "type": "text",
@@ -948,7 +942,7 @@ class OpenAI(BaseLlm):
                             )
             except Exception as e:
                 # If there's any issue accessing config attributes, log and continue
-                logger.debug(f"Error checking structured output config: {e}")
+                logger.warning(f"Error checking structured output config: {e}")
 
         logger.info(
             "Sending request to OpenAI, model: %s, stream: %s",
