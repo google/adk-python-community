@@ -866,8 +866,8 @@ class OpenAI(BaseLlm):
                                                 schema_dict = instance.model_json_schema()
                                             elif hasattr(instance, "schema"):
                                                 schema_dict = instance.schema()
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.debug(f"Could not get schema from instantiated model: {e}")
                                 else:
                                     # It's an instance or other object
                                     # Try model_dump (Pydantic v2 instance)
