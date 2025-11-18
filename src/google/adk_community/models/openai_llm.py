@@ -1188,7 +1188,7 @@ class OpenAI(BaseLlm):
                                 f"Response MIME type {response_mime_type} "
                                 "not directly mapped to OpenAI response_format"
                             )
-            except Exception as e:
+            except (AttributeError, TypeError, ValueError) as e:
                 # If there's any issue accessing config attributes, log and continue
                 logger.warning(f"Error checking structured output config: {e}")
 
