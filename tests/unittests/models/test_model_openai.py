@@ -226,10 +226,6 @@ class TestHelperFunctions:
 
     def test_function_declaration_to_openai_tool_type_conversion(self):
         """Test type conversion in function declaration."""
-        # Test that the function declaration is converted to a tool
-        # Note: Schema may convert string types to enums (Type.STRING, etc.),
-        # which the conversion function may not recognize and will default to "string".
-        # This test verifies the function still produces a valid tool structure.
         func_decl = types.FunctionDeclaration(
             name="test_func",
             parameters=types.Schema(
@@ -243,14 +239,9 @@ class TestHelperFunctions:
         )
         tool = function_declaration_to_openai_tool(func_decl)
         props = tool["function"]["parameters"]["properties"]
-        # The function should produce valid tool structure regardless of enum conversion
-        assert "string_param" in props
-        assert "number_param" in props
-        assert "bool_param" in props
-        # All types will be "string" due to enum conversion, but structure is correct
         assert props["string_param"]["type"] == "string"
-        # Note: Due to Schema enum conversion, number and boolean may also default to "string"
-        # This is expected behavior when the code can't recognize the enum format
+        assert props["number_param"]["type"] == "number"
+        assert props["bool_param"]["type"] == "boolean"
 
     @pytest.mark.asyncio
     async def test_openai_response_to_llm_response_text(self):
