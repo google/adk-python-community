@@ -1373,7 +1373,7 @@ class OpenAI(BaseLlm):
                 llm_response = await openai_response_to_llm_response(response)
                 yield llm_response
 
-        except Exception as e:
+        except openai.APIError as e:
             logger.error(f"Error calling OpenAI API: {e}")
             yield LlmResponse(error_code="OPENAI_API_ERROR", error_message=str(e))
 
