@@ -1181,7 +1181,7 @@ class OpenAI(BaseLlm):
 
         # Create temporary file
         with tempfile.NamedTemporaryFile(
-            delete=False, suffix=self._get_file_extension(mime_type)
+            mode="wb", delete=False, suffix=self._get_file_extension(mime_type)
         ) as temp_file:
             temp_file.write(file_data)
             temp_file_path = temp_file.name
