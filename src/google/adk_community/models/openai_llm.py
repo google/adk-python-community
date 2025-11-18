@@ -843,8 +843,8 @@ class OpenAI(BaseLlm):
                                             if hasattr(base, "__name__") and base.__name__ == "BaseModel":
                                                 is_base_model_subclass = True
                                                 break
-                                    except (AttributeError, TypeError):
-                                        pass
+                                    except (AttributeError, TypeError) as e:
+                                        logger.debug(f"Could not inspect MRO for schema: {e}")
                                     
                                     is_pydantic_class = has_pydantic_methods or is_base_model_subclass
                                 
