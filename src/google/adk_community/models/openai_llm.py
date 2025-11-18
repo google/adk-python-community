@@ -155,9 +155,9 @@ async def content_to_openai_message(
         for func_response in function_responses:
             # For tool messages, content should be a string
             response_text = (
-                json.dumps(func_response.response)
-                if isinstance(func_response.response, dict)
-                else str(func_response.response)
+                func_response.response
+                if isinstance(func_response.response, str)
+                else json.dumps(func_response.response)
             )
             
             # Validate that we have a tool_call_id
