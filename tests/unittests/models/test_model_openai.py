@@ -452,15 +452,14 @@ class TestOpenAIClass:
 
     @patch.dict(os.environ, {"AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/"})
     @patch("openai.AsyncAzureOpenAI")
-    def test_get_openai_client_azure_fallback(self, mock_azure_openai_class):
-        """Test Azure client fallback when AsyncAzureOpenAI not available."""
+    def test_get_openai_client_azure_raises_on_old_version(self, mock_azure_openai_class):
+        """Test Azure client raises ImportError when AsyncAzureOpenAI not available."""
         mock_azure_openai_class.side_effect = AttributeError(
             "No AsyncAzureOpenAI"
         )
-        with patch("openai.AzureOpenAI") as mock_azure_sync:
-            openai_client = OpenAI()
-            client = openai_client._get_openai_client()
-            mock_azure_sync.assert_called_once()
+        openai_client = OpenAI()
+        with pytest.raises(ImportError):
+            openai_client._get_openai_client()
 
     def test_get_file_extension(self):
         """Test file extension mapping from MIME type."""
