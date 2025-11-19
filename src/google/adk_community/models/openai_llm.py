@@ -1904,24 +1904,14 @@ class OpenAI(BaseLlm):
         
         # Convert response_format to Responses API 'text' parameter
         # Responses API uses 'text' instead of 'response_format'
-        # ResponseTextConfigParam = Union[
-        #   ResponseFormatText,                    # Plain text (default, no conversion needed)
-        #   ResponseFormatTextJSONSchemaConfigParam, # JSON schema with validation
-        #   ResponseFormatJSONObject               # JSON object output
-        # ]
-        # NOTE: The exact structure may need to use SDK classes, not dicts
-        # For now, we'll try using the SDK classes if available, otherwise skip conversion
+        # The 'text' parameter structure:
+        # - For json_object: text={"format": {"type": "json_object"}}
+        # - For json_schema: text={"format": {"type": "json_schema", "json_schema": {...}}}
         if "response_format" in request_params:
             response_format = request_params.pop("response_format")
             logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
             
             try:
-                # Try to use OpenAI SDK classes if available
-                from openai.types.responses import (
-                    ResponseFormatJSONObject,
-                    ResponseFormatTextJSONSchemaConfigParam,
-                )
-                
                 if isinstance(response_format, dict):
                     format_type = response_format.get("type")
                     
@@ -1936,14 +1926,22 @@ class OpenAI(BaseLlm):
                         # Responses API format: text={"format": {"type": "json_schema", "json_schema": {...}}}
                         json_schema = response_format.get("json_schema", {})
                         if json_schema:
-                            request_params["text"] = {
-                                "format": {
-                                    "type": "json_schema",
-                                    "json_schema": json_schema
+                            # Ensure json_schema has the correct structure
+                            # json_schema should be a dict with "name" and "schema" keys
+                            if isinstance(json_schema, dict):
+                                request_params["text"] = {
+                                    "format": {
+                                        "type": "json_schema",
+                                        "json_schema": json_schema
+                                    }
                                 }
-                            }
-                            schema_name = json_schema.get("name", "unnamed") if isinstance(json_schema, dict) else "unnamed"
-                            logger.debug(f"Converted response_format to text: json_schema format with schema: {schema_name}")
+                                schema_name = json_schema.get("name", "unnamed")
+                                logger.debug(f"Converted response_format to text: json_schema format with schema: {schema_name}")
+                            else:
+                                logger.warning(
+                                    f"json_schema must be a dict, got {type(json_schema).__name__}. "
+                                    "Skipping conversion."
+                                )
                         else:
                             logger.warning("response_format has json_schema type but missing json_schema field")
                     
@@ -1958,19 +1956,14 @@ class OpenAI(BaseLlm):
                         f"response_format is not a dict, cannot convert to Responses API 'text' parameter. "
                         f"Type: {type(response_format)}, Value: {response_format}"
                     )
-            except ImportError:
-                # SDK classes not available, skip conversion and log warning
-                logger.warning(
-                    "OpenAI SDK response format classes not available. "
-                    "Skipping response_format to 'text' conversion. "
-                    "Structured outputs may not work with Responses API."
-                )
             except Exception as e:
                 # If conversion fails, log and skip
                 logger.warning(
                     f"Failed to convert response_format to Responses API 'text' parameter: {e}. "
                     "Skipping conversion to avoid API errors."
                 )
+                import traceback
+                logger.debug(traceback.format_exc())
         
         # Log and validate 'text' parameter if present
         if "text" in request_params:
