@@ -1746,10 +1746,11 @@ class OpenAI(BaseLlm):
                         if isinstance(response_schema, dict):
                             # If it's already a dict, check if it's already in OpenAI format
                             if "name" in response_schema and "schema" in response_schema:
-                                # Already in OpenAI format
+                                # Already in OpenAI Chat Completions format (nested json_schema)
+                                # This will be converted to Responses API format (flattened) later
                                 request_params["response_format"] = {
                                     "type": "json_schema",
-                                    "json_schema": response_schema,
+                                    "json_schema": response_schema,  # Chat Completions format: nested
                                 }
                             else:
                                 # It's a raw JSON schema dict, need to wrap it
@@ -2001,7 +2002,9 @@ class OpenAI(BaseLlm):
         # Responses API uses 'text' instead of 'response_format'
         # The 'text' parameter structure:
         # - For json_object: text={"format": {"type": "json_object"}}
-        # - For json_schema: text={"format": {"type": "json_schema", "json_schema": {...}}}
+        # - For json_schema: text={"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
+        # IMPORTANT: Responses API uses FLATTENED structure - name, schema, strict are at same level as type
+        # NOT nested under json_schema like Chat Completions API
         if "response_format" in request_params:
             response_format = request_params.pop("response_format")
             logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
@@ -2018,27 +2021,72 @@ class OpenAI(BaseLlm):
                         logger.debug("Converted response_format to text: json_object format")
                     
                     elif format_type == "json_schema":
-                        # Responses API format: text={"format": {"type": "json_schema", "json_schema": {...}}}
-                        json_schema = response_format.get("json_schema", {})
-                        if json_schema:
-                            # Ensure json_schema has the correct structure
-                            # json_schema should be a dict with "name" and "schema" keys
-                            if isinstance(json_schema, dict):
-                                request_params["text"] = {
-                                    "format": {
-                                        "type": "json_schema",
-                                        "json_schema": json_schema
-                                    }
+                        # Responses API format: FLATTENED structure
+                        # text={"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
+                        # NOT: text={"format": {"type": "json_schema", "json_schema": {...}}}
+                        json_schema_obj = response_format.get("json_schema", {})
+                        if json_schema_obj:
+                            # Extract name and schema from the nested json_schema object
+                            # Chat Completions format: {"name": "...", "schema": {...}}
+                            # Responses API format (flattened): {"type": "json_schema", "name": "...", "schema": {...}}
+                            if isinstance(json_schema_obj, dict):
+                                # Extract name (required)
+                                schema_name = json_schema_obj.get("name", "ResponseSchema")
+                                
+                                # Extract schema (required)
+                                if "schema" in json_schema_obj:
+                                    schema_dict = json_schema_obj["schema"]
+                                else:
+                                    # If schema is missing, this is an error
+                                    raise ValueError(
+                                        f"json_schema object missing required 'schema' field. "
+                                        f"Expected structure: {{'name': '...', 'schema': {{...}}}}, "
+                                        f"got: {json_schema_obj}"
+                                    )
+                                
+                                # Validate schema_name (must be string, max 64 chars, only a-z, A-Z, 0-9, _, -)
+                                if not isinstance(schema_name, str):
+                                    schema_name = str(schema_name)
+                                # Truncate if too long
+                                if len(schema_name) > 64:
+                                    schema_name = schema_name[:64]
+                                    logger.warning(f"Schema name truncated to 64 characters: {schema_name}")
+                                # Validate characters (only a-z, A-Z, 0-9, _, -)
+                                import re
+                                if not re.match(r'^[a-zA-Z0-9_-]+$', schema_name):
+                                    # Replace invalid characters
+                                    schema_name = re.sub(r'[^a-zA-Z0-9_-]', '_', schema_name)
+                                    logger.warning(f"Schema name contains invalid characters, replaced with underscores: {schema_name}")
+                                
+                                # Build the FLATTENED format structure for Responses API
+                                format_dict = {
+                                    "type": "json_schema",
+                                    "name": schema_name,
+                                    "schema": schema_dict
                                 }
-                                schema_name = json_schema.get("name", "unnamed")
-                                logger.debug(f"Converted response_format to text: json_schema format with schema: {schema_name}")
+                                
+                                # Add strict if present (optional, defaults to False in Responses API)
+                                strict = json_schema_obj.get("strict")
+                                if strict is not None:
+                                    format_dict["strict"] = bool(strict)
+                                
+                                request_params["text"] = {
+                                    "format": format_dict
+                                }
+                                logger.debug(
+                                    f"Converted response_format to text: json_schema format with "
+                                    f"name={schema_name}, strict={format_dict.get('strict', False)}"
+                                )
                             else:
-                                logger.warning(
-                                    f"json_schema must be a dict, got {type(json_schema).__name__}. "
-                                    "Skipping conversion."
+                                raise ValueError(
+                                    f"json_schema must be a dict, got {type(json_schema_obj).__name__}. "
+                                    f"Expected structure: {{'name': '...', 'schema': {{...}}}}"
                                 )
                         else:
-                            logger.warning("response_format has json_schema type but missing json_schema field")
+                            raise ValueError(
+                                "response_format has json_schema type but missing json_schema field. "
+                                "Expected structure: {'type': 'json_schema', 'json_schema': {'name': '...', 'schema': {...}}}"
+                            )
                     
                     else:
                         # Unknown format type, log warning and don't convert
