@@ -437,16 +437,20 @@ def function_declaration_to_openai_tool(
 def convert_tools_to_responses_api_format(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Convert tools from Chat Completions format to Responses API format.
     
-    The Responses API may expect tools in a different format. Based on the error
-    message 'tools[0].name', it might expect 'name' at the top level or a different
-    structure. This function converts tools to the format expected by Responses API.
+    The Responses API expects a FLATTENED format where name, description, and parameters
+    are at the top level of the tool object, NOT nested in a "function" object.
+    
+    Chat Completions format:
+        {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
+    
+    Responses API format:
+        {"type": "function", "name": "...", "description": "...", "parameters": {...}}
     
     Args:
-        tools: List of tools in Chat Completions format:
-            [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
+        tools: List of tools in Chat Completions format
     
     Returns:
-        List of tools in Responses API format
+        List of tools in Responses API format (flattened structure)
     """
     converted_tools = []
     for tool in tools:
@@ -463,23 +467,17 @@ def convert_tools_to_responses_api_format(tools: List[Dict[str, Any]]) -> List[D
                 logger.error(f"Skipping tool with missing function.name: {tool}")
                 continue
             
-            # Responses API format: Based on error 'tools[0].name', it expects name at top level
-            # Try format: {name: "...", type: "function", function: {...}}
-            # OR maybe it expects just the function object with name at top level
-            # Let's try the standard format first but ensure name is accessible
+            # Responses API expects FLATTENED structure:
+            # {type: "function", name: "...", description: "...", parameters: {...}}
+            # NOT nested in "function" object!
             converted_tool = {
                 "type": "function",
-                "function": {
-                    "name": function_name,
-                    "description": function_obj.get("description", ""),
-                    "parameters": function_obj.get("parameters", {"type": "object", "properties": {}})
-                }
+                "name": function_name,
+                "description": function_obj.get("description", ""),
+                "parameters": function_obj.get("parameters", {"type": "object", "properties": {}})
             }
-            # Also add name at top level as Responses API error suggests it's looking for tools[0].name
-            # This might be a validation check or the API might actually use it
-            converted_tool["name"] = function_name
             converted_tools.append(converted_tool)
-            logger.debug(f"Converted tool for Responses API: name={function_name}")
+            logger.debug(f"Converted tool for Responses API: name={function_name} (flattened structure)")
         else:
             # For non-function tools, pass through as-is but log a warning
             logger.warning(f"Tool with type '{tool_type}' may not be supported in Responses API: {tool}")
@@ -1666,10 +1664,20 @@ class OpenAI(BaseLlm):
             # Also log each tool individually
             for i, tool in enumerate(request_params["tools"]):
                 logger.info(f"Final tool {i} structure: {json.dumps(tool, indent=2, default=str)}")
-                # Check name at both top level and nested
+                # Check name at top level (Responses API format - flattened)
                 top_level_name = tool.get("name")
+                # Also check nested for backwards compatibility (shouldn't be there after conversion)
                 nested_name = tool.get("function", {}).get("name") if tool.get("function") else None
-                logger.info(f"Final tool {i} name check - top level: {top_level_name!r}, nested: {nested_name!r}")
+                logger.info(
+                    f"Final tool {i} name check - top level (Responses API): {top_level_name!r}, "
+                    f"nested (should be None): {nested_name!r}"
+                )
+                # Validate Responses API format
+                if not top_level_name:
+                    logger.error(
+                        f"CRITICAL: Tool {i} missing top-level 'name' field (Responses API format)! "
+                        f"Tool: {tool}"
+                    )
 
         try:
             if stream:
