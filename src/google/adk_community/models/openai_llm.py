@@ -668,12 +668,26 @@ async def openai_response_to_llm_response(
     content_parts = []
 
     # Parse Responses API format (has 'output' field and potentially 'output_text')
-    # First check for output_text (direct text response)
-    if hasattr(response, "output_text") and response.output_text:
-        logger.debug("Found output_text in Responses API response")
-        content_parts.append(types.Part(text=response.output_text))
+    # IMPORTANT: Both output_text and output array may contain the same text content.
+    # We should prioritize the output array if present, and only use output_text as fallback
+    # to avoid duplicate messages.
     
-    # Then parse Responses API format (has 'output' field - list of items)
+    # Check if output array exists and has items
+    has_output_array = hasattr(response, "output") and response.output and len(response.output) > 0
+    
+    # Only use output_text if output array is not present or empty
+    # This prevents duplicate messages when both output_text and output array contain the same text
+    if not has_output_array:
+        if hasattr(response, "output_text") and response.output_text:
+            logger.debug("Found output_text in Responses API response (no output array present)")
+            content_parts.append(types.Part(text=response.output_text))
+    elif hasattr(response, "output_text") and response.output_text:
+        logger.debug(
+            "Both output_text and output array present - using output array to avoid duplicates. "
+            f"output_text will be ignored: {response.output_text[:100]}..."
+        )
+    
+    # Parse Responses API format (has 'output' field - list of items)
     if hasattr(response, "output"):
         try:
             output_value = response.output
