@@ -241,18 +241,33 @@ async def content_to_openai_message(
                 else json.dumps(func_response.response)
             )
             
-            # Validate that we have a tool_call_id
+            # Validate that we have a tool_call_id - REQUIRED for Responses API
             if not func_response.id:
-                logger.warning(
-                    f"Function response missing id, cannot create tool message. "
-                    f"Response: {response_text[:100]}"
+                raise ValueError(
+                    f"Function response missing required 'id' field. "
+                    f"Cannot create tool message without tool_call_id. "
+                    f"Response content: {response_text[:200]}"
                 )
-                continue
+            
+            # Ensure tool_call_id is a string (OpenAI expects string IDs)
+            try:
+                tool_call_id = str(func_response.id)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Function response id cannot be converted to string. "
+                    f"ID: {func_response.id}, Type: {type(func_response.id).__name__}, Error: {e}"
+                )
+            
+            if not tool_call_id or not tool_call_id.strip():
+                raise ValueError(
+                    f"Function response id is empty after conversion to string. "
+                    f"Original ID: {func_response.id}"
+                )
             
             tool_message = {
                 "role": "tool",
                 "content": response_text,
-                "tool_call_id": func_response.id,
+                "tool_call_id": tool_call_id,  # Must be a string matching the function_call id
             }
             tool_messages.append(tool_message)
             logger.debug(
@@ -1187,21 +1202,53 @@ class OpenAI(BaseLlm):
         # IMPORTANT: Responses API doesn't support 'tool_calls' nested in messages
         # Tool calls must be separate items with type="function_call"
         # Tool results must be separate items with type="function_call_output"
+        # IMPORTANT: The 'id' in function_call items must match the 'call_id' in function_call_output items
         input_items = []
+        logger.debug(f"Converting {len(messages)} message(s) to Responses API input format")
         for msg in messages:
             msg_role = msg.get("role")
             
             # Handle tool messages - convert to function_call_output items
-            if msg_role == "tool" and "tool_call_id" in msg:
+            if msg_role == "tool":
+                # Extract tool_call_id - it's REQUIRED for function_call_output items
+                tool_call_id = msg.get("tool_call_id")
+                
+                # Validate that tool_call_id exists and is not empty - FAIL if missing
+                if not tool_call_id:
+                    raise ValueError(
+                        f"Tool message missing required 'tool_call_id' field. "
+                        f"Cannot create function_call_output item without call_id. "
+                        f"Message: {msg}"
+                    )
+                
+                # Ensure tool_call_id is a string (OpenAI expects string IDs)
+                if not isinstance(tool_call_id, str):
+                    try:
+                        tool_call_id = str(tool_call_id)
+                        logger.debug(f"Converted tool_call_id to string: {tool_call_id}")
+                    except (TypeError, ValueError) as e:
+                        raise ValueError(
+                            f"Tool message tool_call_id cannot be converted to string. "
+                            f"tool_call_id: {msg.get('tool_call_id')}, Type: {type(msg.get('tool_call_id')).__name__}, Error: {e}"
+                        )
+                
+                if not tool_call_id.strip():
+                    raise ValueError(
+                        f"Tool message tool_call_id is empty after conversion. "
+                        f"Original tool_call_id: {msg.get('tool_call_id')}"
+                    )
+                
                 # Convert tool message to function_call_output item
+                # Responses API requires: type="function_call_output", call_id (string), output (string or object)
                 function_call_output_item = {
                     "type": "function_call_output",
-                    "call_id": msg["tool_call_id"],
+                    "call_id": tool_call_id,  # Must be a string matching the function_call id
                     "output": msg.get("content", "")
                 }
                 input_items.append(function_call_output_item)
                 logger.debug(
-                    f"Converted tool message to function_call_output: call_id={msg['tool_call_id']}"
+                    f"Converted tool message to function_call_output: call_id={tool_call_id}, "
+                    f"output_type={type(msg.get('content', '')).__name__}"
                 )
             else:
                 # Regular message - remove tool_calls if present and add as message item
@@ -1226,16 +1273,45 @@ class OpenAI(BaseLlm):
                     
                     # Then add each tool_call as a separate function_call item
                     for tool_call in tool_calls:
+                        # Extract and validate function_call id - REQUIRED for Responses API
+                        call_id = tool_call.get("id")
+                        if not call_id:
+                            raise ValueError(
+                                f"Tool call missing required 'id' field. "
+                                f"Cannot create function_call item without id. "
+                                f"Tool call: {tool_call}"
+                            )
+                        
+                        # Ensure call_id is a string (OpenAI expects string IDs)
+                        if not isinstance(call_id, str):
+                            try:
+                                call_id = str(call_id)
+                                logger.debug(f"Converted function_call id to string: {call_id}")
+                            except (TypeError, ValueError) as e:
+                                raise ValueError(
+                                    f"Tool call id cannot be converted to string. "
+                                    f"ID: {tool_call.get('id')}, Type: {type(tool_call.get('id')).__name__}, Error: {e}"
+                                )
+                        
+                        if not call_id.strip():
+                            raise ValueError(
+                                f"Tool call id is empty after conversion. "
+                                f"Original id: {tool_call.get('id')}"
+                            )
+                        
+                        function_name = tool_call.get("function", {}).get("name", "")
+                        function_arguments = tool_call.get("function", {}).get("arguments", "{}")
+                        
                         function_call_item = {
                             "type": "function_call",
-                            "id": tool_call.get("id"),
-                            "name": tool_call.get("function", {}).get("name", ""),
-                            "arguments": tool_call.get("function", {}).get("arguments", "{}")
+                            "id": call_id,  # Must be a string - this ID must match call_id in function_call_output
+                            "name": function_name,
+                            "arguments": function_arguments
                         }
                         input_items.append(function_call_item)
                         logger.debug(
-                            f"Added function_call item: id={function_call_item['id']}, "
-                            f"name={function_call_item['name']}"
+                            f"Added function_call item: id={call_id}, "
+                            f"name={function_name}"
                         )
                 else:
                     # Regular message without tool_calls
@@ -1246,6 +1322,25 @@ class OpenAI(BaseLlm):
                         "content": cleaned_msg.get("content", [])
                     }
                     input_items.append(message_item)
+        
+        # Log final input items structure for debugging
+        logger.debug(f"Converted to {len(input_items)} input item(s) for Responses API")
+        for i, item in enumerate(input_items):
+            item_type = item.get("type", "unknown")
+            if item_type == "function_call_output":
+                call_id = item.get("call_id", "MISSING")
+                logger.debug(
+                    f"Input item {i}: type={item_type}, call_id={call_id!r} "
+                    f"(required for function_call_output)"
+                )
+            elif item_type == "function_call":
+                call_id = item.get("id", "MISSING")
+                logger.debug(
+                    f"Input item {i}: type={item_type}, id={call_id!r} "
+                    f"(must match call_id in corresponding function_call_output)"
+                )
+            else:
+                logger.debug(f"Input item {i}: type={item_type}")
         
         request_params = {
             "model": request_model,
