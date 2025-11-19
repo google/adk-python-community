@@ -434,6 +434,58 @@ def function_declaration_to_openai_tool(
     return tool
 
 
+def convert_tools_to_responses_api_format(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert tools from Chat Completions format to Responses API format.
+    
+    The Responses API may expect tools in a different format. Based on the error
+    message 'tools[0].name', it might expect 'name' at the top level or a different
+    structure. This function converts tools to the format expected by Responses API.
+    
+    Args:
+        tools: List of tools in Chat Completions format:
+            [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}]
+    
+    Returns:
+        List of tools in Responses API format
+    """
+    converted_tools = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            logger.warning(f"Skipping invalid tool (not a dict): {tool}")
+            continue
+        
+        tool_type = tool.get("type")
+        function_obj = tool.get("function", {})
+        
+        if tool_type == "function" and function_obj:
+            function_name = function_obj.get("name")
+            if not function_name:
+                logger.error(f"Skipping tool with missing function.name: {tool}")
+                continue
+            
+            # Responses API might expect a flattened structure with name at top level
+            # Try: {name: "...", type: "function", description: "...", parameters: {...}}
+            # OR keep nested but ensure structure is correct
+            # Based on error message format, let's try adding name at top level as well
+            converted_tool = {
+                "name": function_name,  # Add name at top level for Responses API
+                "type": "function",
+                "function": {
+                    "name": function_name,
+                    "description": function_obj.get("description", ""),
+                    "parameters": function_obj.get("parameters", {"type": "object", "properties": {}})
+                }
+            }
+            converted_tools.append(converted_tool)
+            logger.debug(f"Converted tool for Responses API: name={function_name}")
+        else:
+            # For non-function tools, pass through as-is but log a warning
+            logger.warning(f"Tool with type '{tool_type}' may not be supported in Responses API: {tool}")
+            converted_tools.append(tool)
+    
+    return converted_tools
+
+
 async def _fetch_url_content(url: str, timeout: float = 30.0) -> Optional[bytes]:
     """Fetches content from a URL asynchronously.
     
@@ -1597,6 +1649,12 @@ class OpenAI(BaseLlm):
                 else:
                     logger.info(f"All {len(validated_final_tools)} tool(s) passed validation")
 
+        # Convert tools to Responses API format before sending
+        if "tools" in request_params and request_params["tools"]:
+            logger.info(f"Converting {len(request_params['tools'])} tool(s) to Responses API format")
+            request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
+            logger.info(f"Converted to {len(request_params['tools'])} tool(s) in Responses API format")
+        
         # Log final request params right before API call to debug any issues
         if "tools" in request_params:
             import json
@@ -1605,9 +1663,10 @@ class OpenAI(BaseLlm):
             # Also log each tool individually
             for i, tool in enumerate(request_params["tools"]):
                 logger.info(f"Final tool {i} structure: {json.dumps(tool, indent=2, default=str)}")
-                # Double-check the name is accessible
-                tool_name = tool.get("function", {}).get("name") if tool.get("function") else None
-                logger.info(f"Final tool {i} name check: {tool_name!r}")
+                # Check name at both top level and nested
+                top_level_name = tool.get("name")
+                nested_name = tool.get("function", {}).get("name") if tool.get("function") else None
+                logger.info(f"Final tool {i} name check - top level: {top_level_name!r}, nested: {nested_name!r}")
 
         try:
             if stream:
