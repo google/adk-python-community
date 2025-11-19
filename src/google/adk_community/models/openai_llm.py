@@ -361,6 +361,39 @@ def function_declaration_to_openai_tool(
     function_declaration: types.FunctionDeclaration,
 ) -> Dict[str, Any]:
     """Converts ADK function declaration to OpenAI tool format."""
+    # Validate that function name is present and not empty
+    # Try multiple ways to access the name attribute
+    function_name = None
+    if hasattr(function_declaration, "name"):
+        function_name = getattr(function_declaration, "name", None)
+    elif hasattr(function_declaration, "__dict__") and "name" in function_declaration.__dict__:
+        function_name = function_declaration.__dict__["name"]
+    
+    # Validate name
+    if not function_name:
+        raise ValueError(
+            f"FunctionDeclaration must have a non-empty 'name' field. "
+            f"Got: {function_name!r} (type: {type(function_name).__name__ if function_name else 'None'}), "
+            f"FunctionDeclaration attributes: {dir(function_declaration)}"
+        )
+    
+    # Convert to string and strip whitespace
+    if isinstance(function_name, str):
+        function_name = function_name.strip()
+        if not function_name:
+            raise ValueError(
+                f"FunctionDeclaration 'name' field is empty or whitespace only. "
+                f"Got: {repr(function_declaration.name)}"
+            )
+    else:
+        # Convert non-string to string
+        function_name = str(function_name).strip()
+        if not function_name:
+            raise ValueError(
+                f"FunctionDeclaration 'name' field cannot be converted to non-empty string. "
+                f"Got: {repr(getattr(function_declaration, 'name', None))}"
+            )
+    
     properties = {}
     required_params = []
 
@@ -377,7 +410,7 @@ def function_declaration_to_openai_tool(
             required_params = function_declaration.parameters.required
 
     function_schema = {
-        "name": function_declaration.name,
+        "name": function_name,
         "description": function_declaration.description or "",
         "parameters": {
             "type": "object",
@@ -388,7 +421,17 @@ def function_declaration_to_openai_tool(
     if required_params:
         function_schema["parameters"]["required"] = required_params
 
-    return {"type": "function", "function": function_schema}
+    tool = {"type": "function", "function": function_schema}
+    
+    # Validate the final tool structure
+    if not tool.get("function", {}).get("name"):
+        raise ValueError(
+            f"Tool conversion failed: 'name' field missing in function schema. "
+            f"FunctionDeclaration.name: {function_name!r}, "
+            f"Tool structure: {tool}"
+        )
+    
+    return tool
 
 
 async def _fetch_url_content(url: str, timeout: float = 30.0) -> Optional[bytes]:
@@ -939,8 +982,59 @@ class OpenAI(BaseLlm):
             for tool in llm_request.config.tools:
                 if isinstance(tool, types.Tool) and tool.function_declarations:
                     for func_decl in tool.function_declarations:
-                        openai_tool = function_declaration_to_openai_tool(func_decl)
-                        tools.append(openai_tool)
+                        try:
+                            # Log the function declaration for debugging
+                            logger.debug(
+                                f"Converting FunctionDeclaration to OpenAI tool: "
+                                f"name={func_decl.name!r}, "
+                                f"description={func_decl.description!r}"
+                            )
+                            
+                            openai_tool = function_declaration_to_openai_tool(func_decl)
+                            
+                            # Validate the tool structure
+                            function_obj = openai_tool.get("function", {})
+                            tool_name = function_obj.get("name")
+                            
+                            if not tool_name:
+                                logger.error(
+                                    f"Tool conversion produced invalid structure: missing 'name' in function. "
+                                    f"Tool: {openai_tool}, "
+                                    f"FunctionDeclaration.name: {func_decl.name!r}"
+                                )
+                                continue
+                            
+                            logger.debug(
+                                f"Successfully converted tool: name={tool_name}, "
+                                f"type={openai_tool.get('type')}"
+                            )
+                            tools.append(openai_tool)
+                        except ValueError as e:
+                            logger.error(
+                                f"Failed to convert FunctionDeclaration to OpenAI tool: {e}. "
+                                f"FunctionDeclaration: name={func_decl.name!r}, "
+                                f"description={func_decl.description!r}"
+                            )
+                            # Skip this tool but continue with others
+                            continue
+                        except Exception as e:
+                            logger.error(
+                                f"Unexpected error converting FunctionDeclaration to OpenAI tool: {e}. "
+                                f"FunctionDeclaration: {func_decl}"
+                            )
+                            continue
+        
+        # Log final tools structure for debugging
+        if tools:
+            logger.debug(f"Prepared {len(tools)} tool(s) for OpenAI API")
+            for i, tool in enumerate(tools):
+                tool_name = tool.get("function", {}).get("name", "UNKNOWN")
+                logger.debug(f"Tool {i}: name={tool_name}, structure={tool}")
+        elif llm_request.config and llm_request.config.tools:
+            logger.warning(
+                "No valid tools were prepared from the provided tool configuration. "
+                "This may cause API errors if tools are required."
+            )
 
         # Prepare request parameters
         # NOTE: For Azure, `model` should be the deployment name (the name you configured in the Azure portal).
@@ -968,7 +1062,79 @@ class OpenAI(BaseLlm):
             request_params["instructions"] = instructions
 
         if tools:
-            request_params["tools"] = tools
+            # Validate tools structure before adding to request
+            validated_tools = []
+            for i, tool in enumerate(tools):
+                # Check if tool has the required structure
+                if not isinstance(tool, dict):
+                    logger.error(f"Tool {i} is not a dict: {tool}")
+                    continue
+                
+                tool_type = tool.get("type")
+                function_obj = tool.get("function", {})
+                function_name = function_obj.get("name")
+                
+                if not tool_type:
+                    logger.error(f"Tool {i} missing 'type' field: {tool}")
+                    continue
+                
+                if not function_obj:
+                    logger.error(f"Tool {i} missing 'function' field: {tool}")
+                    continue
+                
+                if not function_name:
+                    logger.error(
+                        f"Tool {i} missing 'name' in function object. "
+                        f"Tool structure: {tool}, "
+                        f"Function object: {function_obj}"
+                    )
+                    continue
+                
+                # Ensure name is a non-empty string (not None, not empty)
+                if function_name is None:
+                    logger.error(
+                        f"Tool {i} has None as function.name. "
+                        f"Tool structure: {tool}"
+                    )
+                    continue
+                
+                if not isinstance(function_name, str) or not function_name.strip():
+                    logger.error(
+                        f"Tool {i} has invalid function.name: {function_name!r} (type: {type(function_name).__name__}). "
+                        f"Tool structure: {tool}"
+                    )
+                    continue
+                
+                # Double-check the tool structure is correct before adding
+                if "function" not in tool or "name" not in tool["function"]:
+                    logger.error(
+                        f"Tool {i} structure validation failed after checks. "
+                        f"Tool: {tool}"
+                    )
+                    continue
+                
+                # Log the tool structure for debugging
+                logger.debug(
+                    f"Validated tool {i}: type={tool_type}, "
+                    f"name={function_name}, "
+                    f"name_type={type(function_name).__name__}, "
+                    f"full_structure={tool}"
+                )
+                validated_tools.append(tool)
+            
+            if not validated_tools:
+                logger.error(
+                    "No valid tools after validation. Original tools count: "
+                    f"{len(tools)}. This will cause API errors."
+                )
+            elif len(validated_tools) < len(tools):
+                logger.warning(
+                    f"Only {len(validated_tools)} out of {len(tools)} tools passed validation. "
+                    "Some tools may have been skipped."
+                )
+            
+            request_params["tools"] = validated_tools
+            logger.debug(f"Added {len(validated_tools)} validated tool(s) to request params")
             # Support configurable tool_choice using Google GenAI types only
             # Use tool_config.function_calling_config.mode (strict Google GenAI format)
             tool_choice = "auto"  # Default
@@ -1118,11 +1284,17 @@ class OpenAI(BaseLlm):
                     
                     if not web_search_tool_exists:
                         # Add web search tool to tools list
-                        current_tools.append({"type": "web_search"})
-                        request_params["tools"] = current_tools
-                        # Update tools variable for consistency
-                        tools = current_tools
-                        logger.debug("grounding_config.web_search=True - added web_search tool to request")
+                        # Note: OpenAI Responses API may require web_search as a function tool with a name
+                        # For now, we'll skip adding it as a tool since it may not be supported in this format
+                        # or it needs to be handled differently
+                        logger.warning(
+                            "web_search tool requested but may not be supported in current OpenAI API format. "
+                            "Skipping web_search tool addition to avoid API errors. "
+                            "If web_search is needed, it should be added as a proper function tool with a name."
+                        )
+                        # If web_search needs to be added, it should have the structure:
+                        # {"type": "function", "function": {"name": "web_search", "description": "..."}}
+                        # For now, we skip it to prevent API errors
                 else:
                     # Other grounding features might not have direct equivalents
                     logger.debug(f"grounding_config provided but web_search not enabled - other grounding features may not be supported")
@@ -1335,6 +1507,72 @@ class OpenAI(BaseLlm):
                     for tc in tool_calls:
                         logger.debug(f"    tool_call: id={tc.get('id')}, name={tc.get('function', {}).get('name')}")
         logger.debug(f"OpenAI request params (excluding input): { {k: v for k, v in request_params.items() if k != 'input'} }")
+        
+        # Final validation of tools before API call (in case tools were added after initial validation)
+        if "tools" in request_params:
+            import json
+            tools_json = json.dumps(request_params["tools"], indent=2, default=str)
+            logger.debug(f"Tools being sent to OpenAI API (JSON):\n{tools_json}")
+            
+            # Final validation: filter out any invalid tools
+            validated_final_tools = []
+            for i, tool in enumerate(request_params["tools"]):
+                tool_str = json.dumps(tool, indent=2, default=str)
+                logger.debug(f"Tool {i} structure:\n{tool_str}")
+                
+                # Validate tool structure
+                if not isinstance(tool, dict):
+                    logger.error(f"Tool {i} is not a dict, skipping: {tool}")
+                    continue
+                
+                tool_type = tool.get("type")
+                function_obj = tool.get("function", {})
+                function_name = function_obj.get("name") if function_obj else None
+                
+                # Check for required fields
+                if not tool_type:
+                    logger.error(f"Tool {i} missing 'type' field, skipping: {tool}")
+                    continue
+                
+                if tool_type == "function":
+                    # Function tools must have a function object with a name
+                    if not function_obj:
+                        logger.error(f"Tool {i} (type=function) missing 'function' field, skipping: {tool}")
+                        continue
+                    
+                    if not function_name or not isinstance(function_name, str) or not function_name.strip():
+                        logger.error(
+                            f"Tool {i} (type=function) missing or invalid 'name' in function object, skipping. "
+                            f"Tool: {tool}, function_name: {function_name!r}"
+                        )
+                        continue
+                elif tool_type == "web_search":
+                    # web_search might be a special tool type, but OpenAI API may still require a name
+                    # Skip it for now to avoid API errors
+                    logger.warning(
+                        f"Tool {i} has type='web_search' which may not be supported. Skipping to avoid API errors."
+                    )
+                    continue
+                else:
+                    # Unknown tool type - log warning but allow it (might be valid)
+                    logger.warning(f"Tool {i} has unknown type '{tool_type}'. Proceeding but may cause API errors.")
+                
+                validated_final_tools.append(tool)
+            
+            # Update request_params with validated tools
+            if len(validated_final_tools) != len(request_params["tools"]):
+                logger.warning(
+                    f"Filtered out {len(request_params['tools']) - len(validated_final_tools)} invalid tool(s). "
+                    f"Original count: {len(request_params['tools'])}, Valid count: {len(validated_final_tools)}"
+                )
+                
+                if not validated_final_tools:
+                    # No valid tools left - remove tools from request to avoid API errors
+                    logger.error("No valid tools remaining after final validation. Removing 'tools' from request.")
+                    request_params.pop("tools", None)
+                else:
+                    request_params["tools"] = validated_final_tools
+                    logger.debug(f"Updated request_params with {len(validated_final_tools)} validated tool(s)")
 
         try:
             if stream:
