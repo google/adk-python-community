@@ -1597,9 +1597,22 @@ class OpenAI(BaseLlm):
                 else:
                     logger.info(f"All {len(validated_final_tools)} tool(s) passed validation")
 
+        # Log final request params right before API call to debug any issues
+        if "tools" in request_params:
+            import json
+            final_tools_json = json.dumps(request_params["tools"], indent=2, default=str)
+            logger.info(f"FINAL TOOLS BEING SENT TO API (count: {len(request_params['tools'])}):\n{final_tools_json}")
+            # Also log each tool individually
+            for i, tool in enumerate(request_params["tools"]):
+                logger.info(f"Final tool {i} structure: {json.dumps(tool, indent=2, default=str)}")
+                # Double-check the name is accessible
+                tool_name = tool.get("function", {}).get("name") if tool.get("function") else None
+                logger.info(f"Final tool {i} name check: {tool_name!r}")
+
         try:
             if stream:
                 # Handle streaming response using Responses API
+                logger.info(f"Calling OpenAI Responses API with stream=True, tools count: {len(request_params.get('tools', []))}")
                 stream_response = await client.responses.create(**request_params)
 
                 # Accumulate content and tool calls across events
@@ -1752,6 +1765,7 @@ class OpenAI(BaseLlm):
                 yield final_response
             else:
                 # Handle non-streaming response using Responses API
+                logger.info(f"Calling OpenAI Responses API with stream=False, tools count: {len(request_params.get('tools', []))}")
                 response = await client.responses.create(**request_params)
                 llm_response = await openai_response_to_llm_response(response, url_fetch_timeout=self.url_fetch_timeout)
                 yield llm_response
