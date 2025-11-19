@@ -643,15 +643,53 @@ async def openai_response_to_llm_response(
     # Extract content from response
     content_parts = []
 
-    # Parse Responses API format (has 'output' field)
+    # Parse Responses API format (has 'output' field and potentially 'output_text')
+    # First check for output_text (direct text response)
+    if hasattr(response, "output_text") and response.output_text:
+        logger.debug("Found output_text in Responses API response")
+        content_parts.append(types.Part(text=response.output_text))
+    
+    # Then parse Responses API format (has 'output' field - list of items)
     if hasattr(response, "output"):
         try:
             output_value = response.output
             if output_value:
-                # Responses API format
+                logger.debug(f"Parsing Responses API output with {len(output_value)} item(s)")
+                # Responses API format - output is a list of items
                 for output_item in output_value:
+                    item_type = getattr(output_item, "type", None)
+                    logger.debug(f"Processing output item type: {item_type}")
+                    
+                    # Handle function tool calls (Responses API uses "function_call" not "function")
+                    if item_type == "function_call":
+                        function_args = {}
+                        if hasattr(output_item, "arguments") and output_item.arguments:
+                            if isinstance(output_item.arguments, str):
+                                try:
+                                    function_args = json.loads(output_item.arguments)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Could not parse function arguments as JSON: {output_item.arguments}")
+                                    function_args = {"arguments": output_item.arguments}
+                            elif isinstance(output_item.arguments, dict):
+                                function_args = output_item.arguments
+                        
+                        call_id = getattr(output_item, "call_id", None) or getattr(output_item, "id", None)
+                        function_name = getattr(output_item, "name", "")
+                        
+                        logger.debug(f"Function call: name={function_name}, call_id={call_id}, args={function_args}")
+                        
+                        content_parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    id=call_id,
+                                    name=function_name,
+                                    args=function_args,
+                                )
+                            )
+                        )
+                    
                     # Handle text messages
-                    if hasattr(output_item, "type") and output_item.type == "message":
+                    elif item_type == "message":
                         if hasattr(output_item, "content") and output_item.content:
                             # content is a list of content parts
                             for content_part in output_item.content:
@@ -707,38 +745,43 @@ async def openai_response_to_llm_response(
                                             f"Unknown content part type in response: {getattr(content_part, 'type', 'unknown')}"
                                         )
                     
-                    # Handle function tool calls
-                    elif hasattr(output_item, "type") and output_item.type == "function":
-                        function_args = {}
-                        if hasattr(output_item, "arguments") and output_item.arguments:
-                            if isinstance(output_item.arguments, str):
-                                try:
-                                    function_args = json.loads(output_item.arguments)
-                                except json.JSONDecodeError:
-                                    function_args = {"arguments": output_item.arguments}
-                            elif isinstance(output_item.arguments, dict):
-                                function_args = output_item.arguments
+                    # Handle function_call_output (tool execution results)
+                    elif item_type == "function_call_output":
+                        # This is a tool execution result, not a function call request
+                        # In Google ADK, this would be a function_response
+                        call_id = getattr(output_item, "call_id", None)
+                        output_data = getattr(output_item, "output", "")
                         
-                        call_id = getattr(output_item, "call_id", None) or getattr(output_item, "id", None)
-                        function_name = getattr(output_item, "name", "")
+                        # Parse output if it's a JSON string
+                        if isinstance(output_data, str):
+                            try:
+                                output_data = json.loads(output_data)
+                            except json.JSONDecodeError:
+                                pass  # Keep as string if not JSON
                         
+                        logger.debug(f"Function call output: call_id={call_id}, output={output_data}")
+                        
+                        # Convert to function_response format
                         content_parts.append(
                             types.Part(
-                                function_call=types.FunctionCall(
+                                function_response=types.FunctionResponse(
                                     id=call_id,
-                                    name=function_name,
-                                    args=function_args,
+                                    response=output_data,
                                 )
                             )
                         )
+                    
                     else:
                         # Log unknown output item types for debugging
                         logger.debug(
-                            f"Unknown output item type in Responses API: {getattr(output_item, 'type', 'unknown')}"
+                            f"Unknown output item type in Responses API: {item_type}. "
+                            f"Item attributes: {dir(output_item) if hasattr(output_item, '__dict__') else 'N/A'}"
                         )
         except (AttributeError, TypeError) as e:
             # output exists but is not accessible or is None/empty
-            logger.debug(f"Could not parse Responses API output format: {e}")
+            logger.warning(f"Could not parse Responses API output format: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
 
     # Create content
     content = (
