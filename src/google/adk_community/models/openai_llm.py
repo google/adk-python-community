@@ -1511,68 +1511,91 @@ class OpenAI(BaseLlm):
         # Final validation of tools before API call (in case tools were added after initial validation)
         if "tools" in request_params:
             import json
-            tools_json = json.dumps(request_params["tools"], indent=2, default=str)
-            logger.debug(f"Tools being sent to OpenAI API (JSON):\n{tools_json}")
-            
-            # Final validation: filter out any invalid tools
-            validated_final_tools = []
-            for i, tool in enumerate(request_params["tools"]):
-                tool_str = json.dumps(tool, indent=2, default=str)
-                logger.debug(f"Tool {i} structure:\n{tool_str}")
+            # Ensure tools is a list
+            if not isinstance(request_params["tools"], list):
+                logger.error(
+                    f"CRITICAL: 'tools' parameter is not a list! Type: {type(request_params['tools'])}, "
+                    f"Value: {request_params['tools']}. Removing tools to avoid API errors."
+                )
+                request_params.pop("tools", None)
+            elif len(request_params["tools"]) == 0:
+                logger.warning("Tools list is empty. Removing 'tools' from request.")
+                request_params.pop("tools", None)
+            else:
+                tools_json = json.dumps(request_params["tools"], indent=2, default=str)
+                logger.info(f"VALIDATING TOOLS BEFORE API CALL: Found {len(request_params['tools'])} tool(s)")
+                logger.debug(f"Tools being sent to OpenAI API (JSON):\n{tools_json}")
                 
-                # Validate tool structure
-                if not isinstance(tool, dict):
-                    logger.error(f"Tool {i} is not a dict, skipping: {tool}")
-                    continue
-                
-                tool_type = tool.get("type")
-                function_obj = tool.get("function", {})
-                function_name = function_obj.get("name") if function_obj else None
-                
-                # Check for required fields
-                if not tool_type:
-                    logger.error(f"Tool {i} missing 'type' field, skipping: {tool}")
-                    continue
-                
-                if tool_type == "function":
-                    # Function tools must have a function object with a name
-                    if not function_obj:
-                        logger.error(f"Tool {i} (type=function) missing 'function' field, skipping: {tool}")
+                # Final validation: filter out any invalid tools
+                validated_final_tools = []
+                for i, tool in enumerate(request_params["tools"]):
+                    tool_str = json.dumps(tool, indent=2, default=str)
+                    logger.info(f"Validating tool {i}: {tool_str}")
+                    
+                    # Validate tool structure
+                    if not isinstance(tool, dict):
+                        logger.error(f"Tool {i} is not a dict, skipping: {tool}")
                         continue
                     
-                    if not function_name or not isinstance(function_name, str) or not function_name.strip():
+                    tool_type = tool.get("type")
+                    function_obj = tool.get("function", {})
+                    function_name = function_obj.get("name") if function_obj else None
+                    
+                    # Check for required fields
+                    if not tool_type:
+                        logger.error(f"Tool {i} missing 'type' field, skipping: {tool}")
+                        continue
+                    
+                    if tool_type == "function":
+                        # Function tools must have a function object with a name
+                        if not function_obj:
+                            logger.error(f"Tool {i} (type=function) missing 'function' field, skipping: {tool}")
+                            continue
+                        
+                        if not function_name or not isinstance(function_name, str) or not function_name.strip():
+                            logger.error(
+                                f"Tool {i} (type=function) missing or invalid 'name' in function object, skipping. "
+                                f"Tool: {tool}, function_name: {function_name!r}"
+                            )
+                            continue
+                    elif tool_type == "web_search":
+                        # web_search might be a special tool type, but OpenAI API may still require a name
+                        # Skip it for now to avoid API errors
                         logger.error(
-                            f"Tool {i} (type=function) missing or invalid 'name' in function object, skipping. "
-                            f"Tool: {tool}, function_name: {function_name!r}"
+                            f"Tool {i} has type='web_search' which is not supported in this format. Skipping to avoid API errors. "
+                            f"Tool structure: {tool}"
                         )
                         continue
-                elif tool_type == "web_search":
-                    # web_search might be a special tool type, but OpenAI API may still require a name
-                    # Skip it for now to avoid API errors
-                    logger.warning(
-                        f"Tool {i} has type='web_search' which may not be supported. Skipping to avoid API errors."
+                    else:
+                        # Unknown tool type - check if it has required structure
+                        # OpenAI API requires tools[].name, so even unknown types need proper structure
+                        if not function_obj or not function_name:
+                            logger.error(
+                                f"Tool {i} has unknown type '{tool_type}' and missing required 'function.name' field. "
+                                f"Skipping to avoid API errors. Tool: {tool}"
+                            )
+                            continue
+                        logger.warning(f"Tool {i} has unknown type '{tool_type}'. Proceeding but may cause API errors.")
+                    
+                    validated_final_tools.append(tool)
+                    logger.info(f"Tool {i} passed validation: type={tool_type}, name={function_name}")
+                
+                # Update request_params with validated tools
+                if len(validated_final_tools) != len(request_params["tools"]):
+                    logger.error(
+                        f"FILTERED OUT {len(request_params['tools']) - len(validated_final_tools)} INVALID TOOL(S)! "
+                        f"Original count: {len(request_params['tools'])}, Valid count: {len(validated_final_tools)}"
                     )
-                    continue
+                    
+                    if not validated_final_tools:
+                        # No valid tools left - remove tools from request to avoid API errors
+                        logger.error("No valid tools remaining after final validation. Removing 'tools' from request.")
+                        request_params.pop("tools", None)
+                    else:
+                        request_params["tools"] = validated_final_tools
+                        logger.info(f"Updated request_params with {len(validated_final_tools)} validated tool(s)")
                 else:
-                    # Unknown tool type - log warning but allow it (might be valid)
-                    logger.warning(f"Tool {i} has unknown type '{tool_type}'. Proceeding but may cause API errors.")
-                
-                validated_final_tools.append(tool)
-            
-            # Update request_params with validated tools
-            if len(validated_final_tools) != len(request_params["tools"]):
-                logger.warning(
-                    f"Filtered out {len(request_params['tools']) - len(validated_final_tools)} invalid tool(s). "
-                    f"Original count: {len(request_params['tools'])}, Valid count: {len(validated_final_tools)}"
-                )
-                
-                if not validated_final_tools:
-                    # No valid tools left - remove tools from request to avoid API errors
-                    logger.error("No valid tools remaining after final validation. Removing 'tools' from request.")
-                    request_params.pop("tools", None)
-                else:
-                    request_params["tools"] = validated_final_tools
-                    logger.debug(f"Updated request_params with {len(validated_final_tools)} validated tool(s)")
+                    logger.info(f"All {len(validated_final_tools)} tool(s) passed validation")
 
         try:
             if stream:
