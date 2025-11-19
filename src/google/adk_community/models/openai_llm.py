@@ -463,12 +463,11 @@ def convert_tools_to_responses_api_format(tools: List[Dict[str, Any]]) -> List[D
                 logger.error(f"Skipping tool with missing function.name: {tool}")
                 continue
             
-            # Responses API might expect a flattened structure with name at top level
-            # Try: {name: "...", type: "function", description: "...", parameters: {...}}
-            # OR keep nested but ensure structure is correct
-            # Based on error message format, let's try adding name at top level as well
+            # Responses API format: Based on error 'tools[0].name', it expects name at top level
+            # Try format: {name: "...", type: "function", function: {...}}
+            # OR maybe it expects just the function object with name at top level
+            # Let's try the standard format first but ensure name is accessible
             converted_tool = {
-                "name": function_name,  # Add name at top level for Responses API
                 "type": "function",
                 "function": {
                     "name": function_name,
@@ -476,6 +475,9 @@ def convert_tools_to_responses_api_format(tools: List[Dict[str, Any]]) -> List[D
                     "parameters": function_obj.get("parameters", {"type": "object", "properties": {}})
                 }
             }
+            # Also add name at top level as Responses API error suggests it's looking for tools[0].name
+            # This might be a validation check or the API might actually use it
+            converted_tool["name"] = function_name
             converted_tools.append(converted_tool)
             logger.debug(f"Converted tool for Responses API: name={function_name}")
         else:
@@ -1232,10 +1234,11 @@ class OpenAI(BaseLlm):
                     else:
                         logger.debug("Tool config found but function_calling_config is None or missing")
                 # No fallback - only use Google GenAI tool_config format
+            # Responses API uses tool_choice (same as Chat Completions)
             request_params["tool_choice"] = tool_choice
-            # Force parallel_tool_calls to True - all modern models support parallel tool calls
-            # This parameter exists only for backward compatibility with old API specs
-            request_params["parallel_tool_calls"] = True
+            # Note: parallel_tool_calls is a Chat Completions API parameter
+            # Responses API may not support it - removing to avoid API errors
+            # request_params["parallel_tool_calls"] = True  # Removed - not in Responses API
 
         # Get max_output_tokens and temperature from config
         if llm_request.config:
