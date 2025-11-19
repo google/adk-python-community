@@ -1169,10 +1169,73 @@ class OpenAI(BaseLlm):
                 f"{', '.join(supported_patterns)}."
             )
         # Responses API uses 'input' instead of 'messages'
-        # Input is a list of messages for the Responses API
+        # Input is a list of items (messages, function_call, function_call_output, etc.)
+        # IMPORTANT: Responses API doesn't support 'tool_calls' nested in messages
+        # Tool calls must be separate items with type="function_call"
+        # Tool results must be separate items with type="function_call_output"
+        input_items = []
+        for msg in messages:
+            msg_role = msg.get("role")
+            
+            # Handle tool messages - convert to function_call_output items
+            if msg_role == "tool" and "tool_call_id" in msg:
+                # Convert tool message to function_call_output item
+                function_call_output_item = {
+                    "type": "function_call_output",
+                    "call_id": msg["tool_call_id"],
+                    "output": msg.get("content", "")
+                }
+                input_items.append(function_call_output_item)
+                logger.debug(
+                    f"Converted tool message to function_call_output: call_id={msg['tool_call_id']}"
+                )
+            else:
+                # Regular message - remove tool_calls if present and add as message item
+                cleaned_msg = msg.copy()
+                
+                # Extract tool_calls if present and create separate function_call items
+                if "tool_calls" in cleaned_msg:
+                    tool_calls = cleaned_msg.pop("tool_calls")
+                    logger.debug(
+                        f"Extracting {len(tool_calls)} tool_call(s) from {msg_role} message "
+                        f"to separate function_call items"
+                    )
+                    
+                    # First add the message without tool_calls
+                    # Ensure message has type="message" for Responses API
+                    message_item = {
+                        "type": "message",
+                        "role": msg_role,
+                        "content": cleaned_msg.get("content", [])
+                    }
+                    input_items.append(message_item)
+                    
+                    # Then add each tool_call as a separate function_call item
+                    for tool_call in tool_calls:
+                        function_call_item = {
+                            "type": "function_call",
+                            "id": tool_call.get("id"),
+                            "name": tool_call.get("function", {}).get("name", ""),
+                            "arguments": tool_call.get("function", {}).get("arguments", "{}")
+                        }
+                        input_items.append(function_call_item)
+                        logger.debug(
+                            f"Added function_call item: id={function_call_item['id']}, "
+                            f"name={function_call_item['name']}"
+                        )
+                else:
+                    # Regular message without tool_calls
+                    # Ensure message has type="message" for Responses API
+                    message_item = {
+                        "type": "message",
+                        "role": msg_role,
+                        "content": cleaned_msg.get("content", [])
+                    }
+                    input_items.append(message_item)
+        
         request_params = {
             "model": request_model,
-            "input": messages,  # Responses API accepts messages list in input
+            "input": input_items,  # Responses API accepts array of input items
             "stream": stream,
         }
         
@@ -1301,11 +1364,44 @@ class OpenAI(BaseLlm):
                 # No fallback - only use Google GenAI tool_config format
             # Responses API uses tool_choice (same as Chat Completions)
             request_params["tool_choice"] = tool_choice
-            # Note: parallel_tool_calls is a Chat Completions API parameter
-            # Responses API may not support it - removing to avoid API errors
-            # request_params["parallel_tool_calls"] = True  # Removed - not in Responses API
+            # Responses API supports parallel_tool_calls
+            # Default to True for better performance (all modern models support it)
+            request_params["parallel_tool_calls"] = True
 
-        # Get max_output_tokens and temperature from config
+        # Map Google GenAI GenerateContentConfig parameters to Responses API
+        # Currently mapped parameters:
+        # - max_output_tokens → max_output_tokens (direct)
+        # - temperature → temperature (direct)
+        # - top_p → top_p (direct)
+        # - frequency_penalty → frequency_penalty (direct)
+        # - presence_penalty → presence_penalty (direct)
+        # - seed → seed (direct)
+        # - candidate_count → n (direct)
+        # - stop_sequences → stop (direct)
+        # - logprobs → logprobs (direct)
+        # - top_logprobs → top_logprobs (direct, if available in config)
+        # - user → user (direct, if available in config)
+        # - max_tool_calls → max_tool_calls (direct, if available in config)
+        # - metadata → metadata (direct, if available in config)
+        # - prompt_cache_key → prompt_cache_key (direct, if available in config)
+        # - safety_identifier → safety_identifier (direct, if available in config)
+        # - truncation → truncation (direct, if available in config)
+        # - store → store (direct, if available in config)
+        # - background → background (direct, if available in config)
+        # - service_tier → service_tier (direct, if available in config)
+        # - system_instruction → instructions (direct)
+        # - response_schema/response_mime_type → text (converted format)
+        # - tool_config.function_calling_config.mode → tool_choice (mapped)
+        # - tools → tools (converted to Responses API format)
+        # - parallel_tool_calls → parallel_tool_calls (default: True)
+        # - reasoning_effort → reasoning (mapped: reasoning_effort → reasoning={"effort": ...})
+        #
+        # Responses API features not yet mapped (no GenAI equivalent):
+        # - conversation: Built-in conversation state management
+        # - previous_response_id: Stateless multi-turn conversations
+        # - include: Response inclusion options
+        # - stream_options: Enhanced streaming options
+        # - prompt: Alternative prompt format
         if llm_request.config:
             if llm_request.config.max_output_tokens:
                 # Responses API uses max_output_tokens directly
@@ -1361,9 +1457,78 @@ class OpenAI(BaseLlm):
             if logprobs is not None:
                 request_params["logprobs"] = logprobs
 
-            # top_logprobs is OpenAI-specific and not available in Google GenAI - removed
+            # top_logprobs - Responses API supports this
+            top_logprobs = getattr(llm_request.config, "top_logprobs", None)
+            if top_logprobs is not None:
+                request_params["top_logprobs"] = top_logprobs
             
-            # user is OpenAI-specific and not available in Google GenAI - removed
+            # user - Responses API supports this (for tracking/abuse prevention)
+            user = getattr(llm_request.config, "user", None)
+            if user is not None:
+                request_params["user"] = user
+            
+            # max_tool_calls - Responses API supports limiting tool calls
+            max_tool_calls = getattr(llm_request.config, "max_tool_calls", None)
+            if max_tool_calls is not None:
+                request_params["max_tool_calls"] = max_tool_calls
+            
+            # metadata - Responses API supports metadata for tracking
+            metadata = getattr(llm_request.config, "metadata", None)
+            if metadata is not None:
+                request_params["metadata"] = metadata
+            
+            # prompt_cache_key - Responses API supports prompt caching
+            prompt_cache_key = getattr(llm_request.config, "prompt_cache_key", None)
+            if prompt_cache_key is not None:
+                request_params["prompt_cache_key"] = prompt_cache_key
+            
+            # safety_identifier - Responses API supports safety tracking
+            safety_identifier = getattr(llm_request.config, "safety_identifier", None)
+            if safety_identifier is not None:
+                request_params["safety_identifier"] = safety_identifier
+            
+            # truncation - Responses API supports truncation control
+            truncation = getattr(llm_request.config, "truncation", None)
+            if truncation is not None:
+                request_params["truncation"] = truncation
+            
+            # store - Responses API supports storing responses
+            store = getattr(llm_request.config, "store", None)
+            if store is not None:
+                request_params["store"] = store
+            
+            # background - Responses API supports async/background processing
+            background = getattr(llm_request.config, "background", None)
+            if background is not None:
+                request_params["background"] = background
+            
+            # service_tier - Responses API supports different service tiers
+            service_tier = getattr(llm_request.config, "service_tier", None)
+            if service_tier is not None:
+                request_params["service_tier"] = service_tier
+            
+            # reasoning_effort - Map Google GenAI reasoning_effort to OpenAI Responses API reasoning parameter
+            # OpenAI Responses API uses: reasoning={"effort": "low"|"medium"|"high"}
+            # Google GenAI uses: reasoning_effort="low"|"medium"|"high"
+            reasoning_effort = getattr(llm_request.config, "reasoning_effort", None)
+            if reasoning_effort is not None:
+                # Validate and normalize the effort value
+                if isinstance(reasoning_effort, str):
+                    effort_lower = reasoning_effort.lower()
+                    # OpenAI Responses API accepts: "low", "medium", "high"
+                    if effort_lower in ("low", "medium", "high"):
+                        request_params["reasoning"] = {"effort": effort_lower}
+                        logger.debug(f"Mapped reasoning_effort={reasoning_effort} to reasoning={{'effort': '{effort_lower}'}}")
+                    else:
+                        logger.warning(
+                            f"reasoning_effort value '{reasoning_effort}' is not a valid Responses API effort value. "
+                            f"Expected: 'low', 'medium', or 'high'. Skipping reasoning parameter."
+                        )
+                else:
+                    logger.warning(
+                        f"reasoning_effort must be a string, got {type(reasoning_effort).__name__}. "
+                        f"Skipping reasoning parameter."
+                    )
             
             # Handle caching_config: Map to OpenAI Responses API cache parameters if available
             caching_config = getattr(llm_request.config, "caching_config", None)
@@ -1747,22 +1912,24 @@ class OpenAI(BaseLlm):
                     format_type = response_format.get("type")
                     
                     if format_type == "json_object":
-                        # Use SDK class for ResponseFormatJSONObject
-                        request_params["text"] = ResponseFormatJSONObject()
-                        logger.debug("Converted response_format to text: ResponseFormatJSONObject (SDK class)")
+                        # Responses API format: text={"format": {"type": "json_object"}}
+                        request_params["text"] = {
+                            "format": {"type": "json_object"}
+                        }
+                        logger.debug("Converted response_format to text: json_object format")
                     
                     elif format_type == "json_schema":
-                        # Convert to ResponseFormatTextJSONSchemaConfigParam
+                        # Responses API format: text={"format": {"type": "json_schema", "json_schema": {...}}}
                         json_schema = response_format.get("json_schema", {})
                         if json_schema:
-                            # The SDK class might need specific structure - try dict first
-                            # If this fails, we'll need to check the exact SDK structure
                             request_params["text"] = {
-                                "type": "json_schema",
-                                "json_schema": json_schema
+                                "format": {
+                                    "type": "json_schema",
+                                    "json_schema": json_schema
+                                }
                             }
                             schema_name = json_schema.get("name", "unnamed") if isinstance(json_schema, dict) else "unnamed"
-                            logger.debug(f"Converted response_format to text: ResponseFormatTextJSONSchemaConfigParam with schema: {schema_name}")
+                            logger.debug(f"Converted response_format to text: json_schema format with schema: {schema_name}")
                         else:
                             logger.warning("response_format has json_schema type but missing json_schema field")
                     
