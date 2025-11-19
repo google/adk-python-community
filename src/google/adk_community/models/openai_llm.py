@@ -2052,7 +2052,7 @@ class OpenAI(BaseLlm):
                                     schema_name = schema_name[:64]
                                     logger.warning(f"Schema name truncated to 64 characters: {schema_name}")
                                 # Validate characters (only a-z, A-Z, 0-9, _, -)
-                                import re
+                                # Note: re is imported at module level
                                 if not re.match(r'^[a-zA-Z0-9_-]+$', schema_name):
                                     # Replace invalid characters
                                     schema_name = re.sub(r'[^a-zA-Z0-9_-]', '_', schema_name)
