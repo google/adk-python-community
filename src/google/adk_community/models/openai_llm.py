@@ -1730,45 +1730,79 @@ class OpenAI(BaseLlm):
         #   ResponseFormatTextJSONSchemaConfigParam, # JSON schema with validation
         #   ResponseFormatJSONObject               # JSON object output
         # ]
+        # NOTE: The exact structure may need to use SDK classes, not dicts
+        # For now, we'll try using the SDK classes if available, otherwise skip conversion
         if "response_format" in request_params:
             response_format = request_params.pop("response_format")
             logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
             
-            if isinstance(response_format, dict):
-                format_type = response_format.get("type")
+            try:
+                # Try to use OpenAI SDK classes if available
+                from openai.types.responses import (
+                    ResponseFormatJSONObject,
+                    ResponseFormatTextJSONSchemaConfigParam,
+                )
                 
-                if format_type == "json_object":
-                    # Convert to ResponseFormatJSONObject
-                    # Format: {"type": "json_object"}
-                    request_params["text"] = {"type": "json_object"}
-                    logger.debug("Converted response_format to text: ResponseFormatJSONObject")
-                
-                elif format_type == "json_schema":
-                    # Convert to ResponseFormatTextJSONSchemaConfigParam
-                    # Format: {"type": "json_schema", "json_schema": {...}}
-                    json_schema = response_format.get("json_schema", {})
-                    if json_schema:
-                        request_params["text"] = {
-                            "type": "json_schema",
-                            "json_schema": json_schema
-                        }
-                        schema_name = json_schema.get("name", "unnamed") if isinstance(json_schema, dict) else "unnamed"
-                        logger.debug(f"Converted response_format to text: ResponseFormatTextJSONSchemaConfigParam with schema: {schema_name}")
+                if isinstance(response_format, dict):
+                    format_type = response_format.get("type")
+                    
+                    if format_type == "json_object":
+                        # Use SDK class for ResponseFormatJSONObject
+                        request_params["text"] = ResponseFormatJSONObject()
+                        logger.debug("Converted response_format to text: ResponseFormatJSONObject (SDK class)")
+                    
+                    elif format_type == "json_schema":
+                        # Convert to ResponseFormatTextJSONSchemaConfigParam
+                        json_schema = response_format.get("json_schema", {})
+                        if json_schema:
+                            # The SDK class might need specific structure - try dict first
+                            # If this fails, we'll need to check the exact SDK structure
+                            request_params["text"] = {
+                                "type": "json_schema",
+                                "json_schema": json_schema
+                            }
+                            schema_name = json_schema.get("name", "unnamed") if isinstance(json_schema, dict) else "unnamed"
+                            logger.debug(f"Converted response_format to text: ResponseFormatTextJSONSchemaConfigParam with schema: {schema_name}")
+                        else:
+                            logger.warning("response_format has json_schema type but missing json_schema field")
+                    
                     else:
-                        logger.warning("response_format has json_schema type but missing json_schema field")
-                
+                        # Unknown format type, log warning and don't convert
+                        logger.warning(
+                            f"Unknown response_format type '{format_type}' - not converting to Responses API 'text' parameter. "
+                            f"Supported types: 'json_object', 'json_schema'."
+                        )
                 else:
-                    # Unknown format type, log warning and don't convert
-                    # Note: ResponseFormatText (plain text) is the default, no conversion needed
                     logger.warning(
-                        f"Unknown response_format type '{format_type}' - not converting to Responses API 'text' parameter. "
-                        f"Supported types: 'json_object', 'json_schema'. "
-                        f"Plain text (ResponseFormatText) is the default and doesn't need to be set."
+                        f"response_format is not a dict, cannot convert to Responses API 'text' parameter. "
+                        f"Type: {type(response_format)}, Value: {response_format}"
                     )
-            else:
+            except ImportError:
+                # SDK classes not available, skip conversion and log warning
                 logger.warning(
-                    f"response_format is not a dict, cannot convert to Responses API 'text' parameter. "
-                    f"Type: {type(response_format)}, Value: {response_format}"
+                    "OpenAI SDK response format classes not available. "
+                    "Skipping response_format to 'text' conversion. "
+                    "Structured outputs may not work with Responses API."
+                )
+            except Exception as e:
+                # If conversion fails, log and skip
+                logger.warning(
+                    f"Failed to convert response_format to Responses API 'text' parameter: {e}. "
+                    "Skipping conversion to avoid API errors."
+                )
+        
+        # Log and validate 'text' parameter if present
+        if "text" in request_params:
+            import json
+            text_param = request_params["text"]
+            logger.info(f"TEXT PARAMETER BEING SENT: {json.dumps(text_param, indent=2, default=str)}")
+            # If text is a dict with 'type', it might be causing the 'text.type' error
+            # The Responses API might expect a different structure
+            if isinstance(text_param, dict) and "type" in text_param:
+                logger.warning(
+                    "text parameter is a dict with 'type' field. "
+                    "This might cause 'text.type' parameter error. "
+                    "Consider using SDK classes or different structure."
                 )
         
         # Log final request params right before API call to debug any issues
