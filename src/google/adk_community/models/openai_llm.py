@@ -1699,6 +1699,54 @@ class OpenAI(BaseLlm):
             request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
             logger.info(f"Converted to {len(request_params['tools'])} tool(s) in Responses API format")
         
+        # Convert response_format to Responses API 'text' parameter
+        # Responses API uses 'text' instead of 'response_format'
+        # ResponseTextConfigParam = Union[
+        #   ResponseFormatText,                    # Plain text (default, no conversion needed)
+        #   ResponseFormatTextJSONSchemaConfigParam, # JSON schema with validation
+        #   ResponseFormatJSONObject               # JSON object output
+        # ]
+        if "response_format" in request_params:
+            response_format = request_params.pop("response_format")
+            logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
+            
+            if isinstance(response_format, dict):
+                format_type = response_format.get("type")
+                
+                if format_type == "json_object":
+                    # Convert to ResponseFormatJSONObject
+                    # Format: {"type": "json_object"}
+                    request_params["text"] = {"type": "json_object"}
+                    logger.debug("Converted response_format to text: ResponseFormatJSONObject")
+                
+                elif format_type == "json_schema":
+                    # Convert to ResponseFormatTextJSONSchemaConfigParam
+                    # Format: {"type": "json_schema", "json_schema": {...}}
+                    json_schema = response_format.get("json_schema", {})
+                    if json_schema:
+                        request_params["text"] = {
+                            "type": "json_schema",
+                            "json_schema": json_schema
+                        }
+                        schema_name = json_schema.get("name", "unnamed") if isinstance(json_schema, dict) else "unnamed"
+                        logger.debug(f"Converted response_format to text: ResponseFormatTextJSONSchemaConfigParam with schema: {schema_name}")
+                    else:
+                        logger.warning("response_format has json_schema type but missing json_schema field")
+                
+                else:
+                    # Unknown format type, log warning and don't convert
+                    # Note: ResponseFormatText (plain text) is the default, no conversion needed
+                    logger.warning(
+                        f"Unknown response_format type '{format_type}' - not converting to Responses API 'text' parameter. "
+                        f"Supported types: 'json_object', 'json_schema'. "
+                        f"Plain text (ResponseFormatText) is the default and doesn't need to be set."
+                    )
+            else:
+                logger.warning(
+                    f"response_format is not a dict, cannot convert to Responses API 'text' parameter. "
+                    f"Type: {type(response_format)}, Value: {response_format}"
+                )
+        
         # Log final request params right before API call to debug any issues
         if "tools" in request_params:
             import json
