@@ -89,12 +89,15 @@ def _convert_content_type_for_responses_api(
     - image_url → input_image (user/system) or output_text (assistant/model)
     - file → input_file (user/system)
     
+    Important: Responses API expects input_image to have a URL string directly,
+    not an object with a 'url' field like Chat Completions API.
+    
     Args:
         content: Content dict with 'type' field
         role: The role of the message ('user', 'system', 'model', 'assistant')
     
     Returns:
-        Content dict with updated type field
+        Content dict with updated type and structure for Responses API
     """
     if not isinstance(content, dict) or "type" not in content:
         return content
@@ -106,7 +109,28 @@ def _convert_content_type_for_responses_api(
     if content_type == "text":
         content["type"] = "input_text" if is_input else "output_text"
     elif content_type == "image_url":
-        content["type"] = "input_image"  # Images are typically input
+        # Responses API expects input_image with URL string directly, not object
+        content["type"] = "input_image"
+        # Convert image_url object to URL string
+        if "image_url" in content:
+            image_url_obj = content.pop("image_url")
+            # Extract URL from image_url object (can be string or object with url field)
+            if isinstance(image_url_obj, str):
+                url = image_url_obj
+            elif isinstance(image_url_obj, dict) and "url" in image_url_obj:
+                url = image_url_obj["url"]
+            elif hasattr(image_url_obj, "url"):
+                url = image_url_obj.url
+            else:
+                logger.warning(f"Could not extract URL from image_url object: {image_url_obj}")
+                url = None
+            
+            if url:
+                # Responses API expects the URL directly in the content dict
+                content["image_url"] = url
+            else:
+                logger.error("Failed to extract image URL for Responses API")
+        # If image_url is already a string in the content, keep it
     elif content_type == "file":
         content["type"] = "input_file"  # Files are input
     # Other types like "function" should remain as-is
