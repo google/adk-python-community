@@ -1275,14 +1275,28 @@ class OpenAI(BaseLlm):
             
             # Handle tool messages - convert to function_call_output items
             if msg_role == "tool":
+                # Log the full message structure for debugging
+                logger.info(f"Processing tool message: keys={list(msg.keys())}, full_message={msg}")
+                
                 # Extract tool_call_id - it's REQUIRED for function_call_output items
-                tool_call_id = msg.get("tool_call_id")
+                # Check multiple possible field names
+                tool_call_id = msg.get("tool_call_id") or msg.get("call_id") or msg.get("id")
+                
+                # Log what we found
+                logger.info(
+                    f"Tool message tool_call_id extraction: "
+                    f"tool_call_id={msg.get('tool_call_id')!r}, "
+                    f"call_id={msg.get('call_id')!r}, "
+                    f"id={msg.get('id')!r}, "
+                    f"final_tool_call_id={tool_call_id!r}"
+                )
                 
                 # Validate that tool_call_id exists and is not empty - FAIL if missing
                 if not tool_call_id:
                     raise ValueError(
                         f"Tool message missing required 'tool_call_id' field. "
                         f"Cannot create function_call_output item without call_id. "
+                        f"Message keys: {list(msg.keys())}, "
                         f"Message: {msg}"
                     )
                 
@@ -1353,6 +1367,8 @@ class OpenAI(BaseLlm):
                     input_items.append(message_item)
                     
                     # Then add each tool_call as a separate function_call item
+                    # Track all function_call IDs we create so we can validate tool messages match them
+                    function_call_ids = []
                     for tool_call in tool_calls:
                         # Extract and validate function_call id - REQUIRED for Responses API
                         call_id = tool_call.get("id")
@@ -1380,6 +1396,9 @@ class OpenAI(BaseLlm):
                                 f"Original id: {tool_call.get('id')}"
                             )
                         
+                        call_id = call_id.strip()
+                        function_call_ids.append(call_id)
+                        
                         function_name = tool_call.get("function", {}).get("name", "")
                         function_arguments = tool_call.get("function", {}).get("arguments", "{}")
                         
@@ -1390,9 +1409,17 @@ class OpenAI(BaseLlm):
                             "arguments": function_arguments
                         }
                         input_items.append(function_call_item)
-                        logger.debug(
-                            f"Added function_call item: id={call_id}, "
-                            f"name={function_name}"
+                        logger.info(
+                            f"Added function_call item: id={call_id!r}, "
+                            f"name={function_name}, "
+                            f"total_function_calls_in_message={len(tool_calls)}"
+                        )
+                    
+                    # Log all function_call IDs for this message
+                    if function_call_ids:
+                        logger.info(
+                            f"Created {len(function_call_ids)} function_call(s) with IDs: {function_call_ids}. "
+                            f"Tool messages should reference these IDs via tool_call_id field."
                         )
                 else:
                     # Regular message without tool_calls
