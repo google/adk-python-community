@@ -1204,6 +1204,13 @@ class OpenAI(BaseLlm):
                 last_message_was_tool_response = True
                 logger.debug("Last message was a tool response - model can provide final answer or call more tools")
         
+        # Check if we have any tool calls in the conversation history (indicates we're in a tool-using workflow)
+        has_tool_calls_in_history = False
+        for msg in messages:
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                has_tool_calls_in_history = True
+                break
+        
         if has_pending_tool_calls:
             logger.debug(f"Pending tool call IDs after message processing: {pending_tool_call_ids}")
         
@@ -1659,12 +1666,29 @@ class OpenAI(BaseLlm):
             # Support configurable tool_choice using Google GenAI types only
             # Use tool_config.function_calling_config.mode (strict Google GenAI format)
             # 
-            # Default strategy: Use "auto" to let the model decide when tools are needed
-            # The model will use tools when appropriate based on instructions and available tools
-            # Only use "required" if explicitly configured via tool_config
-            # This prevents forcing tool calls when they're not needed (which could cause loops)
-            tool_choice = "auto"  # Default - let model decide when tools are needed
-            logger.debug("Using 'auto' for tool_choice - model will decide when to use tools based on instructions")
+            # Smart default strategy for agentic environments:
+            # - If we have pending tool calls, we're waiting for tool results, so use "auto" to allow final answer
+            # - If the last message was a tool response, we just got tool results, so use "auto" to allow final answer
+            # - If we have tool calls in history, we're in a tool-using workflow, so use "auto" (model can decide to continue or finish)
+            # - Otherwise (fresh conversation with tools available), use "required" to ensure tools are called when available
+            # This ensures tools are used in agentic environments while preventing loops
+            if has_pending_tool_calls:
+                # We're in the middle of a tool-calling sequence (waiting for tool results)
+                tool_choice = "auto"
+                logger.debug("Pending tool calls detected - using 'auto' to allow final answer after tool results")
+            elif last_message_was_tool_response:
+                # We just received tool results - allow model to provide final answer or call more tools
+                tool_choice = "auto"
+                logger.debug("Last message was tool response - using 'auto' to allow final answer or additional tool calls")
+            elif has_tool_calls_in_history:
+                # We're in a tool-using workflow - let model decide whether to continue or finish
+                tool_choice = "auto"
+                logger.debug("Tool calls in history - using 'auto' to let model decide next step")
+            else:
+                # Fresh conversation with tools available - use "required" to ensure tools are called
+                # This is important for agentic behavior where tools should be used when available
+                tool_choice = "required"
+                logger.debug("Fresh conversation with tools - using 'required' to ensure tools are called")
             
             if llm_request.config:
                 # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
