@@ -901,6 +901,19 @@ async def openai_response_to_llm_response(
             import traceback
             logger.debug(traceback.format_exc())
 
+    # Extract function calls from content parts to create a function_calls list
+    # Google GenAI responses have both function calls in content parts AND a separate function_calls field
+    # The frontend expects function_calls to be accessible at the response level
+    function_calls_list = []
+    for part in content_parts:
+        # Check if part is a types.Part object with function_call attribute
+        if isinstance(part, types.Part) and hasattr(part, "function_call") and part.function_call:
+            function_calls_list.append(part.function_call)
+        # Also check if part is a dict (during construction)
+        elif isinstance(part, dict) and "function_call" in part and part["function_call"]:
+            # This shouldn't happen if we're using types.Part, but handle it just in case
+            logger.warning("Found function_call in dict format, expected types.Part")
+    
     # Create content
     content = (
         types.Content(role="model", parts=content_parts) if content_parts else None
@@ -960,9 +973,49 @@ async def openai_response_to_llm_response(
         system_fingerprint = response.system_fingerprint
         logger.debug(f"System fingerprint: {system_fingerprint}")
 
-    return LlmResponse(
-        content=content, usage_metadata=usage_metadata, finish_reason=finish_reason
-    )
+    # Create a GenerateContentResponse-like object with function_calls field
+    # This matches Google GenAI's response structure which has both content.parts AND function_calls
+    # The frontend expects function_calls to be accessible at the response level
+    # Google GenAI uses LlmResponse.create(response) which expects a GenerateContentResponse
+    try:
+        # Always create a GenerateContentResponse to match Google GenAI's structure
+        # This ensures LlmResponse.create() can properly extract all fields
+        genai_response = types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=content,
+                    finish_reason=finish_reason,
+                )
+            ],
+            usage_metadata=usage_metadata,
+        )
+        
+        # Add function_calls if present (Google GenAI has this at response level)
+        if function_calls_list:
+            logger.debug(f"Found {len(function_calls_list)} function call(s) in response")
+            # Set function_calls on the response object
+            # Note: function_calls might need to be set via attribute assignment
+            try:
+                genai_response.function_calls = function_calls_list
+            except (AttributeError, TypeError):
+                # If direct assignment doesn't work, try using model_dump and creating new object
+                logger.debug("Could not set function_calls directly, function calls are in content parts")
+        
+        # Use LlmResponse.create() to properly extract all fields including function_calls
+        # This matches how google_llm.py works: LlmResponse.create(response)
+        return LlmResponse.create(genai_response)
+    except Exception as e:
+        logger.warning(
+            f"Could not create GenerateContentResponse: {e}. "
+            f"Falling back to direct LlmResponse creation. "
+            f"Function calls may not be visible in frontend."
+        )
+        import traceback
+        logger.debug(traceback.format_exc())
+        # Fallback: create LlmResponse directly (function calls are still in content parts)
+        return LlmResponse(
+            content=content, usage_metadata=usage_metadata, finish_reason=finish_reason
+        )
 
 
 class OpenAI(BaseLlm):
@@ -2519,6 +2572,8 @@ class OpenAI(BaseLlm):
 
                 # Build final complete response with all accumulated data
                 final_parts = []
+                function_calls_list = []
+                
                 if accumulated_text:
                     final_parts.append(types.Part(text=accumulated_text))
 
@@ -2536,15 +2591,13 @@ class OpenAI(BaseLlm):
                                     "arguments": tool_call_data["function"]["arguments"]
                                 }
 
-                        final_parts.append(
-                            types.Part(
-                                function_call=types.FunctionCall(
-                                    id=tool_call_data["id"],
-                                    name=tool_call_data["function"]["name"],
-                                    args=function_args,
-                                )
-                            )
+                        function_call = types.FunctionCall(
+                            id=tool_call_data["id"],
+                            name=tool_call_data["function"]["name"],
+                            args=function_args,
                         )
+                        final_parts.append(types.Part(function_call=function_call))
+                        function_calls_list.append(function_call)
 
                 final_content = (
                     types.Content(role="model", parts=final_parts)
@@ -2552,13 +2605,42 @@ class OpenAI(BaseLlm):
                     else None
                 )
 
-                # Create final response with all metadata
-                final_response = LlmResponse(
-                    content=final_content,
-                    usage_metadata=usage_metadata,
-                    finish_reason=finish_reason,
-                    turn_complete=True,
-                )
+                # Create GenerateContentResponse to match Google GenAI structure
+                # This ensures function_calls are accessible at response level
+                try:
+                    genai_response = types.GenerateContentResponse(
+                        candidates=[
+                            types.Candidate(
+                                content=final_content,
+                                finish_reason=finish_reason,
+                            )
+                        ],
+                        usage_metadata=usage_metadata,
+                    )
+                    
+                    # Add function_calls if present
+                    if function_calls_list:
+                        try:
+                            genai_response.function_calls = function_calls_list
+                        except (AttributeError, TypeError):
+                            logger.debug("Could not set function_calls directly in streaming response")
+                    
+                    # Use LlmResponse.create() to match Google GenAI behavior
+                    final_response = LlmResponse.create(genai_response)
+                    # Ensure turn_complete is set for streaming
+                    final_response.turn_complete = True
+                except Exception as e:
+                    logger.warning(
+                        f"Could not create GenerateContentResponse for streaming: {e}. "
+                        f"Falling back to direct LlmResponse creation."
+                    )
+                    # Fallback: create LlmResponse directly
+                    final_response = LlmResponse(
+                        content=final_content,
+                        usage_metadata=usage_metadata,
+                        finish_reason=finish_reason,
+                        turn_complete=True,
+                    )
 
                 # Add model and system_fingerprint if available (as metadata)
                 # Note: LlmResponse may not have these fields directly, but we can log them
