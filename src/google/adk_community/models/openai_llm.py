@@ -2297,13 +2297,23 @@ class OpenAI(BaseLlm):
                                     logger.warning(f"Schema name contains invalid characters, replaced with underscores: {schema_name}")
                                 
                                 # Build the FLATTENED format structure for Responses API
-                                # Always use strict mode for strict schema adherence (required for GPT-4o and newer models)
+                                # Use strict mode for strict schema adherence, BUT disable if tools are present
+                                # because strict mode prevents function calls (tools can't be used with strict JSON schema)
+                                has_tools = "tools" in request_params and request_params.get("tools")
+                                use_strict = not has_tools  # Disable strict mode when tools are present
+                                
                                 format_dict = {
                                     "type": "json_schema",
                                     "name": schema_name,
                                     "schema": schema_dict,
-                                    "strict": True  # Always enabled for strict schema compliance
                                 }
+                                
+                                # Only add strict if we're not using tools
+                                if use_strict:
+                                    format_dict["strict"] = True
+                                    logger.debug("Strict mode enabled for JSON schema (no tools present)")
+                                else:
+                                    logger.debug("Strict mode disabled because tools are present (strict mode prevents function calls)")
                                 
                                 request_params["text"] = {
                                     "format": format_dict
