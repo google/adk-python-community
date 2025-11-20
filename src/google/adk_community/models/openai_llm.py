@@ -1639,7 +1639,9 @@ class OpenAI(BaseLlm):
             logger.debug(f"Added {len(validated_tools)} validated tool(s) to request params")
             # Support configurable tool_choice using Google GenAI types only
             # Use tool_config.function_calling_config.mode (strict Google GenAI format)
-            tool_choice = "auto"  # Default
+            # Default to "required" but can be overridden by config
+            # Note: "required" forces the model to use tools
+            tool_choice = "required"  # Default - force to use tools
             if llm_request.config:
                 # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
                 tool_config = getattr(llm_request.config, "tool_config", None)
