@@ -2656,15 +2656,6 @@ class OpenAI(BaseLlm):
                         f"Failed to upload file to OpenAI Files API: {e}. Falling back to base64 encoding."
                     )
 
-            # For images or when Files API is disabled, use base64 encoding
-            if mime_type.startswith("image/"):
-                data_b64 = base64.b64encode(data).decode()
-                return {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{data_b64}"},
-                }
-            else:
-                # For other file types, convert to base64 for vision models
                 data_b64 = base64.b64encode(data).decode()
                 return {
                     "type": "image_url",  # OpenAI treats documents as images for vision models
