@@ -2297,22 +2297,20 @@ class OpenAI(BaseLlm):
                                     logger.warning(f"Schema name contains invalid characters, replaced with underscores: {schema_name}")
                                 
                                 # Build the FLATTENED format structure for Responses API
+                                # Always use strict mode for strict schema adherence (required for GPT-4o and newer models)
                                 format_dict = {
                                     "type": "json_schema",
                                     "name": schema_name,
-                                    "schema": schema_dict
+                                    "schema": schema_dict,
+                                    "strict": True  # Always enabled for strict schema compliance
                                 }
-                                
-                                # Add strict if present (optional, defaults to False in Responses API)
-                                if strict is not None:
-                                    format_dict["strict"] = bool(strict)
                                 
                                 request_params["text"] = {
                                     "format": format_dict
                                 }
                                 logger.debug(
                                     f"Converted response_format to text: json_schema format with "
-                                    f"name={schema_name}, strict={format_dict.get('strict', False)}"
+                                    f"name={schema_name}, strict=True"
                                 )
                             else:
                                 raise ValueError(
@@ -2381,7 +2379,6 @@ class OpenAI(BaseLlm):
                 finish_reason = None
                 usage_metadata = None
                 model_name = None
-                response_id = None
                 system_fingerprint = None
 
                 async for event in stream_response:
