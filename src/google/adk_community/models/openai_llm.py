@@ -1918,179 +1918,191 @@ class OpenAI(BaseLlm):
                     logger.debug("safety_settings provided - OpenAI Responses API uses built-in moderation (not configurable)")
 
             # Handle structured output / response format
+            # IMPORTANT: Skip response_format entirely when tools are present
+            # because response_format (even without strict mode) conflicts with:
+            # 1. Function calls (tools) - can't make function calls with JSON schema format
+            # 2. Planner text format (e.g., PlanReActPlanner needs /*FINAL_ANSWER*/ tags)
+            # 
             # Priority: Google GenAI types (response_schema, response_mime_type) first
             # Then check for response_format (OpenAI-specific, for direct API compatibility)
             # OpenAI supports two types of structured outputs:
             # 1. JSON mode: {"type": "json_object"}
             # 2. Structured outputs with schema: {"type": "json_schema", "json_schema": {...}}
             
-            try:
-                response_format_set = False
-                # First, check for Google GenAI response_schema or response_mime_type
-                # (These are handled below in the response_schema section)
-                
-                # Then check for response_format (OpenAI-specific, for direct API compatibility)
-                # Use getattr with None default to safely check for attribute
-                # Check it's actually a dict with expected structure to avoid MagicMock issues
-                if not response_format_set:
-                    response_format = getattr(llm_request.config, "response_format", None)
-                    # Check if it's a dict and has the expected structure (not a MagicMock)
-                    if (
-                        response_format is not None
-                        and isinstance(response_format, dict)
-                        and "type" in response_format
-                    ):
-                        request_params["response_format"] = response_format
-                        response_format_set = True
-                
-                if not response_format_set:
-                    # Check for response_schema (JSON schema for structured outputs)
-                    response_schema = getattr(
-                        llm_request.config, "response_schema", None
-                    )
-                    if response_schema is not None:
-                        # Convert ADK schema to OpenAI JSON schema format
-                        # OpenAI requires: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
-                        schema_name = None
-                        schema_dict = None
-                        
-                        if isinstance(response_schema, dict):
-                            # If it's already a dict, check if it's already in OpenAI format
-                            if "name" in response_schema and "schema" in response_schema:
-                                # Already in OpenAI Chat Completions format (nested json_schema)
-                                # This will be converted to Responses API format (flattened) later
-                                request_params["response_format"] = {
-                                    "type": "json_schema",
-                                    "json_schema": response_schema,  # Chat Completions format: nested
-                                }
-                            else:
-                                # It's a raw JSON schema dict, need to wrap it
-                                schema_dict = response_schema
-                                schema_name = response_schema.get("title", "ResponseSchema")
-                        else:
-                            # If it's a Schema object, convert it
-                            try:
-                                # Get schema name from the class/object
-                                if inspect.isclass(response_schema):
-                                    schema_name = response_schema.__name__
-                                else:
-                                    schema_name = type(response_schema).__name__
-                                    if schema_name == "dict":
-                                        schema_name = "ResponseSchema"
-                                
-                                # Check if it's a Pydantic model class (not an instance)
-                                # First check if it's a class
-                                is_pydantic_class = False
-                                if inspect.isclass(response_schema):
-                                    # Check if it has Pydantic-specific methods (model_json_schema or schema)
-                                    # or if it's a subclass of BaseModel
-                                    has_pydantic_methods = (
-                                        hasattr(response_schema, "model_json_schema")
-                                        or hasattr(response_schema, "schema")
-                                    )
-                                    # Check if any base class is BaseModel
-                                    is_base_model_subclass = False
-                                    try:
-                                        for base in response_schema.__mro__:
-                                            if hasattr(base, "__name__") and base.__name__ == "BaseModel":
-                                                is_base_model_subclass = True
-                                                break
-                                    except (AttributeError, TypeError) as e:
-                                        logger.debug(f"Could not inspect MRO for schema: {e}")
-                                    
-                                    is_pydantic_class = has_pydantic_methods or is_base_model_subclass
-                                
-                                if is_pydantic_class:
-                                    # It's a Pydantic model class, get JSON schema from the class
-                                    # Try model_json_schema (Pydantic v2)
-                                    if hasattr(response_schema, "model_json_schema"):
-                                        schema_dict = response_schema.model_json_schema()
-                                    # Try schema() method (Pydantic v1)
-                                    elif hasattr(response_schema, "schema"):
-                                        schema_dict = response_schema.schema()
-                                    else:
-                                        # Fallback: try to instantiate and get schema
-                                        # This might not work if required fields are missing
-                                        try:
-                                            # Create a minimal instance if possible
-                                            instance = response_schema()
-                                            if hasattr(instance, "model_json_schema"):
-                                                schema_dict = instance.model_json_schema()
-                                            elif hasattr(instance, "schema"):
-                                                schema_dict = instance.schema()
-                                        except Exception as e:
-                                            logger.debug(f"Could not get schema from instantiated model: {e}")
-                                else:
-                                    # It's an instance or other object
-                                    # Try model_dump (Pydantic v2 instance)
-                                    if hasattr(response_schema, "model_dump"):
-                                        schema_dict = response_schema.model_dump(
-                                            exclude_none=True
-                                        )
-                                    # Try dict() method (Pydantic v1 instance)
-                                    elif hasattr(response_schema, "dict"):
-                                        schema_dict = response_schema.dict(
-                                            exclude_none=True
-                                        )
-                                    # Try model_json_schema (Pydantic v2 instance)
-                                    elif hasattr(response_schema, "model_json_schema"):
-                                        schema_dict = response_schema.model_json_schema()
-                                    # Try schema() method (Pydantic v1 instance)
-                                    elif hasattr(response_schema, "schema"):
-                                        schema_dict = response_schema.schema()
-                                    # Try __dict__ attribute
-                                    elif hasattr(response_schema, "__dict__"):
-                                        schema_dict = {
-                                            k: v
-                                            for k, v in response_schema.__dict__.items()
-                                            if v is not None
-                                        }
-                                    # Try converting to dict directly
-                                    else:
-                                        schema_dict = dict(response_schema)
-                            except (AttributeError, TypeError, ValueError) as e:
-                                logger.warning(
-                                    f"Could not convert response_schema to OpenAI format: {e}. "
-                                    f"Schema type: {type(response_schema)}, "
-                                    f"Schema value: {response_schema}"
-                                )
-                                schema_dict = None
-                            
-                        # Wrap schema in OpenAI's required format
-                        if schema_dict is not None:
-                            # Use schema title if available, otherwise use the name we extracted
-                            if isinstance(schema_dict, dict) and "title" in schema_dict:
-                                schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
-                            
-                            request_params["response_format"] = {
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": schema_name or "ResponseSchema",
-                                    "schema": schema_dict,
-                                },
-                            }
-                    else:
-                        # Also check for response_mime_type which might indicate JSON mode
-                        response_mime_type = getattr(
-                            llm_request.config, "response_mime_type", None
-                        )
+            # Check if tools are present - if so, skip response_format entirely
+            has_tools_for_response_format = "tools" in request_params and request_params.get("tools")
+            if has_tools_for_response_format:
+                logger.debug(
+                    "Tools are present - skipping response_format to allow function calls and planner text format"
+                )
+            else:
+                try:
+                    response_format_set = False
+                    # First, check for Google GenAI response_schema or response_mime_type
+                    # (These are handled below in the response_schema section)
+                    
+                    # Then check for response_format (OpenAI-specific, for direct API compatibility)
+                    # Use getattr with None default to safely check for attribute
+                    # Check it's actually a dict with expected structure to avoid MagicMock issues
+                    if not response_format_set:
+                        response_format = getattr(llm_request.config, "response_format", None)
+                        # Check if it's a dict and has the expected structure (not a MagicMock)
                         if (
-                            response_mime_type is not None
-                            and isinstance(response_mime_type, str)
-                            and response_mime_type == "application/json"
+                            response_format is not None
+                            and isinstance(response_format, dict)
+                            and "type" in response_format
                         ):
-                            request_params["response_format"] = {"type": "json_object"}
-                        elif response_mime_type and isinstance(
-                            response_mime_type, str
-                        ):
-                            # For other structured formats, could be extended
-                            logger.debug(
-                                f"Response MIME type {response_mime_type} "
-                                "not directly mapped to OpenAI response_format"
+                            request_params["response_format"] = response_format
+                            response_format_set = True
+                    
+                    if not response_format_set:
+                        # Check for response_schema (JSON schema for structured outputs)
+                        response_schema = getattr(
+                            llm_request.config, "response_schema", None
+                        )
+                        if response_schema is not None:
+                            # Convert ADK schema to OpenAI JSON schema format
+                            # OpenAI requires: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
+                            schema_name = None
+                            schema_dict = None
+                            
+                            if isinstance(response_schema, dict):
+                                # If it's already a dict, check if it's already in OpenAI format
+                                if "name" in response_schema and "schema" in response_schema:
+                                    # Already in OpenAI Chat Completions format (nested json_schema)
+                                    # This will be converted to Responses API format (flattened) later
+                                    request_params["response_format"] = {
+                                        "type": "json_schema",
+                                        "json_schema": response_schema,  # Chat Completions format: nested
+                                    }
+                                else:
+                                    # It's a raw JSON schema dict, need to wrap it
+                                    schema_dict = response_schema
+                                    schema_name = response_schema.get("title", "ResponseSchema")
+                            else:
+                                # If it's a Schema object, convert it
+                                try:
+                                    # Get schema name from the class/object
+                                    if inspect.isclass(response_schema):
+                                        schema_name = response_schema.__name__
+                                    else:
+                                        schema_name = type(response_schema).__name__
+                                        if schema_name == "dict":
+                                            schema_name = "ResponseSchema"
+                                    
+                                    # Check if it's a Pydantic model class (not an instance)
+                                    # First check if it's a class
+                                    is_pydantic_class = False
+                                    if inspect.isclass(response_schema):
+                                        # Check if it has Pydantic-specific methods (model_json_schema or schema)
+                                        # or if it's a subclass of BaseModel
+                                        has_pydantic_methods = (
+                                            hasattr(response_schema, "model_json_schema")
+                                            or hasattr(response_schema, "schema")
+                                        )
+                                        # Check if any base class is BaseModel
+                                        is_base_model_subclass = False
+                                        try:
+                                            for base in response_schema.__mro__:
+                                                if hasattr(base, "__name__") and base.__name__ == "BaseModel":
+                                                    is_base_model_subclass = True
+                                                    break
+                                        except (AttributeError, TypeError) as e:
+                                            logger.debug(f"Could not inspect MRO for schema: {e}")
+                                        
+                                        is_pydantic_class = has_pydantic_methods or is_base_model_subclass
+                                    
+                                    if is_pydantic_class:
+                                        # It's a Pydantic model class, get JSON schema from the class
+                                        # Try model_json_schema (Pydantic v2)
+                                        if hasattr(response_schema, "model_json_schema"):
+                                            schema_dict = response_schema.model_json_schema()
+                                        # Try schema() method (Pydantic v1)
+                                        elif hasattr(response_schema, "schema"):
+                                            schema_dict = response_schema.schema()
+                                        else:
+                                            # Fallback: try to instantiate and get schema
+                                            # This might not work if required fields are missing
+                                            try:
+                                                # Create a minimal instance if possible
+                                                instance = response_schema()
+                                                if hasattr(instance, "model_json_schema"):
+                                                    schema_dict = instance.model_json_schema()
+                                                elif hasattr(instance, "schema"):
+                                                    schema_dict = instance.schema()
+                                            except Exception as e:
+                                                logger.debug(f"Could not get schema from instantiated model: {e}")
+                                    else:
+                                        # It's an instance or other object
+                                        # Try model_dump (Pydantic v2 instance)
+                                        if hasattr(response_schema, "model_dump"):
+                                            schema_dict = response_schema.model_dump(
+                                                exclude_none=True
+                                            )
+                                        # Try dict() method (Pydantic v1 instance)
+                                        elif hasattr(response_schema, "dict"):
+                                            schema_dict = response_schema.dict(
+                                                exclude_none=True
+                                            )
+                                        # Try model_json_schema (Pydantic v2 instance)
+                                        elif hasattr(response_schema, "model_json_schema"):
+                                            schema_dict = response_schema.model_json_schema()
+                                        # Try schema() method (Pydantic v1 instance)
+                                        elif hasattr(response_schema, "schema"):
+                                            schema_dict = response_schema.schema()
+                                        # Try __dict__ attribute
+                                        elif hasattr(response_schema, "__dict__"):
+                                            schema_dict = {
+                                                k: v
+                                                for k, v in response_schema.__dict__.items()
+                                                if v is not None
+                                            }
+                                        # Try converting to dict directly
+                                        else:
+                                            schema_dict = dict(response_schema)
+                                except (AttributeError, TypeError, ValueError) as e:
+                                    logger.warning(
+                                        f"Could not convert response_schema to OpenAI format: {e}. "
+                                        f"Schema type: {type(response_schema)}, "
+                                        f"Schema value: {response_schema}"
+                                    )
+                                    schema_dict = None
+                                
+                                # Wrap schema in OpenAI's required format
+                                if schema_dict is not None:
+                                    # Use schema title if available, otherwise use the name we extracted
+                                    if isinstance(schema_dict, dict) and "title" in schema_dict:
+                                        schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
+                                    
+                                    request_params["response_format"] = {
+                                        "type": "json_schema",
+                                        "json_schema": {
+                                            "name": schema_name or "ResponseSchema",
+                                            "schema": schema_dict,
+                                        },
+                                    }
+                        else:
+                            # Also check for response_mime_type which might indicate JSON mode
+                            response_mime_type = getattr(
+                                llm_request.config, "response_mime_type", None
                             )
-            except (AttributeError, TypeError, ValueError) as e:
-                # If there's any issue accessing config attributes, log and continue
-                logger.warning(f"Error checking structured output config: {e}")
+                            if (
+                                response_mime_type is not None
+                                and isinstance(response_mime_type, str)
+                                and response_mime_type == "application/json"
+                            ):
+                                request_params["response_format"] = {"type": "json_object"}
+                            elif response_mime_type and isinstance(
+                                response_mime_type, str
+                            ):
+                                # For other structured formats, could be extended
+                                logger.debug(
+                                    f"Response MIME type {response_mime_type} "
+                                    "not directly mapped to OpenAI response_format"
+                                )
+                except (AttributeError, TypeError, ValueError) as e:
+                    # If there's any issue accessing config attributes, log and continue
+                    logger.warning(f"Error checking structured output config: {e}")
 
         logger.info(
             "Sending request to OpenAI Responses API, model: %s, stream: %s",
@@ -2225,6 +2237,7 @@ class OpenAI(BaseLlm):
             request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
         
         # Convert response_format to Responses API 'text' parameter
+        # IMPORTANT: Skip this conversion if tools are present, as response_format conflicts with tools
         # Responses API uses 'text' instead of 'response_format'
         # The 'text' parameter structure:
         # - For json_object: text={"format": {"type": "json_object"}}
@@ -2232,8 +2245,17 @@ class OpenAI(BaseLlm):
         # IMPORTANT: Responses API uses FLATTENED structure - name, schema, strict are at same level as type
         # NOT nested under json_schema like Chat Completions API
         if "response_format" in request_params:
-            response_format = request_params.pop("response_format")
-            logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
+            # Check if tools are present - if so, remove response_format to allow function calls
+            if "tools" in request_params and request_params.get("tools"):
+                logger.warning(
+                    "response_format is set but tools are also present. "
+                    "Removing response_format to allow function calls and planner text format. "
+                    "Response format conflicts with tools/function calls."
+                )
+                request_params.pop("response_format")
+            else:
+                response_format = request_params.pop("response_format")
+                logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
             
             try:
                 if isinstance(response_format, dict):
@@ -2297,23 +2319,15 @@ class OpenAI(BaseLlm):
                                     logger.warning(f"Schema name contains invalid characters, replaced with underscores: {schema_name}")
                                 
                                 # Build the FLATTENED format structure for Responses API
-                                # Use strict mode for strict schema adherence, BUT disable if tools are present
-                                # because strict mode prevents function calls (tools can't be used with strict JSON schema)
-                                has_tools = "tools" in request_params and request_params.get("tools")
-                                use_strict = not has_tools  # Disable strict mode when tools are present
-                                
+                                # Always use strict mode for strict schema adherence (required for GPT-4o and newer models)
+                                # Note: This code path is only reached when tools are NOT present
+                                # (tools check happens earlier and removes response_format if tools exist)
                                 format_dict = {
                                     "type": "json_schema",
                                     "name": schema_name,
                                     "schema": schema_dict,
+                                    "strict": True  # Always enabled for strict schema compliance
                                 }
-                                
-                                # Only add strict if we're not using tools
-                                if use_strict:
-                                    format_dict["strict"] = True
-                                    logger.debug("Strict mode enabled for JSON schema (no tools present)")
-                                else:
-                                    logger.debug("Strict mode disabled because tools are present (strict mode prevents function calls)")
                                 
                                 request_params["text"] = {
                                     "format": format_dict
