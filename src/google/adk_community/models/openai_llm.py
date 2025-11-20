@@ -1659,26 +1659,12 @@ class OpenAI(BaseLlm):
             # Support configurable tool_choice using Google GenAI types only
             # Use tool_config.function_calling_config.mode (strict Google GenAI format)
             # 
-            # Smart default strategy for agentic environments:
-            # - If we have pending tool calls, we're waiting for tool results, so use "auto" to allow final answer
-            # - If the last message was a tool response, we just got tool results, so use "auto" to allow final answer
-            # - Otherwise (start of conversation or after user message), use "required" to ensure tools are called
-            # This prevents the infinite loop issue while still ensuring tools are called when needed
-            if has_pending_tool_calls:
-                # We're in the middle of a tool-calling sequence (waiting for tool results)
-                # Use "auto" to allow the model to provide final answer or call more tools
-                tool_choice = "auto"
-                logger.debug("Pending tool calls detected - using 'auto' to allow final answer after tool results")
-            elif last_message_was_tool_response:
-                # We just received tool results - allow model to provide final answer or call more tools
-                # This is critical to prevent infinite loops when the planner expects a final answer
-                tool_choice = "auto"
-                logger.debug("Last message was tool response - using 'auto' to allow final answer or additional tool calls")
-            else:
-                # Start of conversation or after user message - use "required" to ensure tools are called
-                # This ensures agentic behavior where tools are used when available
-                tool_choice = "required"
-                logger.debug("Start of conversation or after user message - using 'required' to ensure tools are called")
+            # Default strategy: Use "auto" to let the model decide when tools are needed
+            # The model will use tools when appropriate based on instructions and available tools
+            # Only use "required" if explicitly configured via tool_config
+            # This prevents forcing tool calls when they're not needed (which could cause loops)
+            tool_choice = "auto"  # Default - let model decide when tools are needed
+            logger.debug("Using 'auto' for tool_choice - model will decide when to use tools based on instructions")
             
             if llm_request.config:
                 # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
