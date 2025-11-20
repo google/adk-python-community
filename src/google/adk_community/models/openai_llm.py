@@ -1267,7 +1267,9 @@ class OpenAI(BaseLlm):
         # IMPORTANT: Responses API doesn't support 'tool_calls' nested in messages
         # Tool calls must be separate items with type="function_call"
         # Tool results must be separate items with type="function_call_output"
-        # IMPORTANT: The 'id' in function_call items must match the 'call_id' in function_call_output items
+        # IMPORTANT: Google GenAI uses 'id' in tool_calls and 'tool_call_id' in tool messages,
+        # but OpenAI Responses API uses 'call_id' for both function_call and function_call_output items.
+        # We convert Google GenAI's 'id'/'tool_call_id' to OpenAI's 'call_id' during conversion.
         input_items = []
         logger.debug(f"Converting {len(messages)} message(s) to Responses API input format")
         for msg in messages:
@@ -1278,8 +1280,9 @@ class OpenAI(BaseLlm):
                 # Log the full message structure for debugging
                 logger.info(f"Processing tool message: keys={list(msg.keys())}, full_message={msg}")
                 
-                # Extract tool_call_id - it's REQUIRED for function_call_output items
-                # Check multiple possible field names
+                # Extract tool_call_id from Google GenAI format and convert to call_id for OpenAI Responses API
+                # Google GenAI uses 'tool_call_id' in tool messages, OpenAI Responses API uses 'call_id'
+                # Check multiple possible field names for compatibility
                 tool_call_id = msg.get("tool_call_id") or msg.get("call_id") or msg.get("id")
                 
                 # Log what we found
@@ -1326,10 +1329,11 @@ class OpenAI(BaseLlm):
                     )
                 
                 # Convert tool message to function_call_output item
+                # Convert Google GenAI format (tool_call_id) to OpenAI Responses API format (call_id)
                 # Responses API requires: type="function_call_output", call_id (string), output (string or object)
                 function_call_output_item = {
                     "type": "function_call_output",
-                    "call_id": tool_call_id.strip(),  # Ensure no leading/trailing whitespace
+                    "call_id": tool_call_id.strip(),  # OpenAI Responses API uses 'call_id' (Google GenAI uses 'tool_call_id')
                     "output": msg.get("content", "")
                 }
                 
@@ -1370,11 +1374,12 @@ class OpenAI(BaseLlm):
                     # Track all function_call IDs we create so we can validate tool messages match them
                     function_call_ids = []
                     for tool_call in tool_calls:
-                        # Extract and validate function_call id - REQUIRED for Responses API
+                        # Extract 'id' from Google GenAI format and convert to 'call_id' for OpenAI Responses API
+                        # Google GenAI uses 'id' in tool_calls, but OpenAI Responses API uses 'call_id'
                         call_id = tool_call.get("id")
                         if not call_id:
                             raise ValueError(
-                                f"Tool call missing required 'id' field. "
+                                f"Tool call missing required 'id' field (Google GenAI format). "
                                 f"Cannot create function_call item without id. "
                                 f"Tool call: {tool_call}"
                             )
@@ -1402,15 +1407,16 @@ class OpenAI(BaseLlm):
                         function_name = tool_call.get("function", {}).get("name", "")
                         function_arguments = tool_call.get("function", {}).get("arguments", "{}")
                         
+                        # Convert Google GenAI format (id) to OpenAI Responses API format (call_id)
                         function_call_item = {
                             "type": "function_call",
-                            "id": call_id,  # Must be a string - this ID must match call_id in function_call_output
+                            "call_id": call_id,  # OpenAI Responses API uses 'call_id' (Google GenAI uses 'id')
                             "name": function_name,
                             "arguments": function_arguments
                         }
                         input_items.append(function_call_item)
                         logger.info(
-                            f"Added function_call item: id={call_id!r}, "
+                            f"Added function_call item: call_id={call_id!r}, "
                             f"name={function_name}, "
                             f"total_function_calls_in_message={len(tool_calls)}"
                         )
@@ -1452,19 +1458,19 @@ class OpenAI(BaseLlm):
                     f"(required for function_call_output)"
                 )
             elif item_type == "function_call":
-                call_id = item.get("id")
+                call_id = item.get("call_id")
                 if not call_id:
                     raise ValueError(
-                        f"Input item {i} is a function_call but missing required 'id' field. "
+                        f"Input item {i} is a function_call but missing required 'call_id' field. "
                         f"Item: {item}"
                     )
                 if not isinstance(call_id, str) or not call_id.strip():
                     raise ValueError(
-                        f"Input item {i} has invalid id: {call_id!r} (type: {type(call_id).__name__}). "
-                        f"id must be a non-empty string. Item: {item}"
+                        f"Input item {i} has invalid call_id: {call_id!r} (type: {type(call_id).__name__}). "
+                        f"call_id must be a non-empty string. Item: {item}"
                     )
                 logger.debug(
-                    f"Input item {i}: type={item_type}, id={call_id!r} "
+                    f"Input item {i}: type={item_type}, call_id={call_id!r} "
                     f"(must match call_id in corresponding function_call_output)"
                 )
             else:
@@ -1510,29 +1516,29 @@ class OpenAI(BaseLlm):
             
             # Validate function_call items
             elif item_copy.get("type") == "function_call":
-                if "id" not in item_copy:
+                if "call_id" not in item_copy:
                     raise ValueError(
-                        f"Input item {i} (function_call) missing 'id' key. "
+                        f"Input item {i} (function_call) missing 'call_id' key. "
                         f"Item keys: {list(item_copy.keys())}, Original item: {item}"
                     )
-                call_id = item_copy.get("id")
+                call_id = item_copy.get("call_id")
                 if call_id is None:
                     raise ValueError(
-                        f"Input item {i} (function_call) has 'id' key but value is None. "
+                        f"Input item {i} (function_call) has 'call_id' key but value is None. "
                         f"Original item: {item}"
                     )
                 if not isinstance(call_id, str):
                     raise ValueError(
-                        f"Input item {i} (function_call) id is not a string: "
+                        f"Input item {i} (function_call) call_id is not a string: "
                         f"{type(call_id).__name__}, value: {call_id!r}, Original item: {item}"
                     )
                 if not call_id.strip():
                     raise ValueError(
-                        f"Input item {i} (function_call) id is empty/whitespace: "
+                        f"Input item {i} (function_call) call_id is empty/whitespace: "
                         f"{call_id!r}, Original item: {item}"
                     )
-                # Ensure id is clean (no whitespace)
-                item_copy["id"] = call_id.strip()
+                # Ensure call_id is clean (no whitespace)
+                item_copy["call_id"] = call_id.strip()
             
             clean_input_items.append(item_copy)
         
@@ -2113,10 +2119,10 @@ class OpenAI(BaseLlm):
                     import json
                     logger.debug(f"  Input[{i}] full structure: {json.dumps(item, indent=2, default=str)}")
                 elif item_type == "function_call":
-                    call_id = item.get("id")
+                    call_id = item.get("call_id")
                     logger.info(
-                        f"  Input[{i}]: type={item_type}, id={call_id!r}, "
-                        f"has_id={'id' in item}, id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
+                        f"  Input[{i}]: type={item_type}, call_id={call_id!r}, "
+                        f"has_call_id={'call_id' in item}, call_id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
                     )
                 else:
                     logger.info(f"  Input[{i}]: type={item_type}")
