@@ -1303,16 +1303,32 @@ class OpenAI(BaseLlm):
                         f"Original tool_call_id: {msg.get('tool_call_id')}"
                     )
                 
+                # Final validation: ensure tool_call_id is still valid after all processing
+                if not tool_call_id or not isinstance(tool_call_id, str) or not tool_call_id.strip():
+                    raise ValueError(
+                        f"Tool message tool_call_id is invalid after processing. "
+                        f"tool_call_id={tool_call_id!r}, type={type(tool_call_id).__name__}, "
+                        f"original_message={msg}"
+                    )
+                
                 # Convert tool message to function_call_output item
                 # Responses API requires: type="function_call_output", call_id (string), output (string or object)
                 function_call_output_item = {
                     "type": "function_call_output",
-                    "call_id": tool_call_id,  # Must be a string matching the function_call id
+                    "call_id": tool_call_id.strip(),  # Ensure no leading/trailing whitespace
                     "output": msg.get("content", "")
                 }
+                
+                # Double-check the item before appending
+                if not function_call_output_item.get("call_id"):
+                    raise ValueError(
+                        f"function_call_output item missing call_id after creation. "
+                        f"Item: {function_call_output_item}, original_message: {msg}"
+                    )
+                
                 input_items.append(function_call_output_item)
                 logger.debug(
-                    f"Converted tool message to function_call_output: call_id={tool_call_id}, "
+                    f"Converted tool message to function_call_output: call_id={tool_call_id!r}, "
                     f"output_type={type(msg.get('content', '')).__name__}"
                 )
             else:
@@ -1388,18 +1404,38 @@ class OpenAI(BaseLlm):
                     }
                     input_items.append(message_item)
         
-        # Log final input items structure for debugging
+        # Log final input items structure for debugging and validate
         logger.debug(f"Converted to {len(input_items)} input item(s) for Responses API")
         for i, item in enumerate(input_items):
             item_type = item.get("type", "unknown")
             if item_type == "function_call_output":
-                call_id = item.get("call_id", "MISSING")
+                call_id = item.get("call_id")
+                if not call_id:
+                    raise ValueError(
+                        f"Input item {i} is a function_call_output but missing required 'call_id' field. "
+                        f"Item: {item}"
+                    )
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise ValueError(
+                        f"Input item {i} has invalid call_id: {call_id!r} (type: {type(call_id).__name__}). "
+                        f"call_id must be a non-empty string. Item: {item}"
+                    )
                 logger.debug(
                     f"Input item {i}: type={item_type}, call_id={call_id!r} "
                     f"(required for function_call_output)"
                 )
             elif item_type == "function_call":
-                call_id = item.get("id", "MISSING")
+                call_id = item.get("id")
+                if not call_id:
+                    raise ValueError(
+                        f"Input item {i} is a function_call but missing required 'id' field. "
+                        f"Item: {item}"
+                    )
+                if not isinstance(call_id, str) or not call_id.strip():
+                    raise ValueError(
+                        f"Input item {i} has invalid id: {call_id!r} (type: {type(call_id).__name__}). "
+                        f"id must be a non-empty string. Item: {item}"
+                    )
                 logger.debug(
                     f"Input item {i}: type={item_type}, id={call_id!r} "
                     f"(must match call_id in corresponding function_call_output)"
