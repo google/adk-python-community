@@ -901,20 +901,9 @@ async def openai_response_to_llm_response(
             import traceback
             logger.debug(traceback.format_exc())
 
-    # Extract function calls from content parts to create a function_calls list
-    # Google GenAI responses have both function calls in content parts AND a separate function_calls field
-    # The frontend expects function_calls to be accessible at the response level
-    function_calls_list = []
-    for part in content_parts:
-        # Check if part is a types.Part object with function_call attribute
-        if isinstance(part, types.Part) and hasattr(part, "function_call") and part.function_call:
-            function_calls_list.append(part.function_call)
-        # Also check if part is a dict (during construction)
-        elif isinstance(part, dict) and "function_call" in part and part["function_call"]:
-            # This shouldn't happen if we're using types.Part, but handle it just in case
-            logger.warning("Found function_call in dict format, expected types.Part")
-    
-    # Create content
+    # Create content with all parts (including function calls)
+    # Note: GenerateContentResponse.function_calls is a computed property that extracts
+    # function calls from candidates[0].content.parts automatically
     content = (
         types.Content(role="model", parts=content_parts) if content_parts else None
     )
@@ -973,10 +962,11 @@ async def openai_response_to_llm_response(
         system_fingerprint = response.system_fingerprint
         logger.debug(f"System fingerprint: {system_fingerprint}")
 
-    # Create a GenerateContentResponse-like object with function_calls field
-    # This matches Google GenAI's response structure which has both content.parts AND function_calls
-    # The frontend expects function_calls to be accessible at the response level
-    # Google GenAI uses LlmResponse.create(response) which expects a GenerateContentResponse
+    # Create a GenerateContentResponse object matching Google GenAI's structure
+    # IMPORTANT: GenerateContentResponse.function_calls is a computed property that
+    # automatically extracts function calls from candidates[0].content.parts
+    # We don't need to (and can't) set function_calls directly - it's read-only
+    # The function calls are already in content.parts, so the property will extract them
     try:
         # Always create a GenerateContentResponse to match Google GenAI's structure
         # This ensures LlmResponse.create() can properly extract all fields
@@ -989,17 +979,6 @@ async def openai_response_to_llm_response(
             ],
             usage_metadata=usage_metadata,
         )
-        
-        # Add function_calls if present (Google GenAI has this at response level)
-        if function_calls_list:
-            logger.debug(f"Found {len(function_calls_list)} function call(s) in response")
-            # Set function_calls on the response object
-            # Note: function_calls might need to be set via attribute assignment
-            try:
-                genai_response.function_calls = function_calls_list
-            except (AttributeError, TypeError):
-                # If direct assignment doesn't work, try using model_dump and creating new object
-                logger.debug("Could not set function_calls directly, function calls are in content parts")
         
         # Use LlmResponse.create() to properly extract all fields including function_calls
         # This matches how google_llm.py works: LlmResponse.create(response)
@@ -1330,22 +1309,10 @@ class OpenAI(BaseLlm):
             
             # Handle tool messages - convert to function_call_output items
             if msg_role == "tool":
-                # Log the full message structure for debugging
-                logger.info(f"Processing tool message: keys={list(msg.keys())}, full_message={msg}")
-                
                 # Extract tool_call_id from Google GenAI format and convert to call_id for OpenAI Responses API
                 # Google GenAI uses 'tool_call_id' in tool messages, OpenAI Responses API uses 'call_id'
                 # Check multiple possible field names for compatibility
                 tool_call_id = msg.get("tool_call_id") or msg.get("call_id") or msg.get("id")
-                
-                # Log what we found
-                logger.info(
-                    f"Tool message tool_call_id extraction: "
-                    f"tool_call_id={msg.get('tool_call_id')!r}, "
-                    f"call_id={msg.get('call_id')!r}, "
-                    f"id={msg.get('id')!r}, "
-                    f"final_tool_call_id={tool_call_id!r}"
-                )
                 
                 # Validate that tool_call_id exists and is not empty - FAIL if missing
                 if not tool_call_id:
@@ -1468,17 +1435,8 @@ class OpenAI(BaseLlm):
                             "arguments": function_arguments
                         }
                         input_items.append(function_call_item)
-                        logger.info(
-                            f"Added function_call item: call_id={call_id!r}, "
-                            f"name={function_name}, "
-                            f"total_function_calls_in_message={len(tool_calls)}"
-                        )
-                    
-                    # Log all function_call IDs for this message
-                    if function_call_ids:
-                        logger.info(
-                            f"Created {len(function_call_ids)} function_call(s) with IDs: {function_call_ids}. "
-                            f"Tool messages should reference these IDs via tool_call_id field."
+                        logger.debug(
+                            f"Added function_call item: call_id={call_id!r}, name={function_name}"
                         )
                 else:
                     # Regular message without tool_calls
@@ -2156,54 +2114,30 @@ class OpenAI(BaseLlm):
                         logger.debug(f"    tool_call: id={tc.get('id')}, name={tc.get('function', {}).get('name')}")
         logger.debug(f"OpenAI request params (excluding input): { {k: v for k, v in request_params.items() if k != 'input'} }")
         
-        # Log the full input array structure for debugging
+        # Final validation: check all function_call_output items before API call
         if "input" in request_params:
             input_array = request_params["input"]
-            logger.info(f"FINAL INPUT ARRAY ({len(input_array)} items) BEING SENT TO API:")
-            for i, item in enumerate(input_array):
-                item_type = item.get("type", "unknown")
-                if item_type == "function_call_output":
-                    call_id = item.get("call_id")
-                    logger.info(
-                        f"  Input[{i}]: type={item_type}, call_id={call_id!r}, "
-                        f"has_call_id={'call_id' in item}, call_id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
-                    )
-                    # Log full item structure
-                    import json
-                    logger.debug(f"  Input[{i}] full structure: {json.dumps(item, indent=2, default=str)}")
-                elif item_type == "function_call":
-                    call_id = item.get("call_id")
-                    logger.info(
-                        f"  Input[{i}]: type={item_type}, call_id={call_id!r}, "
-                        f"has_call_id={'call_id' in item}, call_id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
-                    )
-                else:
-                    logger.info(f"  Input[{i}]: type={item_type}")
-                    import json
-                    logger.debug(f"  Input[{i}] structure: {json.dumps(item, indent=2, default=str)}")
-            
-            # Final validation: check all function_call_output items one more time
             for i, item in enumerate(input_array):
                 if item.get("type") == "function_call_output":
                     if "call_id" not in item:
                         raise ValueError(
-                            f"CRITICAL: Input item {i} is function_call_output but 'call_id' key is missing! "
+                            f"Input item {i} is function_call_output but 'call_id' key is missing! "
                             f"Item keys: {list(item.keys())}, Item: {item}"
                         )
                     call_id = item.get("call_id")
                     if call_id is None:
                         raise ValueError(
-                            f"CRITICAL: Input item {i} has 'call_id' key but value is None! "
+                            f"Input item {i} has 'call_id' key but value is None! "
                             f"Item: {item}"
                         )
                     if not isinstance(call_id, str):
                         raise ValueError(
-                            f"CRITICAL: Input item {i} has call_id but it's not a string! "
+                            f"Input item {i} has call_id but it's not a string! "
                             f"call_id={call_id!r}, type={type(call_id).__name__}, Item: {item}"
                         )
                     if not call_id.strip():
                         raise ValueError(
-                            f"CRITICAL: Input item {i} has call_id but it's empty/whitespace! "
+                            f"Input item {i} has call_id but it's empty/whitespace! "
                             f"call_id={call_id!r}, Item: {item}"
                         )
         
@@ -2221,15 +2155,9 @@ class OpenAI(BaseLlm):
                 logger.warning("Tools list is empty. Removing 'tools' from request.")
                 request_params.pop("tools", None)
             else:
-                tools_json = json.dumps(request_params["tools"], indent=2, default=str)
-                logger.info(f"VALIDATING TOOLS BEFORE API CALL: Found {len(request_params['tools'])} tool(s)")
-                logger.debug(f"Tools being sent to OpenAI API (JSON):\n{tools_json}")
-                
                 # Final validation: filter out any invalid tools
                 validated_final_tools = []
                 for i, tool in enumerate(request_params["tools"]):
-                    tool_str = json.dumps(tool, indent=2, default=str)
-                    logger.info(f"Validating tool {i}: {tool_str}")
                     
                     # Validate tool structure
                     if not isinstance(tool, dict):
@@ -2277,7 +2205,6 @@ class OpenAI(BaseLlm):
                         logger.warning(f"Tool {i} has unknown type '{tool_type}'. Proceeding but may cause API errors.")
                     
                     validated_final_tools.append(tool)
-                    logger.info(f"Tool {i} passed validation: type={tool_type}, name={function_name}")
                 
                 # Update request_params with validated tools
                 if len(validated_final_tools) != len(request_params["tools"]):
@@ -2292,15 +2219,10 @@ class OpenAI(BaseLlm):
                         request_params.pop("tools", None)
                     else:
                         request_params["tools"] = validated_final_tools
-                        logger.info(f"Updated request_params with {len(validated_final_tools)} validated tool(s)")
-                else:
-                    logger.info(f"All {len(validated_final_tools)} tool(s) passed validation")
 
         # Convert tools to Responses API format before sending
         if "tools" in request_params and request_params["tools"]:
-            logger.info(f"Converting {len(request_params['tools'])} tool(s) to Responses API format")
             request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
-            logger.info(f"Converted to {len(request_params['tools'])} tool(s) in Responses API format")
         
         # Convert response_format to Responses API 'text' parameter
         # Responses API uses 'text' instead of 'response_format'
@@ -2444,26 +2366,13 @@ class OpenAI(BaseLlm):
                     "Consider using SDK classes or different structure."
                 )
         
-        # Log final request params right before API call to debug any issues
+        # Validate tools format before API call
         if "tools" in request_params:
-            import json
-            final_tools_json = json.dumps(request_params["tools"], indent=2, default=str)
-            logger.info(f"FINAL TOOLS BEING SENT TO API (count: {len(request_params['tools'])}):\n{final_tools_json}")
-            # Also log each tool individually
             for i, tool in enumerate(request_params["tools"]):
-                logger.info(f"Final tool {i} structure: {json.dumps(tool, indent=2, default=str)}")
-                # Check name at top level (Responses API format - flattened)
-                top_level_name = tool.get("name")
-                # Also check nested for backwards compatibility (shouldn't be there after conversion)
-                nested_name = tool.get("function", {}).get("name") if tool.get("function") else None
-                logger.info(
-                    f"Final tool {i} name check - top level (Responses API): {top_level_name!r}, "
-                    f"nested (should be None): {nested_name!r}"
-                )
-                # Validate Responses API format
-                if not top_level_name:
+                # Validate Responses API format - ensure name is at top level
+                if not tool.get("name"):
                     logger.error(
-                        f"CRITICAL: Tool {i} missing top-level 'name' field (Responses API format)! "
+                        f"Tool {i} missing top-level 'name' field (Responses API format)! "
                         f"Tool: {tool}"
                     )
 
@@ -2606,7 +2515,8 @@ class OpenAI(BaseLlm):
                 )
 
                 # Create GenerateContentResponse to match Google GenAI structure
-                # This ensures function_calls are accessible at response level
+                # IMPORTANT: function_calls is a computed property that extracts from content.parts
+                # We don't need to set it directly - function calls are already in final_parts
                 try:
                     genai_response = types.GenerateContentResponse(
                         candidates=[
@@ -2617,13 +2527,6 @@ class OpenAI(BaseLlm):
                         ],
                         usage_metadata=usage_metadata,
                     )
-                    
-                    # Add function_calls if present
-                    if function_calls_list:
-                        try:
-                            genai_response.function_calls = function_calls_list
-                        except (AttributeError, TypeError):
-                            logger.debug("Could not set function_calls directly in streaming response")
                     
                     # Use LlmResponse.create() to match Google GenAI behavior
                     final_response = LlmResponse.create(genai_response)
