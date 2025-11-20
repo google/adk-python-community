@@ -1443,9 +1443,75 @@ class OpenAI(BaseLlm):
             else:
                 logger.debug(f"Input item {i}: type={item_type}")
         
+        # Create a clean copy of input_items to ensure no mutations affect the request
+        # Also do a final validation pass on the copy
+        clean_input_items = []
+        for i, item in enumerate(input_items):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Input item {i} is not a dict: {type(item).__name__}, value: {item}"
+                )
+            
+            # Make a copy to avoid mutations
+            item_copy = dict(item)
+            
+            # Validate function_call_output items
+            if item_copy.get("type") == "function_call_output":
+                if "call_id" not in item_copy:
+                    raise ValueError(
+                        f"Input item {i} (function_call_output) missing 'call_id' key. "
+                        f"Item keys: {list(item_copy.keys())}, Original item: {item}"
+                    )
+                call_id = item_copy.get("call_id")
+                if call_id is None:
+                    raise ValueError(
+                        f"Input item {i} (function_call_output) has 'call_id' key but value is None. "
+                        f"Original item: {item}"
+                    )
+                if not isinstance(call_id, str):
+                    raise ValueError(
+                        f"Input item {i} (function_call_output) call_id is not a string: "
+                        f"{type(call_id).__name__}, value: {call_id!r}, Original item: {item}"
+                    )
+                if not call_id.strip():
+                    raise ValueError(
+                        f"Input item {i} (function_call_output) call_id is empty/whitespace: "
+                        f"{call_id!r}, Original item: {item}"
+                    )
+                # Ensure call_id is clean (no whitespace)
+                item_copy["call_id"] = call_id.strip()
+            
+            # Validate function_call items
+            elif item_copy.get("type") == "function_call":
+                if "id" not in item_copy:
+                    raise ValueError(
+                        f"Input item {i} (function_call) missing 'id' key. "
+                        f"Item keys: {list(item_copy.keys())}, Original item: {item}"
+                    )
+                call_id = item_copy.get("id")
+                if call_id is None:
+                    raise ValueError(
+                        f"Input item {i} (function_call) has 'id' key but value is None. "
+                        f"Original item: {item}"
+                    )
+                if not isinstance(call_id, str):
+                    raise ValueError(
+                        f"Input item {i} (function_call) id is not a string: "
+                        f"{type(call_id).__name__}, value: {call_id!r}, Original item: {item}"
+                    )
+                if not call_id.strip():
+                    raise ValueError(
+                        f"Input item {i} (function_call) id is empty/whitespace: "
+                        f"{call_id!r}, Original item: {item}"
+                    )
+                # Ensure id is clean (no whitespace)
+                item_copy["id"] = call_id.strip()
+            
+            clean_input_items.append(item_copy)
+        
         request_params = {
             "model": request_model,
-            "input": input_items,  # Responses API accepts array of input items
+            "input": clean_input_items,  # Use cleaned and validated input items
             "stream": stream,
         }
         
@@ -2003,6 +2069,57 @@ class OpenAI(BaseLlm):
                     for tc in tool_calls:
                         logger.debug(f"    tool_call: id={tc.get('id')}, name={tc.get('function', {}).get('name')}")
         logger.debug(f"OpenAI request params (excluding input): { {k: v for k, v in request_params.items() if k != 'input'} }")
+        
+        # Log the full input array structure for debugging
+        if "input" in request_params:
+            input_array = request_params["input"]
+            logger.info(f"FINAL INPUT ARRAY ({len(input_array)} items) BEING SENT TO API:")
+            for i, item in enumerate(input_array):
+                item_type = item.get("type", "unknown")
+                if item_type == "function_call_output":
+                    call_id = item.get("call_id")
+                    logger.info(
+                        f"  Input[{i}]: type={item_type}, call_id={call_id!r}, "
+                        f"has_call_id={'call_id' in item}, call_id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
+                    )
+                    # Log full item structure
+                    import json
+                    logger.debug(f"  Input[{i}] full structure: {json.dumps(item, indent=2, default=str)}")
+                elif item_type == "function_call":
+                    call_id = item.get("id")
+                    logger.info(
+                        f"  Input[{i}]: type={item_type}, id={call_id!r}, "
+                        f"has_id={'id' in item}, id_is_valid={bool(call_id and isinstance(call_id, str) and call_id.strip())}"
+                    )
+                else:
+                    logger.info(f"  Input[{i}]: type={item_type}")
+                    import json
+                    logger.debug(f"  Input[{i}] structure: {json.dumps(item, indent=2, default=str)}")
+            
+            # Final validation: check all function_call_output items one more time
+            for i, item in enumerate(input_array):
+                if item.get("type") == "function_call_output":
+                    if "call_id" not in item:
+                        raise ValueError(
+                            f"CRITICAL: Input item {i} is function_call_output but 'call_id' key is missing! "
+                            f"Item keys: {list(item.keys())}, Item: {item}"
+                        )
+                    call_id = item.get("call_id")
+                    if call_id is None:
+                        raise ValueError(
+                            f"CRITICAL: Input item {i} has 'call_id' key but value is None! "
+                            f"Item: {item}"
+                        )
+                    if not isinstance(call_id, str):
+                        raise ValueError(
+                            f"CRITICAL: Input item {i} has call_id but it's not a string! "
+                            f"call_id={call_id!r}, type={type(call_id).__name__}, Item: {item}"
+                        )
+                    if not call_id.strip():
+                        raise ValueError(
+                            f"CRITICAL: Input item {i} has call_id but it's empty/whitespace! "
+                            f"call_id={call_id!r}, Item: {item}"
+                        )
         
         # Final validation of tools before API call (in case tools were added after initial validation)
         if "tools" in request_params:
