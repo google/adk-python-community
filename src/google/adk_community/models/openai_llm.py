@@ -1161,6 +1161,7 @@ class OpenAI(BaseLlm):
         # Convert contents to messages
         # Track tool_call_ids from assistant messages to ensure they're all responded to
         pending_tool_call_ids = set()
+        has_pending_tool_calls = False  # Track if we're in the middle of a tool-calling sequence
         
         for content in llm_request.contents:
             # content_to_openai_message may return a list if there are multiple function responses
@@ -1174,9 +1175,11 @@ class OpenAI(BaseLlm):
                         # Add all tool_call_ids to pending set
                         for tool_call in msg["tool_calls"]:
                             pending_tool_call_ids.add(tool_call["id"])
+                        has_pending_tool_calls = len(pending_tool_call_ids) > 0
                     elif msg.get("role") == "tool" and "tool_call_id" in msg:
                         # Remove from pending when we get a tool response
                         pending_tool_call_ids.discard(msg["tool_call_id"])
+                        has_pending_tool_calls = len(pending_tool_call_ids) > 0
             else:
                 messages.append(message_or_messages)
                 # Track tool calls and responses
@@ -1184,9 +1187,25 @@ class OpenAI(BaseLlm):
                     # Add all tool_call_ids to pending set
                     for tool_call in message_or_messages["tool_calls"]:
                         pending_tool_call_ids.add(tool_call["id"])
+                    has_pending_tool_calls = len(pending_tool_call_ids) > 0
                 elif message_or_messages.get("role") == "tool" and "tool_call_id" in message_or_messages:
                     # Remove from pending when we get a tool response
                     pending_tool_call_ids.discard(message_or_messages["tool_call_id"])
+                    has_pending_tool_calls = len(pending_tool_call_ids) > 0
+        
+        # Calculate final state of pending tool calls after processing all messages
+        has_pending_tool_calls = len(pending_tool_call_ids) > 0
+        
+        # Check if the last message was a tool response (indicates we just got tool results)
+        last_message_was_tool_response = False
+        if messages:
+            last_message = messages[-1]
+            if last_message.get("role") == "tool":
+                last_message_was_tool_response = True
+                logger.debug("Last message was a tool response - model can provide final answer or call more tools")
+        
+        if has_pending_tool_calls:
+            logger.debug(f"Pending tool call IDs after message processing: {pending_tool_call_ids}")
         
         # Validate message sequence: after assistant messages with tool_calls, 
         # the next messages must be tool messages
@@ -1639,9 +1658,28 @@ class OpenAI(BaseLlm):
             logger.debug(f"Added {len(validated_tools)} validated tool(s) to request params")
             # Support configurable tool_choice using Google GenAI types only
             # Use tool_config.function_calling_config.mode (strict Google GenAI format)
-            # Default to "required" but can be overridden by config
-            # Note: "required" forces the model to use tools
-            tool_choice = "required"  # Default - force to use tools
+            # 
+            # Smart default strategy for agentic environments:
+            # - If we have pending tool calls, we're waiting for tool results, so use "auto" to allow final answer
+            # - If the last message was a tool response, we just got tool results, so use "auto" to allow final answer
+            # - Otherwise (start of conversation or after user message), use "required" to ensure tools are called
+            # This prevents the infinite loop issue while still ensuring tools are called when needed
+            if has_pending_tool_calls:
+                # We're in the middle of a tool-calling sequence (waiting for tool results)
+                # Use "auto" to allow the model to provide final answer or call more tools
+                tool_choice = "auto"
+                logger.debug("Pending tool calls detected - using 'auto' to allow final answer after tool results")
+            elif last_message_was_tool_response:
+                # We just received tool results - allow model to provide final answer or call more tools
+                # This is critical to prevent infinite loops when the planner expects a final answer
+                tool_choice = "auto"
+                logger.debug("Last message was tool response - using 'auto' to allow final answer or additional tool calls")
+            else:
+                # Start of conversation or after user message - use "required" to ensure tools are called
+                # This ensures agentic behavior where tools are used when available
+                tool_choice = "required"
+                logger.debug("Start of conversation or after user message - using 'required' to ensure tools are called")
+            
             if llm_request.config:
                 # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
                 tool_config = getattr(llm_request.config, "tool_config", None)
