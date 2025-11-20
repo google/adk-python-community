@@ -33,6 +33,7 @@ References: OpenAI Responses API, Azure/OpenAI client usage patterns.
 from __future__ import annotations
 
 import base64
+import copy
 import inspect
 import json
 import logging
@@ -661,6 +662,70 @@ async def _convert_media_content_to_part(
     
     # Handle other media types if needed in the future
     return None
+
+
+def _ensure_strict_json_schema(
+    json_schema: Dict[str, Any],
+    path: tuple = (),
+) -> Dict[str, Any]:
+    """Recursively ensures all object types in a JSON schema have additionalProperties: false.
+    
+    This is required by OpenAI's Responses API when using strict mode.
+    Mutates the schema in place to add additionalProperties: false to all object types.
+    
+    Args:
+        json_schema: The JSON schema dictionary to process
+        path: Current path in the schema (for error reporting)
+    
+    Returns:
+        The modified schema dictionary
+    """
+    if not isinstance(json_schema, dict):
+        return json_schema
+    
+    # Process $defs (JSON Schema draft 2020-12)
+    if "$defs" in json_schema and isinstance(json_schema["$defs"], dict):
+        for def_name, def_schema in json_schema["$defs"].items():
+            if isinstance(def_schema, dict):
+                _ensure_strict_json_schema(def_schema, path=(*path, "$defs", def_name))
+    
+    # Process definitions (JSON Schema draft 4/7)
+    if "definitions" in json_schema and isinstance(json_schema["definitions"], dict):
+        for definition_name, definition_schema in json_schema["definitions"].items():
+            if isinstance(definition_schema, dict):
+                _ensure_strict_json_schema(definition_schema, path=(*path, "definitions", definition_name))
+    
+    # Process properties - recursively ensure nested objects are strict
+    if "properties" in json_schema and isinstance(json_schema["properties"], dict):
+        for prop_name, prop_schema in json_schema["properties"].items():
+            if isinstance(prop_schema, dict):
+                _ensure_strict_json_schema(prop_schema, path=(*path, "properties", prop_name))
+    
+    # Process items in arrays (for array of objects)
+    if "items" in json_schema:
+        items_schema = json_schema["items"]
+        if isinstance(items_schema, dict):
+            _ensure_strict_json_schema(items_schema, path=(*path, "items"))
+        elif isinstance(items_schema, list):
+            # Array of schemas (tuple validation)
+            for i, item_schema in enumerate(items_schema):
+                if isinstance(item_schema, dict):
+                    _ensure_strict_json_schema(item_schema, path=(*path, "items", i))
+    
+    # Process anyOf, oneOf, allOf - recursively process each schema
+    for keyword in ["anyOf", "oneOf", "allOf"]:
+        if keyword in json_schema and isinstance(json_schema[keyword], list):
+            for i, sub_schema in enumerate(json_schema[keyword]):
+                if isinstance(sub_schema, dict):
+                    _ensure_strict_json_schema(sub_schema, path=(*path, keyword, i))
+    
+    # Add additionalProperties: false to all object types
+    schema_type = json_schema.get("type")
+    if schema_type == "object" and "additionalProperties" not in json_schema:
+        json_schema["additionalProperties"] = False
+        logger.debug(f"Added additionalProperties: false to object at path: {path if path else 'root'}")
+    
+    return json_schema
 
 
 async def openai_response_to_llm_response(
@@ -2044,6 +2109,25 @@ class OpenAI(BaseLlm):
                                         f"got: {json_schema_obj}"
                                     )
                                 
+                                # Check if strict mode is enabled
+                                strict = json_schema_obj.get("strict", False)
+                                if strict:
+                                    # When strict mode is enabled, ensure all object types have additionalProperties: false
+                                    # This is required by OpenAI's Responses API for strict mode
+                                    if isinstance(schema_dict, dict):
+                                        # Make a deep copy to avoid mutating the original
+                                        schema_dict = copy.deepcopy(schema_dict)
+                                        _ensure_strict_json_schema(schema_dict)
+                                        logger.debug(
+                                            f"Ensured strict JSON schema compliance: added additionalProperties: false "
+                                            f"to all object types in schema"
+                                        )
+                                    else:
+                                        logger.warning(
+                                            f"Schema is not a dict, cannot ensure strict compliance. "
+                                            f"Type: {type(schema_dict).__name__}"
+                                        )
+                                
                                 # Validate schema_name (must be string, max 64 chars, only a-z, A-Z, 0-9, _, -)
                                 if not isinstance(schema_name, str):
                                     schema_name = str(schema_name)
@@ -2066,7 +2150,6 @@ class OpenAI(BaseLlm):
                                 }
                                 
                                 # Add strict if present (optional, defaults to False in Responses API)
-                                strict = json_schema_obj.get("strict")
                                 if strict is not None:
                                     format_dict["strict"] = bool(strict)
                                 
