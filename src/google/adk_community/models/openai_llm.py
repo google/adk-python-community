@@ -2124,13 +2124,25 @@ class OpenAI(BaseLlm):
                                     if isinstance(schema_dict, dict) and "title" in schema_dict:
                                         schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
                                     
+                                    # Ensure strict mode compliance: add additionalProperties: false to all object types
+                                    # Make a deep copy to avoid mutating the original
+                                    strict_schema_dict = copy.deepcopy(schema_dict)
+                                    _ensure_strict_json_schema(strict_schema_dict)
+                                    
                                     request_params["response_format"] = {
                                         "type": "json_schema",
                                         "json_schema": {
                                             "name": schema_name or "ResponseSchema",
-                                            "schema": schema_dict,
+                                            "schema": strict_schema_dict,
+                                            "strict": True  # Always enable strict mode for structured outputs
                                         },
                                     }
+                                    logger.info(
+                                        f"Converted response_schema to response_format: "
+                                        f"name={schema_name or 'ResponseSchema'}, "
+                                        f"strict=True, "
+                                        f"schema_keys={list(strict_schema_dict.keys()) if isinstance(strict_schema_dict, dict) else 'N/A'}"
+                                    )
                         else:
                             # Also check for response_mime_type which might indicate JSON mode
                             response_mime_type = getattr(
@@ -2286,14 +2298,12 @@ class OpenAI(BaseLlm):
         if "tools" in request_params and request_params["tools"]:
             request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
         
-        # Convert response_format to Responses API 'text' parameter
-        # IMPORTANT: Skip this conversion if tools are present, as response_format conflicts with tools
-        # Responses API uses 'text' instead of 'response_format'
-        # The 'text' parameter structure:
-        # - For json_object: text={"format": {"type": "json_object"}}
-        # - For json_schema: text={"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
-        # IMPORTANT: Responses API uses FLATTENED structure - name, schema, strict are at same level as type
-        # NOT nested under json_schema like Chat Completions API
+        # Handle response_format for structured output
+        # IMPORTANT: Skip response_format if tools are present, as response_format conflicts with tools
+        # Responses API uses 'response_format' parameter directly (same as Chat Completions API)
+        # The response_format structure:
+        # - For json_object: {"type": "json_object"}
+        # - For json_schema: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}, "strict": true}}
         if "response_format" in request_params:
             # Check if tools are present - if so, remove response_format to allow function calls
             if "tools" in request_params and request_params.get("tools"):
@@ -2304,132 +2314,30 @@ class OpenAI(BaseLlm):
                 )
                 request_params.pop("response_format")
             else:
-                response_format = request_params.pop("response_format")
-                logger.debug(f"Converting response_format to Responses API 'text' parameter: {response_format}")
-            
-            try:
-                if isinstance(response_format, dict):
-                    format_type = response_format.get("type")
-                    
-                    if format_type == "json_object":
-                        # Responses API format: text={"format": {"type": "json_object"}}
-                        request_params["text"] = {
-                            "format": {"type": "json_object"}
-                        }
-                        logger.debug("Converted response_format to text: json_object format")
-                    
-                    elif format_type == "json_schema":
-                        # Responses API format: FLATTENED structure
-                        # text={"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
-                        # NOT: text={"format": {"type": "json_schema", "json_schema": {...}}}
-                        json_schema_obj = response_format.get("json_schema", {})
-                        if json_schema_obj:
-                            # Extract name and schema from the nested json_schema object
-                            # Chat Completions format: {"name": "...", "schema": {...}}
-                            # Responses API format (flattened): {"type": "json_schema", "name": "...", "schema": {...}}
-                            if isinstance(json_schema_obj, dict):
-                                # Extract name (required)
-                                schema_name = json_schema_obj.get("name", "ResponseSchema")
-                                
-                                # Extract schema (required)
-                                if "schema" in json_schema_obj:
-                                    schema_dict = json_schema_obj["schema"]
-                                else:
-                                    # If schema is missing, this is an error
-                                    raise ValueError(
-                                        f"json_schema object missing required 'schema' field. "
-                                        f"Expected structure: {{'name': '...', 'schema': {{...}}}}, "
-                                        f"got: {json_schema_obj}"
-                                    )
-                                
-                                # Strict mode, ensure all object types have additionalProperties: false
-                                # This is required by OpenAI's Responses API for strict mode
-                                if isinstance(schema_dict, dict):
-                                    # Make a deep copy to avoid mutating the original
-                                    schema_dict = copy.deepcopy(schema_dict)
-                                    _ensure_strict_json_schema(schema_dict)
-                                    logger.debug(
-                                        f"Ensured strict JSON schema compliance: added additionalProperties: false "
-                                        f"to all object types in schema"
-                                    )
-
-                                
-                                # Validate schema_name (must be string, max 64 chars, only a-z, A-Z, 0-9, _, -)
-                                if not isinstance(schema_name, str):
-                                    schema_name = str(schema_name)
-                                # Truncate if too long
-                                if len(schema_name) > 64:
-                                    schema_name = schema_name[:64]
-                                    logger.warning(f"Schema name truncated to 64 characters: {schema_name}")
-                                # Validate characters (only a-z, A-Z, 0-9, _, -)
-                                # Note: re is imported at module level
-                                if not re.match(r'^[a-zA-Z0-9_-]+$', schema_name):
-                                    # Replace invalid characters
-                                    schema_name = re.sub(r'[^a-zA-Z0-9_-]', '_', schema_name)
-                                    logger.warning(f"Schema name contains invalid characters, replaced with underscores: {schema_name}")
-                                
-                                # Build the FLATTENED format structure for Responses API
-                                # Always use strict mode for strict schema adherence (required for GPT-4o and newer models)
-                                # Note: This code path is only reached when tools are NOT present
-                                # (tools check happens earlier and removes response_format if tools exist)
-                                format_dict = {
-                                    "type": "json_schema",
-                                    "name": schema_name,
-                                    "schema": schema_dict,
-                                    "strict": True  # Always enabled for strict schema compliance
-                                }
-                                
-                                request_params["text"] = {
-                                    "format": format_dict
-                                }
-                                logger.debug(
-                                    f"Converted response_format to text: json_schema format with "
-                                    f"name={schema_name}, strict=True"
-                                )
-                            else:
-                                raise ValueError(
-                                    f"json_schema must be a dict, got {type(json_schema_obj).__name__}. "
-                                    f"Expected structure: {{'name': '...', 'schema': {{...}}}}"
-                                )
-                        else:
-                            raise ValueError(
-                                "response_format has json_schema type but missing json_schema field. "
-                                "Expected structure: {'type': 'json_schema', 'json_schema': {'name': '...', 'schema': {...}}}"
+                # For json_schema format, ensure strict mode and additionalProperties: false
+                response_format = request_params["response_format"]
+                if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
+                    json_schema_obj = response_format.get("json_schema", {})
+                    if isinstance(json_schema_obj, dict) and "schema" in json_schema_obj:
+                        schema_dict = json_schema_obj["schema"]
+                        if isinstance(schema_dict, dict):
+                            # Make a deep copy to avoid mutating the original
+                            schema_dict = copy.deepcopy(schema_dict)
+                            _ensure_strict_json_schema(schema_dict)
+                            # Update the schema in the response_format
+                            json_schema_obj["schema"] = schema_dict
+                            # Ensure strict mode is enabled
+                            json_schema_obj["strict"] = True
+                            logger.info(
+                                f"Ensured strict JSON schema compliance for response_format: "
+                                f"name={json_schema_obj.get('name', 'ResponseSchema')}, strict=True"
                             )
-                    
-                    else:
-                        # Unknown format type, log warning and don't convert
-                        logger.warning(
-                            f"Unknown response_format type '{format_type}' - not converting to Responses API 'text' parameter. "
-                            f"Supported types: 'json_object', 'json_schema'."
-                        )
-                else:
-                    logger.warning(
-                        f"response_format is not a dict, cannot convert to Responses API 'text' parameter. "
-                        f"Type: {type(response_format)}, Value: {response_format}"
-                    )
-            except Exception as e:
-                # If conversion fails, log and skip
-                logger.warning(
-                    f"Failed to convert response_format to Responses API 'text' parameter: {e}. "
-                    "Skipping conversion to avoid API errors."
-                )
-                import traceback
-                logger.debug(traceback.format_exc())
         
-        # Log and validate 'text' parameter if present
-        if "text" in request_params:
+        # Log response_format if present (for structured outputs)
+        if "response_format" in request_params:
             import json
-            text_param = request_params["text"]
-            logger.info(f"TEXT PARAMETER BEING SENT: {json.dumps(text_param, indent=2, default=str)}")
-            # If text is a dict with 'type', it might be causing the 'text.type' error
-            # The Responses API might expect a different structure
-            if isinstance(text_param, dict) and "type" in text_param:
-                logger.warning(
-                    "text parameter is a dict with 'type' field. "
-                    "This might cause 'text.type' parameter error. "
-                    "Consider using SDK classes or different structure."
-                )
+            response_format_param = request_params["response_format"]
+            logger.info(f"RESPONSE_FORMAT BEING SENT: {json.dumps(response_format_param, indent=2, default=str)}")
         
         # Validate tools format before API call
         if "tools" in request_params:
