@@ -1310,6 +1310,9 @@ class OpenAI(BaseLlm):
         # Prepare request parameters
         # NOTE: For Azure, `model` should be the deployment name (the name you configured in the Azure portal).
         request_model = llm_request.model or self.model
+        
+        # Track Pydantic model for structured output (used with parse() method)
+        pydantic_model_for_parse = None
         # Validate model name using supported_models patterns
         supported_patterns = self.supported_models()
         model_supported = any(
@@ -2063,7 +2066,11 @@ class OpenAI(BaseLlm):
                                         is_pydantic_class = has_pydantic_methods or is_base_model_subclass
                                     
                                     if is_pydantic_class:
-                                        # It's a Pydantic model class, get JSON schema from the class
+                                        # It's a Pydantic model class - store it for use with parse() method
+                                        # Responses API parse() method accepts Pydantic models directly
+                                        pydantic_model_for_parse = response_schema
+                                        
+                                        # Also get JSON schema for logging/debugging
                                         # Try model_json_schema (Pydantic v2)
                                         if hasattr(response_schema, "model_json_schema"):
                                             schema_dict = response_schema.model_json_schema()
@@ -2118,8 +2125,17 @@ class OpenAI(BaseLlm):
                                     )
                                     schema_dict = None
                                 
-                                # Wrap schema in OpenAI's required format
-                                if schema_dict is not None:
+                                # For Pydantic models, we'll use parse() method instead of create() with response_format
+                                # For dict schemas, we still need to create response_format structure
+                                if pydantic_model_for_parse is not None:
+                                    # Pydantic model detected - will use parse() method with text_format
+                                    logger.info(
+                                        f"Pydantic model detected for structured output: {pydantic_model_for_parse.__name__}. "
+                                        f"Will use parse() method with text_format parameter."
+                                    )
+                                    # Don't set response_format - we'll use parse() instead
+                                elif schema_dict is not None:
+                                    # Dict-based schema - create response_format structure
                                     # Use schema title if available, otherwise use the name we extracted
                                     if isinstance(schema_dict, dict) and "title" in schema_dict:
                                         schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
@@ -2353,7 +2369,24 @@ class OpenAI(BaseLlm):
             if stream:
                 # Handle streaming response using Responses API
                 logger.info(f"Calling OpenAI Responses API with stream=True, tools count: {len(request_params.get('tools', []))}")
-                stream_response = await client.responses.create(**request_params)
+                # For structured outputs with Pydantic models, use parse() method
+                # Otherwise use create() method
+                if pydantic_model_for_parse is not None:
+                    # Use parse() method for structured outputs with Pydantic models
+                    logger.info(
+                        f"Calling OpenAI Responses API parse() (streaming) with text_format={pydantic_model_for_parse.__name__}, "
+                        f"tools count: {len(request_params.get('tools', []))}"
+                    )
+                    # Remove response_format if present (parse() doesn't use it)
+                    request_params.pop("response_format", None)
+                    # Use parse() with text_format parameter (streaming)
+                    stream_response = await client.responses.parse(
+                        text_format=pydantic_model_for_parse,
+                        **request_params
+                    )
+                else:
+                    # Use create() method for regular requests
+                    stream_response = await client.responses.create(**request_params)
 
                 # Accumulate content and tool calls across events
                 accumulated_text = ""
@@ -2527,8 +2560,25 @@ class OpenAI(BaseLlm):
                 yield final_response
             else:
                 # Handle non-streaming response using Responses API
-                logger.info(f"Calling OpenAI Responses API with stream=False, tools count: {len(request_params.get('tools', []))}")
-                response = await client.responses.create(**request_params)
+                # For structured outputs with Pydantic models, use parse() method
+                # Otherwise use create() method
+                if pydantic_model_for_parse is not None:
+                    # Use parse() method for structured outputs with Pydantic models
+                    logger.info(
+                        f"Calling OpenAI Responses API parse() with text_format={pydantic_model_for_parse.__name__}, "
+                        f"tools count: {len(request_params.get('tools', []))}"
+                    )
+                    # Remove response_format if present (parse() doesn't use it)
+                    request_params.pop("response_format", None)
+                    # Use parse() with text_format parameter
+                    response = await client.responses.parse(
+                        text_format=pydantic_model_for_parse,
+                        **request_params
+                    )
+                else:
+                    # Use create() method for regular requests
+                    logger.info(f"Calling OpenAI Responses API create() with stream=False, tools count: {len(request_params.get('tools', []))}")
+                    response = await client.responses.create(**request_params)
                 llm_response = await openai_response_to_llm_response(response, url_fetch_timeout=self.url_fetch_timeout)
                 yield llm_response
 
