@@ -2270,24 +2270,17 @@ class OpenAI(BaseLlm):
                                         f"got: {json_schema_obj}"
                                     )
                                 
-                                # Check if strict mode is enabled
-                                strict = json_schema_obj.get("strict", False)
-                                if strict:
-                                    # When strict mode is enabled, ensure all object types have additionalProperties: false
-                                    # This is required by OpenAI's Responses API for strict mode
-                                    if isinstance(schema_dict, dict):
-                                        # Make a deep copy to avoid mutating the original
-                                        schema_dict = copy.deepcopy(schema_dict)
-                                        _ensure_strict_json_schema(schema_dict)
-                                        logger.debug(
-                                            f"Ensured strict JSON schema compliance: added additionalProperties: false "
-                                            f"to all object types in schema"
-                                        )
-                                    else:
-                                        logger.warning(
-                                            f"Schema is not a dict, cannot ensure strict compliance. "
-                                            f"Type: {type(schema_dict).__name__}"
-                                        )
+                                # Strict mode, ensure all object types have additionalProperties: false
+                                # This is required by OpenAI's Responses API for strict mode
+                                if isinstance(schema_dict, dict):
+                                    # Make a deep copy to avoid mutating the original
+                                    schema_dict = copy.deepcopy(schema_dict)
+                                    _ensure_strict_json_schema(schema_dict)
+                                    logger.debug(
+                                        f"Ensured strict JSON schema compliance: added additionalProperties: false "
+                                        f"to all object types in schema"
+                                    )
+
                                 
                                 # Validate schema_name (must be string, max 64 chars, only a-z, A-Z, 0-9, _, -)
                                 if not isinstance(schema_name, str):
