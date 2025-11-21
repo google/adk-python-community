@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+import asyncio
 
 from google.adk.artifacts.base_artifact_service import ArtifactVersion
 from google.adk.artifacts.base_artifact_service import BaseArtifactService
@@ -306,28 +307,36 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
     async for page in paginator.paginate(
         Bucket=self.bucket_name, Prefix=prefix
     ):
-      for obj in page.get("Contents", []):
+      page_objects = page.get("Contents", [])
+      if not page_objects:
+        continue
+
+      head_tasks = [
+          s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
+          for obj in page_objects
+      ]
+      heads = await asyncio.gather(*head_tasks, return_exceptions=True)
+      for obj, head in zip(page_objects, heads):
+        if isinstance(head, Exception):
+          logger.error(
+              f"Failed to get artifact metadata for {obj['Key']}: {head}"
+          )
+          continue
         try:
           version = int(obj["Key"].split("/")[-1])
-        except ValueError:
+        except (ValueError, IndexError):
           continue
-
-        head = await s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
-        mime_type = head["ContentType"]
-        metadata = head.get("Metadata", {})
-
-        canonical_uri = f"s3://{self.bucket_name}/{obj['Key']}"
-
         results.append(
             ArtifactVersion(
                 version=version,
-                canonical_uri=canonical_uri,
-                custom_metadata=self._unflatten_metadata(metadata),
+                canonical_uri=f"s3://{self.bucket_name}/{obj['Key']}",
+                custom_metadata=self._unflatten_metadata(
+                    head.get("Metadata", {})
+                ),
                 create_time=obj["LastModified"].timestamp(),
-                mime_type=mime_type,
+                mime_type=head["ContentType"],
             )
         )
-
     return sorted(results, key=lambda a: a.version)
 
   @override

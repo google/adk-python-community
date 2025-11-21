@@ -301,6 +301,47 @@ async def test_save_load_delete(service_type, artifact_service_factory):
         ArtifactServiceType.S3,
     ],
 )
+async def test_save_artifact_concurrent(service_type, artifact_service_factory):
+  """Tests that concurrent save_artifact calls produce strictly increasing versions without conflicts."""
+  artifact_service = artifact_service_factory(service_type)
+
+  app_name = "app0"
+  user_id = "user0"
+  session_id = "123"
+  filename = "file.txt"
+
+  artifact = types.Part.from_text(text="hello")
+
+  async def save_once(i):
+    return await artifact_service.save_artifact(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id,
+        filename=filename,
+        artifact=artifact,
+    )
+
+  N = 10
+  versions = await asyncio.gather(*[save_once(i) for i in range(N)])
+
+  assert sorted(versions) == list(range(N))
+
+  stored_versions = await artifact_service.list_versions(
+      app_name=app_name,
+      user_id=user_id,
+      session_id=session_id,
+      filename=filename,
+  )
+  assert stored_versions == list(range(N))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "service_type",
+    [
+        ArtifactServiceType.S3,
+    ],
+)
 async def test_list_keys(service_type, artifact_service_factory):
   """Tests listing keys in the artifact service."""
   artifact_service = artifact_service_factory(service_type)
