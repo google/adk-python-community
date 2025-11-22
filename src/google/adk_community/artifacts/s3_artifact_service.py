@@ -13,10 +13,10 @@ when stored in S3.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 import logging
 from typing import Any
-import asyncio
 
 from google.adk.artifacts.base_artifact_service import ArtifactVersion
 from google.adk.artifacts.base_artifact_service import BaseArtifactService
@@ -40,25 +40,20 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
   bucket_name: str
   aws_configs: dict[str, Any] = {}
   save_artifact_max_retries: int = -1
-  _s3_client: Any = None
+  _s3_session: Any = None
 
-  async def _client(self):
-    """Creates or returns the aioboto3 S3 client."""
+  async def _session(self):
     import aioboto3
 
-    if self._s3_client is None:
-      self._s3_client = (
-          await aioboto3.Session()
-          .client(service_name="s3", **self.aws_configs)
-          .__aenter__()
-      )
-    return self._s3_client
+    if self._s3_session is None:
+      self._s3_session = aioboto3.Session()
+    return self._s3_session
 
-  async def close(self):
-    """Closes the underlying S3 client session."""
-    if self._s3_client:
-      await self._s3_client.__aexit__(None, None, None)
-      self._s3_client = None
+  @asynccontextmanager
+  async def _client(self):
+    session = await self._session()
+    async with session.client(service_name="s3", **self.aws_configs) as s3:
+      yield s3
 
   def _flatten_metadata(self, metadata: dict[str, Any]) -> dict[str, str]:
     return {k: json.dumps(v) for k, v in (metadata or {}).items()}
@@ -70,7 +65,7 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
         results[k] = json.loads(v)
       except json.JSONDecodeError:
         logger.warning(
-            f"Failed to decode metadata value for key {k}. Using raw string."
+            "Failed to decode metadata value for key %r. Using raw string.", k
         )
         results[k] = v
     return results
@@ -113,8 +108,6 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
     """Saves an artifact to S3 with atomic versioning using If-None-Match."""
     from botocore.exceptions import ClientError
 
-    s3 = await self._client()
-
     if self.save_artifact_max_retries < 0:
       retry_iter = iter(int, 1)
     else:
@@ -143,24 +136,24 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
         )
       else:
         raise ValueError("Artifact must have either inline_data or text.")
-
-      try:
-        await s3.put_object(
-            Bucket=self.bucket_name,
-            Key=key,
-            Body=body,
-            ContentType=mime_type,
-            Metadata=self._flatten_metadata(custom_metadata),
-            IfNoneMatch="*",
-        )
-        return version
-      except ClientError as e:
-        if e.response["Error"]["Code"] in (
-            "PreconditionFailed",
-            "ObjectAlreadyExists",
-        ):
-          continue
-        raise e
+      async with self._client() as s3:
+        try:
+          await s3.put_object(
+              Bucket=self.bucket_name,
+              Key=key,
+              Body=body,
+              ContentType=mime_type,
+              Metadata=self._flatten_metadata(custom_metadata),
+              IfNoneMatch="*",
+          )
+          return version
+        except ClientError as e:
+          if e.response["Error"]["Code"] in (
+              "PreconditionFailed",
+              "ObjectAlreadyExists",
+          ):
+            continue
+          raise e
     raise RuntimeError(
         "Failed to save artifact due to version conflicts after retries"
     )
@@ -184,7 +177,6 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
     """
     from botocore.exceptions import ClientError
 
-    s3 = await self._client()
     if version is None:
       versions = await self.list_versions(
           app_name=app_name,
@@ -197,15 +189,16 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       version = max(versions)
 
     key = self._get_blob_name(app_name, user_id, session_id, filename, version)
-    try:
-      response = await s3.get_object(Bucket=self.bucket_name, Key=key)
-      async with response["Body"] as stream:
-        data = await stream.read()
-      mime_type = response["ContentType"]
-    except ClientError as e:
-      if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
-        return None
-      raise
+    async with self._client() as s3:
+      try:
+        response = await s3.get_object(Bucket=self.bucket_name, Key=key)
+        async with response["Body"] as stream:
+          data = await stream.read()
+        mime_type = response["ContentType"]
+      except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+          return None
+        raise
     return types.Part.from_bytes(data=data, mime_type=mime_type)
 
   @override
@@ -213,22 +206,21 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       self, *, app_name: str, user_id: str, session_id: str | None = None
   ) -> list[str]:
     """Lists all artifact keys for a user, optionally filtered by session."""
-    s3 = await self._client()
     keys = set()
     prefixes = [
         f"{app_name}/{user_id}/{session_id}/" if session_id else None,
         f"{app_name}/{user_id}/user/",
     ]
-
-    for prefix in filter(None, prefixes):
-      paginator = s3.get_paginator("list_objects_v2")
-      async for page in paginator.paginate(
-          Bucket=self.bucket_name, Prefix=prefix
-      ):
-        for obj in page.get("Contents", []):
-          relative = obj["Key"][len(prefix) :]
-          filename = "/".join(relative.split("/")[:-1])
-          keys.add(filename)
+    async with self._client() as s3:
+      for prefix in filter(None, prefixes):
+        paginator = s3.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(
+            Bucket=self.bucket_name, Prefix=prefix
+        ):
+          for obj in page.get("Contents", []):
+            relative = obj["Key"][len(prefix) :]
+            filename = "/".join(relative.split("/")[:-1])
+            keys.add(filename)
     return sorted(keys)
 
   @override
@@ -241,7 +233,6 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       session_id: str | None = None,
   ) -> None:
     """Deletes all versions of a specified artifact efficiently using batch delete."""
-    s3 = await self._client()
     versions = await self.list_versions(
         app_name=app_name,
         user_id=user_id,
@@ -255,11 +246,12 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
         {"Key": self._get_blob_name(app_name, user_id, session_id, filename, v)}
         for v in versions
     ]
-    for i in range(0, len(keys_to_delete), 1000):
-      batch = keys_to_delete[i : i + 1000]
-      await s3.delete_objects(
-          Bucket=self.bucket_name, Delete={"Objects": batch}
-      )
+    async with self._client() as s3:
+      for i in range(0, len(keys_to_delete), 1000):
+        batch = keys_to_delete[i : i + 1000]
+        await s3.delete_objects(
+            Bucket=self.bucket_name, Delete={"Objects": batch}
+        )
 
   @override
   async def list_versions(
@@ -271,20 +263,20 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       session_id: str | None = None,
   ) -> list[int]:
     """Lists all available versions of a specified artifact."""
-    s3 = await self._client()
     prefix = (
         self._get_blob_prefix(app_name, user_id, session_id, filename) + "/"
     )
     versions = []
-    paginator = s3.get_paginator("list_objects_v2")
-    async for page in paginator.paginate(
-        Bucket=self.bucket_name, Prefix=prefix
-    ):
-      for obj in page.get("Contents", []):
-        try:
-          versions.append(int(obj["Key"].split("/")[-1]))
-        except ValueError:
-          continue
+    async with self._client() as s3:
+      paginator = s3.get_paginator("list_objects_v2")
+      async for page in paginator.paginate(
+          Bucket=self.bucket_name, Prefix=prefix
+      ):
+        for obj in page.get("Contents", []):
+          try:
+            versions.append(int(obj["Key"].split("/")[-1]))
+          except ValueError:
+            continue
     return sorted(versions)
 
   @override
@@ -297,46 +289,36 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       session_id: str | None = None,
   ) -> list[ArtifactVersion]:
     """Lists all artifact versions with their metadata."""
-    s3 = await self._client()
     prefix = (
         self._get_blob_prefix(app_name, user_id, session_id, filename) + "/"
     )
     results: list[ArtifactVersion] = []
+    async with self._client() as s3:
+      paginator = s3.get_paginator("list_objects_v2")
+      async for page in paginator.paginate(
+          Bucket=self.bucket_name, Prefix=prefix
+      ):
+        for obj in page.get("Contents", []):
+          try:
+            version = int(obj["Key"].split("/")[-1])
+          except ValueError:
+            continue
 
-    paginator = s3.get_paginator("list_objects_v2")
-    async for page in paginator.paginate(
-        Bucket=self.bucket_name, Prefix=prefix
-    ):
-      page_objects = page.get("Contents", [])
-      if not page_objects:
-        continue
+          head = await s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
+          mime_type = head["ContentType"]
+          metadata = head.get("Metadata", {})
 
-      head_tasks = [
-          s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
-          for obj in page_objects
-      ]
-      heads = await asyncio.gather(*head_tasks, return_exceptions=True)
-      for obj, head in zip(page_objects, heads):
-        if isinstance(head, Exception):
-          logger.error(
-              f"Failed to get artifact metadata for {obj['Key']}: {head}"
+          canonical_uri = f"s3://{self.bucket_name}/{obj['Key']}"
+
+          results.append(
+              ArtifactVersion(
+                  version=version,
+                  canonical_uri=canonical_uri,
+                  custom_metadata=self._unflatten_metadata(metadata),
+                  create_time=obj["LastModified"].timestamp(),
+                  mime_type=mime_type,
+              )
           )
-          continue
-        try:
-          version = int(obj["Key"].split("/")[-1])
-        except (ValueError, IndexError):
-          continue
-        results.append(
-            ArtifactVersion(
-                version=version,
-                canonical_uri=f"s3://{self.bucket_name}/{obj['Key']}",
-                custom_metadata=self._unflatten_metadata(
-                    head.get("Metadata", {})
-                ),
-                create_time=obj["LastModified"].timestamp(),
-                mime_type=head["ContentType"],
-            )
-        )
     return sorted(results, key=lambda a: a.version)
 
   @override
@@ -350,7 +332,6 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
       version: int | None = None,
   ) -> ArtifactVersion | None:
     """Retrieves a specific artifact version, or the latest if version is None."""
-    s3 = await self._client()
     if version is None:
       all_versions = await self.list_versions(
           app_name=app_name,
@@ -366,12 +347,13 @@ class S3ArtifactService(BaseArtifactService, BaseModel):
 
     from botocore.exceptions import ClientError
 
-    try:
-      head = await s3.head_object(Bucket=self.bucket_name, Key=key)
-    except ClientError as e:
-      if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
-        return None
-      raise
+    async with self._client() as s3:
+      try:
+        head = await s3.head_object(Bucket=self.bucket_name, Key=key)
+      except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+          return None
+        raise
 
     return ArtifactVersion(
         version=version,
