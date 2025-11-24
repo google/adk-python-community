@@ -2372,14 +2372,32 @@ class OpenAI(BaseLlm):
                         f"Tool: {tool}"
                     )
 
+        # Helper function to detect if request contains images
+        def has_images_in_request(request_params):
+            """Check if request contains images (parse() only supports PDFs, not images)"""
+            messages = request_params.get("messages", [])
+            for message in messages:
+                content = message.get("content", [])
+                if isinstance(content, list):
+                    for content_item in content:
+                        if isinstance(content_item, dict):
+                            content_type = content_item.get("type")
+                            if content_type in ("input_image", "image_url"):
+                                return True
+            return False
+        
         try:
+            # Check if request contains images (parse() only supports PDFs via context stuffing, not images)
+            has_images = has_images_in_request(request_params)
+            
             if stream:
                 # Handle streaming response using Responses API
                 logger.info(f"Calling OpenAI Responses API with stream=True, tools count: {len(request_params.get('tools', []))}")
-                # For structured outputs with Pydantic models, use parse() method
-                # Otherwise use create() method
-                if pydantic_model_for_parse is not None:
-                    # Use parse() method for structured outputs with Pydantic models
+                
+                # For structured outputs with Pydantic models, use parse() method ONLY if no images
+                # If images are present, use create() with response_format instead
+                if pydantic_model_for_parse is not None and not has_images:
+                    # Use parse() method for structured outputs with Pydantic models (text-only)
                     logger.info(
                         f"Calling OpenAI Responses API parse() (streaming) with text_format={pydantic_model_for_parse.__name__}, "
                         f"tools count: {len(request_params.get('tools', []))}"
@@ -2392,7 +2410,37 @@ class OpenAI(BaseLlm):
                         **request_params
                     )
                 else:
-                    # Use create() method for regular requests
+                    # Use create() method for regular requests or when images are present
+                    if pydantic_model_for_parse is not None and has_images:
+                        # Convert Pydantic model to response_format for create() when images are present
+                        logger.info(
+                            f"Images detected - using create() with response_format instead of parse() "
+                            f"(parse() only supports PDFs, not images). Model: {pydantic_model_for_parse.__name__}"
+                        )
+                        # Get JSON schema from Pydantic model
+                        if hasattr(pydantic_model_for_parse, "model_json_schema"):
+                            schema_dict = pydantic_model_for_parse.model_json_schema()
+                        elif hasattr(pydantic_model_for_parse, "schema"):
+                            schema_dict = pydantic_model_for_parse.schema()
+                        else:
+                            schema_dict = {}
+                        
+                        # Create response_format from Pydantic schema
+                        schema_name = pydantic_model_for_parse.__name__
+                        strict_schema_dict = copy.deepcopy(schema_dict)
+                        _ensure_strict_json_schema(strict_schema_dict)
+                        
+                        request_params["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "schema": strict_schema_dict,
+                                "strict": True
+                            }
+                        }
+                        # Clear pydantic_model_for_parse so we use create() instead
+                        pydantic_model_for_parse = None
+                    
                     stream_response = await client.responses.create(**request_params)
 
                 # Accumulate content and tool calls across events
@@ -2567,10 +2615,10 @@ class OpenAI(BaseLlm):
                 yield final_response
             else:
                 # Handle non-streaming response using Responses API
-                # For structured outputs with Pydantic models, use parse() method
-                # Otherwise use create() method
-                if pydantic_model_for_parse is not None:
-                    # Use parse() method for structured outputs with Pydantic models
+                # For structured outputs with Pydantic models, use parse() method ONLY if no images
+                # If images are present, use create() with response_format instead
+                if pydantic_model_for_parse is not None and not has_images:
+                    # Use parse() method for structured outputs with Pydantic models (text-only)
                     logger.info(
                         f"Calling OpenAI Responses API parse() with text_format={pydantic_model_for_parse.__name__}, "
                         f"tools count: {len(request_params.get('tools', []))}"
@@ -2583,9 +2631,39 @@ class OpenAI(BaseLlm):
                         **request_params
                     )
                 else:
-                    # Use create() method for regular requests
+                    # Use create() method for regular requests or when images are present
+                    if pydantic_model_for_parse is not None and has_images:
+                        # Convert Pydantic model to response_format for create() when images are present
+                        logger.info(
+                            f"Images detected - using create() with response_format instead of parse() "
+                            f"(parse() only supports PDFs, not images). Model: {pydantic_model_for_parse.__name__}"
+                        )
+                        # Get JSON schema from Pydantic model
+                        if hasattr(pydantic_model_for_parse, "model_json_schema"):
+                            schema_dict = pydantic_model_for_parse.model_json_schema()
+                        elif hasattr(pydantic_model_for_parse, "schema"):
+                            schema_dict = pydantic_model_for_parse.schema()
+                        else:
+                            schema_dict = {}
+                        
+                        # Create response_format from Pydantic schema
+                        schema_name = pydantic_model_for_parse.__name__
+                        strict_schema_dict = copy.deepcopy(schema_dict)
+                        _ensure_strict_json_schema(strict_schema_dict)
+                        
+                        request_params["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": schema_name,
+                                "schema": strict_schema_dict,
+                                "strict": True
+                            }
+                        }
+                        # Clear pydantic_model_for_parse so we use create() instead
+                        pydantic_model_for_parse = None
+                    
                     logger.info(f"Calling OpenAI Responses API create() with stream=False, tools count: {len(request_params.get('tools', []))}")
-                response = await client.responses.create(**request_params)
+                    response = await client.responses.create(**request_params)
                 llm_response = await openai_response_to_llm_response(response, url_fetch_timeout=self.url_fetch_timeout)
                 yield llm_response
 
