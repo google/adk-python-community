@@ -2373,6 +2373,7 @@ class OpenAI(BaseLlm):
                     )
 
         # Helper function to detect if request contains images
+        # parse() method only supports PDFs via context stuffing, not images
         def has_images_in_request(request_params):
             """Check if request contains images (parse() only supports PDFs, not images)"""
             messages = request_params.get("messages", [])
@@ -2382,8 +2383,17 @@ class OpenAI(BaseLlm):
                     for content_item in content:
                         if isinstance(content_item, dict):
                             content_type = content_item.get("type")
+                            # Check for image content types
                             if content_type in ("input_image", "image_url"):
                                 return True
+                            # Check for base64 data URIs with image MIME types
+                            if content_type == "input_image" and "image_url" in content_item:
+                                image_url = content_item.get("image_url", "")
+                                if isinstance(image_url, str) and image_url.startswith("data:image/"):
+                                    return True
+                            # Also check for file_id - we can't determine type, but if it's not a PDF
+                            # and we're using parse(), it might fail. However, Files API typically
+                            # handles this, so we'll be conservative and only flag explicit images
             return False
         
         try:
@@ -2397,7 +2407,7 @@ class OpenAI(BaseLlm):
                 # For structured outputs with Pydantic models, use parse() method ONLY if no images
                 # If images are present, use create() with response_format instead
                 if pydantic_model_for_parse is not None and not has_images:
-                    # Use parse() method for structured outputs with Pydantic models (text-only)
+                    # Use parse() method for structured outputs with Pydantic models (text-only or PDFs)
                     logger.info(
                         f"Calling OpenAI Responses API parse() (streaming) with text_format={pydantic_model_for_parse.__name__}, "
                         f"tools count: {len(request_params.get('tools', []))}"
@@ -2618,7 +2628,7 @@ class OpenAI(BaseLlm):
                 # For structured outputs with Pydantic models, use parse() method ONLY if no images
                 # If images are present, use create() with response_format instead
                 if pydantic_model_for_parse is not None and not has_images:
-                    # Use parse() method for structured outputs with Pydantic models (text-only)
+                    # Use parse() method for structured outputs with Pydantic models (text-only or PDFs)
                     logger.info(
                         f"Calling OpenAI Responses API parse() with text_format={pydantic_model_for_parse.__name__}, "
                         f"tools count: {len(request_params.get('tools', []))}"
