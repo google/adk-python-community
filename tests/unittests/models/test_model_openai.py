@@ -1180,24 +1180,23 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        assert call_args["response_format"] == {"type": "json_object"}
+        # Responses API uses 'text' parameter with 'format'
+        assert "text" in call_args
+        assert call_args["text"]["format"] == {"type": "json_object"}
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_response_format(self):
-        """Test content generation with explicit response_format.
+        """Test content generation with JSON mode via response_mime_type.
         
-        Note: response_format is OpenAI-specific. For Google GenAI format,
-        use response_mime_type or response_schema instead. This test uses
-        object.__setattr__ to test the OpenAI-specific response_format field.
+        The response_mime_type="application/json" is converted to the Responses API's
+        text format parameter: {"format": {"type": "json_object"}}.
         """
         openai_client = OpenAI()
-        # response_format is not a standard GenerateContentConfig field,
-        # but we support it for direct OpenAI API compatibility
-        # Use object.__setattr__ to set it for testing
-        config = types.GenerateContentConfig()
-        object.__setattr__(config, "response_format", {"type": "json_object"})
+        # Use response_mime_type for JSON mode (standard GenAI format)
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json"
+        )
 
         llm_request = LlmRequest(
             contents=[
@@ -1226,8 +1225,9 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        assert call_args["response_format"] == {"type": "json_object"}
+        # Responses API uses 'text' parameter with 'format'
+        assert "text" in call_args
+        assert call_args["text"]["format"] == {"type": "json_object"}
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1272,10 +1272,13 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        assert call_args["response_format"]["type"] == "json_schema"
-        assert "json_schema" in call_args["response_format"]
-        json_schema = call_args["response_format"]["json_schema"]
+        # Responses API uses 'text' parameter with 'format'
+        assert "text" in call_args
+        assert "format" in call_args["text"]
+        format_obj = call_args["text"]["format"]
+        assert format_obj["type"] == "json_schema"
+        assert "json_schema" in format_obj
+        json_schema = format_obj["json_schema"]
         # OpenAI requires "name" and "schema" fields
         assert "name" in json_schema
         assert "schema" in json_schema
@@ -1647,8 +1650,10 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        json_schema = call_args["response_format"]["json_schema"]
+        # Responses API uses 'text' parameter with 'format'
+        assert "text" in call_args
+        format_obj = call_args["text"]["format"]
+        json_schema = format_obj["json_schema"]
         # Should use title from schema as name
         assert json_schema["name"] == "PersonSchema"
         assert "schema" in json_schema
@@ -1694,8 +1699,10 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        json_schema = call_args["response_format"]["json_schema"]
+        # Responses API uses 'text' parameter with 'format'
+        assert "text" in call_args
+        format_obj = call_args["text"]["format"]
+        json_schema = format_obj["json_schema"]
         # Should use the already-formatted schema as-is
         assert json_schema["name"] == "MySchema"
         assert "schema" in json_schema
@@ -1798,9 +1805,9 @@ class TestOpenAIClass:
     async def test_generate_content_async_with_pydantic_model_schema(self):
         """Test content generation with Pydantic model as response schema.
         
-        Pydantic models use parse() method (not create() with response_format)
-        when there are no images. The schema is extracted and made strict
-        (additionalProperties: false) before passing to parse().
+        Pydantic models use create() with text format (strict schema)
+        instead of parse(). The schema is extracted and made strict
+        (additionalProperties: false) before passing to create().
         """
         from pydantic import BaseModel, Field
 
@@ -1820,10 +1827,14 @@ class TestOpenAIClass:
         )
 
         mock_client = AsyncMock()
-        # parse() returns the parsed Pydantic model directly
-        mock_parsed_response = PersonModel(name="John", age=30)
-        mock_client.responses.parse = AsyncMock(
-            return_value=mock_parsed_response
+        # create() returns a response with structured output
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.output_text = '{"name": "John", "age": 30}'
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
         )
 
         with patch.object(
@@ -1834,21 +1845,25 @@ class TestOpenAIClass:
             ):
                 pass
 
-        # Verify parse() was called (not create())
-        assert mock_client.responses.parse.called
-        assert not mock_client.responses.create.called
+        # Verify create() was called (not parse())
+        assert mock_client.responses.create.called
         
-        call_args = mock_client.responses.parse.call_args[1]
-        # parse() uses text_format parameter with strict JSON schema
-        assert "text_format" in call_args
-        text_format = call_args["text_format"]
-        
-        # text_format should be a dict (strict schema) not the Pydantic class
-        assert isinstance(text_format, dict)
+        call_args = mock_client.responses.create.call_args[1]
+        # create() uses text parameter with format containing strict JSON schema
+        assert "text" in call_args
+        assert "format" in call_args["text"]
+        format_obj = call_args["text"]["format"]
+        assert format_obj["type"] == "json_schema"
+        json_schema = format_obj["json_schema"]
+        # Should have strict mode enabled
+        assert json_schema["strict"] == True
+        # Schema should have additionalProperties: false
+        assert "schema" in json_schema
+        schema = json_schema["schema"]
+        assert "additionalProperties" in schema
+        assert schema["additionalProperties"] == False
         # Should have properties from Pydantic model
-        assert "properties" in text_format
-        assert "name" in text_format["properties"]
-        assert "age" in text_format["properties"]
-        # Should have additionalProperties: false (strict mode)
-        assert text_format.get("additionalProperties") is False
+        assert "properties" in schema
+        assert "name" in schema["properties"]
+        assert "age" in schema["properties"]
 

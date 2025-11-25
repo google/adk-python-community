@@ -1142,9 +1142,9 @@ class OpenAI(BaseLlm):
     - The Responses API supports file inputs directly in message content
 
     Structured Output Support:
-    - JSON mode: Set response_mime_type="application/json" or response_format={"type": "json_object"}
+    - JSON mode: Set response_mime_type="application/json"
     - Structured outputs with schema: Set response_schema with a JSON schema dict or Schema object
-      This will be converted to OpenAI's response_format with type "json_schema"
+      This will be converted to Responses API's text parameter with format type "json_schema"
 
     Attributes:
       model: The name of the OpenAI model or (for Azure) the deployment name.
@@ -1837,7 +1837,7 @@ class OpenAI(BaseLlm):
         # - logprobs → logprobs (direct)
         # - response_logprobs → logprobs (enables logprobs if True)
         # - system_instruction → instructions (direct)
-        # - response_schema/response_mime_type → response_format (converted format)
+        # - response_schema/response_mime_type → text (converted format for Responses API)
         # - tools → tools (converted to Responses API format)
         # - parallel_tool_calls → parallel_tool_calls (default: True)
         # - tool_choice: Uses smart defaults (auto/required) based on conversation state
@@ -1845,7 +1845,7 @@ class OpenAI(BaseLlm):
         # Parameters that cannot be mapped (not in GenerateContentConfig):
         # - top_logprobs, user, max_tool_calls, metadata, prompt_cache_key, safety_identifier,
         #   truncation, store, background, service_tier, reasoning_effort, caching_config,
-        #   grounding_config, safety_settings, tool_config, response_format (OpenAI-specific)
+        #   grounding_config, safety_settings, tool_config
         #
         # Responses API features not yet mapped (no GenAI equivalent):
         # - conversation: Built-in conversation state management
@@ -1926,48 +1926,30 @@ class OpenAI(BaseLlm):
             # - safety_settings: Cannot be mapped (not in GenerateContentConfig)
             # If these are needed, they must be added to the upstream GenAI SDK first.
 
-            # Handle structured output / response format
-            # IMPORTANT: Skip response_format entirely when tools are present
-            # because response_format (even without strict mode) conflicts with:
+            # Handle structured output / text format
+            # IMPORTANT: Skip text format entirely when tools are present
+            # because text format (even without strict mode) conflicts with:
             # 1. Function calls (tools) - can't make function calls with JSON schema format
             # 2. Planner text format (e.g., PlanReActPlanner needs /*FINAL_ANSWER*/ tags)
             # 
             # Priority: Google GenAI types (response_schema, response_mime_type) first
-            # Then check for response_format (OpenAI-specific, for direct API compatibility)
-            # OpenAI supports two types of structured outputs:
-            # 1. JSON mode: {"type": "json_object"}
-            # 2. Structured outputs with schema: {"type": "json_schema", "json_schema": {...}}
+            # Responses API uses 'text' parameter with 'format' for structured output:
+            # 1. JSON mode: {"format": {"type": "json_object"}}
+            # 2. Structured outputs with schema: {"format": {"type": "json_schema", "json_schema": {...}}}
             
-            # Check if tools are present - if so, skip response_format entirely
-            has_tools_for_response_format = "tools" in request_params and request_params.get("tools")
-            if has_tools_for_response_format:
+            # Check if tools are present - if so, skip text format entirely
+            has_tools_for_text_format = "tools" in request_params and request_params.get("tools")
+            if has_tools_for_text_format:
                 logger.debug(
-                    "Tools are present - skipping response_format to allow function calls and planner text format"
+                    "Tools are present - skipping text format to allow function calls and planner text format"
                 )
             else:
                 try:
-                    response_format_set = False
+                    text_format_set = False
                     # First, check for Google GenAI response_schema or response_mime_type
                     # (These are handled below in the response_schema section)
                     
-                    # Then check for response_format (OpenAI-specific, for direct API compatibility)
-                    # NOTE: response_format is NOT in GenerateContentConfig, but we check for it
-                    # via getattr() for direct OpenAI API compatibility (bypassing GenAI types).
-                    # This allows users to pass OpenAI-specific response_format directly.
-                    # Use getattr with None default to safely check for attribute.
-                    # Check it's actually a dict with expected structure to avoid MagicMock issues.
-                    if not response_format_set:
-                        response_format = getattr(llm_request.config, "response_format", None)
-                        # Check if it's a dict and has the expected structure (not a MagicMock)
-                        if (
-                            response_format is not None
-                            and isinstance(response_format, dict)
-                            and "type" in response_format
-                        ):
-                            request_params["response_format"] = response_format
-                            response_format_set = True
-                    
-                    if not response_format_set:
+                    if not text_format_set:
                         # Check for response_schema (JSON schema for structured outputs)
                         response_schema = getattr(
                             llm_request.config, "response_schema", None
@@ -1981,11 +1963,13 @@ class OpenAI(BaseLlm):
                             if isinstance(response_schema, dict):
                                 # If it's already a dict, check if it's already in OpenAI format
                                 if "name" in response_schema and "schema" in response_schema:
-                                    # Already in OpenAI Chat Completions format (nested json_schema)
-                                    # This will be converted to Responses API format (flattened) later
-                                    request_params["response_format"] = {
-                                        "type": "json_schema",
-                                        "json_schema": response_schema,  # Chat Completions format: nested
+                                    # Already in OpenAI format (nested json_schema)
+                                    # Convert to Responses API text format
+                                    request_params["text"] = {
+                                        "format": {
+                                            "type": "json_schema",
+                                            "json_schema": response_schema,  # Nested format
+                                        }
                                     }
                                 else:
                                     # It's a raw JSON schema dict, need to wrap it
@@ -2094,7 +2078,7 @@ class OpenAI(BaseLlm):
                                 )
                                 # Don't set response_format here - we'll set it later with strict schema
                             elif schema_dict is not None:
-                                # Dict-based schema - create response_format structure
+                                # Dict-based schema - create text format structure for Responses API
                                 # Use schema title if available, otherwise use the name we extracted
                                 if isinstance(schema_dict, dict) and "title" in schema_dict:
                                     schema_name = schema_dict.get("title", schema_name or "ResponseSchema")
@@ -2104,16 +2088,19 @@ class OpenAI(BaseLlm):
                                 strict_schema_dict = copy.deepcopy(schema_dict)
                                 _ensure_strict_json_schema(strict_schema_dict)
                                 
-                                request_params["response_format"] = {
-                                    "type": "json_schema",
-                                    "json_schema": {
-                                        "name": schema_name or "ResponseSchema",
-                                        "schema": strict_schema_dict,
-                                        "strict": True  # Always enable strict mode for structured outputs
-                                    },
+                                # Responses API uses 'text' parameter with 'format' for structured output
+                                request_params["text"] = {
+                                    "format": {
+                                        "type": "json_schema",
+                                        "json_schema": {
+                                            "name": schema_name or "ResponseSchema",
+                                            "schema": strict_schema_dict,
+                                            "strict": True  # Always enable strict mode for structured outputs
+                                        },
+                                    }
                                 }
                                 logger.info(
-                                    f"Converted response_schema to response_format: "
+                                    f"Converted response_schema to text format: "
                                     f"name={schema_name or 'ResponseSchema'}, "
                                     f"strict=True, "
                                     f"schema_keys={list(strict_schema_dict.keys()) if isinstance(strict_schema_dict, dict) else 'N/A'}"
@@ -2128,7 +2115,8 @@ class OpenAI(BaseLlm):
                                 and isinstance(response_mime_type, str)
                                 and response_mime_type == "application/json"
                             ):
-                                request_params["response_format"] = {"type": "json_object"}
+                                # Responses API uses 'text' parameter for JSON mode
+                                request_params["text"] = {"format": {"type": "json_object"}}
                             elif response_mime_type and isinstance(
                                 response_mime_type, str
                             ):
@@ -2272,45 +2260,47 @@ class OpenAI(BaseLlm):
         if "tools" in request_params and request_params["tools"]:
             request_params["tools"] = convert_tools_to_responses_api_format(request_params["tools"])
         
-        # Handle response_format for structured output
-        # IMPORTANT: Skip response_format if tools are present, as response_format conflicts with tools
-        # Responses API uses 'response_format' parameter directly (same as Chat Completions API)
-        # The response_format structure:
-        # - For json_object: {"type": "json_object"}
-        # - For json_schema: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}, "strict": true}}
-        if "response_format" in request_params:
-            # Check if tools are present - if so, remove response_format to allow function calls
+        # Handle text format for structured output (Responses API)
+        # IMPORTANT: Skip text format if tools are present, as format conflicts with tools
+        # Responses API uses 'text' parameter with 'format' for structured output
+        # The text format structure:
+        # - For json_object: {"format": {"type": "json_object"}}
+        # - For json_schema: {"format": {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}, "strict": true}}}
+        if "text" in request_params:
+            # Check if tools are present - if so, remove text format to allow function calls
             if "tools" in request_params and request_params.get("tools"):
                 logger.warning(
-                    "response_format is set but tools are also present. "
-                    "Removing response_format to allow function calls and planner text format. "
-                    "Response format conflicts with tools/function calls."
+                    "text format is set but tools are also present. "
+                    "Removing text format to allow function calls and planner text format. "
+                    "Text format conflicts with tools/function calls."
                 )
-                request_params.pop("response_format")
+                request_params.pop("text")
             else:
                 # For json_schema format, ensure strict mode and additionalProperties: false
-                response_format = request_params["response_format"]
-                if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
-                    json_schema_obj = response_format.get("json_schema", {})
-                    if isinstance(json_schema_obj, dict) and "schema" in json_schema_obj:
-                        schema_dict = json_schema_obj["schema"]
-                        if isinstance(schema_dict, dict):
-                            # Make a deep copy to avoid mutating the original
-                            schema_dict = copy.deepcopy(schema_dict)
-                            _ensure_strict_json_schema(schema_dict)
-                            # Update the schema in the response_format
-                            json_schema_obj["schema"] = schema_dict
-                            # Ensure strict mode is enabled
-                            json_schema_obj["strict"] = True
-                            logger.info(
-                                f"Ensured strict JSON schema compliance for response_format: "
-                                f"name={json_schema_obj.get('name', 'ResponseSchema')}, strict=True"
-                            )
+                text_param = request_params["text"]
+                if isinstance(text_param, dict) and "format" in text_param:
+                    format_obj = text_param["format"]
+                    if isinstance(format_obj, dict) and format_obj.get("type") == "json_schema":
+                        json_schema_obj = format_obj.get("json_schema", {})
+                        if isinstance(json_schema_obj, dict) and "schema" in json_schema_obj:
+                            schema_dict = json_schema_obj["schema"]
+                            if isinstance(schema_dict, dict):
+                                # Make a deep copy to avoid mutating the original
+                                schema_dict = copy.deepcopy(schema_dict)
+                                _ensure_strict_json_schema(schema_dict)
+                                # Update the schema in the text format
+                                json_schema_obj["schema"] = schema_dict
+                                # Ensure strict mode is enabled
+                                json_schema_obj["strict"] = True
+                                logger.info(
+                                    f"Ensured strict JSON schema compliance for text format: "
+                                    f"name={json_schema_obj.get('name', 'ResponseSchema')}, strict=True"
+                                )
                     
-        # Log response_format if present (for structured outputs)
-        if "response_format" in request_params:
-            response_format_param = request_params["response_format"]
-            logger.info(f"RESPONSE_FORMAT BEING SENT: {json.dumps(response_format_param, indent=2, default=str)}")
+        # Log text format if present (for structured outputs)
+        if "text" in request_params:
+            text_param = request_params["text"]
+            logger.info(f"TEXT FORMAT BEING SENT: {json.dumps(text_param, indent=2, default=str)}")
         
         # Validate tools format before API call
         if "tools" in request_params:
@@ -2388,14 +2378,16 @@ class OpenAI(BaseLlm):
                         # Use schema title if available, otherwise use model name
                         schema_name = strict_schema_dict.get("title", pydantic_model_for_parse.__name__)
                         
-                        # Create response_format structure with strict schema
-                        request_params["response_format"] = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": schema_name,
-                                "schema": strict_schema_dict,
-                                "strict": True,  # Enable strict mode
-                            },
+                        # Responses API uses 'text' parameter with 'format' for structured output
+                        request_params["text"] = {
+                            "format": {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": schema_name,
+                                    "schema": strict_schema_dict,
+                                    "strict": True,  # Enable strict mode
+                                },
+                            }
                         }
                         logger.info(
                             f"Using create() (streaming) with strict JSON schema for {pydantic_model_for_parse.__name__}, "
@@ -2617,14 +2609,16 @@ class OpenAI(BaseLlm):
                         # Use schema title if available, otherwise use model name
                         schema_name = strict_schema_dict.get("title", pydantic_model_for_parse.__name__)
                         
-                        # Create response_format structure with strict schema
-                        request_params["response_format"] = {
-                            "type": "json_schema",
-                            "json_schema": {
-                                "name": schema_name,
-                                "schema": strict_schema_dict,
-                                "strict": True,  # Enable strict mode
-                            },
+                        # Responses API uses 'text' parameter with 'format' for structured output
+                        request_params["text"] = {
+                            "format": {
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": schema_name,
+                                    "schema": strict_schema_dict,
+                                    "strict": True,  # Enable strict mode
+                                },
+                            }
                         }
                         logger.info(
                             f"Using create() with strict JSON schema for {pydantic_model_for_parse.__name__}, "
