@@ -799,7 +799,6 @@ async def openai_response_to_llm_response(
         if hasattr(response, "output_text") and response.output_text:
             # Check if output_text contains JSON that matches the Pydantic model
             try:
-                import json
                 parsed_json = json.loads(response.output_text)
                 # If it's a dict and we have a pydantic model, treat it as parsed data
                 if isinstance(parsed_json, dict):
@@ -811,7 +810,6 @@ async def openai_response_to_llm_response(
     
     if is_parse_response:
         # This is a parse() response - convert parsed model to JSON text
-        import json
         try:
             if parsed_data is not None:
                 # We have parsed data as a dict
