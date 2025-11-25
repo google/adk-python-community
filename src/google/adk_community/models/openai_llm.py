@@ -2084,15 +2084,15 @@ class OpenAI(BaseLlm):
                                     )
                                     schema_dict = None
                             
-                            # For Pydantic models, we'll use parse() method instead of create() with response_format
+                            # For Pydantic models, we'll use create() with response_format (strict schema)
                             # For dict schemas, we still need to create response_format structure
                             if pydantic_model_for_parse is not None:
-                                # Pydantic model detected - will use parse() method with text_format
+                                # Pydantic model detected - will use create() with response_format (strict schema)
                                 logger.info(
                                     f"Pydantic model detected for structured output: {pydantic_model_for_parse.__name__}. "
-                                    f"Will use parse() method with text_format parameter."
+                                    f"Will use create() with response_format (strict schema)."
                                 )
-                                # Don't set response_format - we'll use parse() instead
+                                # Don't set response_format here - we'll set it later with strict schema
                             elif schema_dict is not None:
                                 # Dict-based schema - create response_format structure
                                 # Use schema title if available, otherwise use the name we extracted
@@ -2354,12 +2354,15 @@ class OpenAI(BaseLlm):
                 # Handle streaming response using Responses API
                 logger.info(f"Calling OpenAI Responses API with stream=True, tools count: {len(request_params.get('tools', []))}")
                 
-                # For structured outputs with Pydantic models, use parse() method ONLY if no images
-                # If images are present, use create() with response_format instead
-                if pydantic_model_for_parse is not None and not has_images:
-                    # Use parse() method for structured outputs with Pydantic models (text-only or PDFs)
-                    # IMPORTANT: OpenAI requires additionalProperties: false in schemas for parse()
-                    # Extract JSON schema from Pydantic model and ensure strict mode compliance
+                # For structured outputs with Pydantic models, always use create() with response_format
+                # This ensures we can apply strict schema validation (additionalProperties: false)
+                if pydantic_model_for_parse is not None:
+                    # Convert Pydantic model to response_format with strict schema
+                    logger.info(
+                        f"Pydantic model detected (streaming): {pydantic_model_for_parse.__name__}. "
+                        f"Using create() with response_format (strict schema)."
+                    )
+                    # Get JSON schema from Pydantic model
                     if hasattr(pydantic_model_for_parse, "model_json_schema"):
                         schema_dict = pydantic_model_for_parse.model_json_schema()
                     elif hasattr(pydantic_model_for_parse, "schema"):
@@ -2377,64 +2380,36 @@ class OpenAI(BaseLlm):
                         except Exception:
                             schema_dict = None
                     
-                    # Ensure strict mode compliance (additionalProperties: false for all objects)
                     if schema_dict is not None:
-                        strict_schema_dict = copy.deepcopy(schema_dict)
-                        _ensure_strict_json_schema(strict_schema_dict)
-                        # Pass the modified schema dict to parse() instead of the Pydantic class
-                        text_format = strict_schema_dict
-                        logger.info(
-                            f"Calling OpenAI Responses API parse() (streaming) with strict JSON schema "
-                            f"for {pydantic_model_for_parse.__name__}, tools count: {len(request_params.get('tools', []))}"
-                        )
-                    else:
-                        # Fallback to Pydantic class if schema extraction failed
-                        text_format = pydantic_model_for_parse
-                        logger.warning(
-                            f"Could not extract JSON schema from {pydantic_model_for_parse.__name__}, "
-                            f"passing Pydantic class directly (may fail strict mode validation)"
-                        )
-                    
-                    # Remove response_format if present (parse() doesn't use it)
-                    request_params.pop("response_format", None)
-                    # Use parse() with text_format parameter (streaming)
-                    stream_response = await client.responses.parse(
-                        text_format=text_format,
-                        **request_params
-                    )
-                else:
-                    # Use create() method for regular requests or when images are present
-                    if pydantic_model_for_parse is not None and has_images:
-                        # Convert Pydantic model to response_format for create() when images are present
-                        logger.info(
-                            f"Images detected - using create() with response_format instead of parse() "
-                            f"(parse() only supports PDFs, not images). Model: {pydantic_model_for_parse.__name__}"
-                        )
-                        # Get JSON schema from Pydantic model
-                        if hasattr(pydantic_model_for_parse, "model_json_schema"):
-                            schema_dict = pydantic_model_for_parse.model_json_schema()
-                        elif hasattr(pydantic_model_for_parse, "schema"):
-                            schema_dict = pydantic_model_for_parse.schema()
-                        else:
-                            schema_dict = {}
-                        
-                        # Create response_format from Pydantic schema
-                        schema_name = pydantic_model_for_parse.__name__
+                        # Ensure strict mode compliance (additionalProperties: false for all objects)
                         strict_schema_dict = copy.deepcopy(schema_dict)
                         _ensure_strict_json_schema(strict_schema_dict)
                         
+                        # Use schema title if available, otherwise use model name
+                        schema_name = strict_schema_dict.get("title", pydantic_model_for_parse.__name__)
+                        
+                        # Create response_format structure with strict schema
                         request_params["response_format"] = {
                             "type": "json_schema",
                             "json_schema": {
                                 "name": schema_name,
                                 "schema": strict_schema_dict,
-                                "strict": True
-                            }
+                                "strict": True,  # Enable strict mode
+                            },
                         }
-                        # Clear pydantic_model_for_parse so we use create() instead
-                        pydantic_model_for_parse = None
-                    
-                    stream_response = await client.responses.create(**request_params)
+                        logger.info(
+                            f"Using create() (streaming) with strict JSON schema for {pydantic_model_for_parse.__name__}, "
+                            f"tools count: {len(request_params.get('tools', []))}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not extract JSON schema from {pydantic_model_for_parse.__name__}, "
+                            f"falling back to regular create() call"
+                        )
+                
+                # Use create() method for all requests (streaming)
+                logger.info(f"Calling OpenAI Responses API create() with stream=True, tools count: {len(request_params.get('tools', []))}")
+                stream_response = await client.responses.create(**request_params)
 
                 # Accumulate content and tool calls across events
                 accumulated_text = ""
@@ -2608,12 +2583,15 @@ class OpenAI(BaseLlm):
                 yield final_response
             else:
                 # Handle non-streaming response using Responses API
-                # For structured outputs with Pydantic models, use parse() method ONLY if no images
-                # If images are present, use create() with response_format instead
-                if pydantic_model_for_parse is not None and not has_images:
-                    # Use parse() method for structured outputs with Pydantic models (text-only or PDFs)
-                    # IMPORTANT: OpenAI requires additionalProperties: false in schemas for parse()
-                    # Extract JSON schema from Pydantic model and ensure strict mode compliance
+                # For structured outputs with Pydantic models, always use create() with response_format
+                # This ensures we can apply strict schema validation (additionalProperties: false)
+                if pydantic_model_for_parse is not None:
+                    # Convert Pydantic model to response_format with strict schema
+                    logger.info(
+                        f"Pydantic model detected: {pydantic_model_for_parse.__name__}. "
+                        f"Using create() with response_format (strict schema)."
+                    )
+                    # Get JSON schema from Pydantic model
                     if hasattr(pydantic_model_for_parse, "model_json_schema"):
                         schema_dict = pydantic_model_for_parse.model_json_schema()
                     elif hasattr(pydantic_model_for_parse, "schema"):
@@ -2631,70 +2609,42 @@ class OpenAI(BaseLlm):
                         except Exception:
                             schema_dict = None
                     
-                    # Ensure strict mode compliance (additionalProperties: false for all objects)
                     if schema_dict is not None:
-                        strict_schema_dict = copy.deepcopy(schema_dict)
-                        _ensure_strict_json_schema(strict_schema_dict)
-                        # Pass the modified schema dict to parse() instead of the Pydantic class
-                        text_format = strict_schema_dict
-                        logger.info(
-                            f"Calling OpenAI Responses API parse() with strict JSON schema "
-                            f"for {pydantic_model_for_parse.__name__}, tools count: {len(request_params.get('tools', []))}"
-                        )
-                    else:
-                        # Fallback to Pydantic class if schema extraction failed
-                        text_format = pydantic_model_for_parse
-                        logger.warning(
-                            f"Could not extract JSON schema from {pydantic_model_for_parse.__name__}, "
-                            f"passing Pydantic class directly (may fail strict mode validation)"
-                        )
-                    
-                    # Remove response_format if present (parse() doesn't use it)
-                    request_params.pop("response_format", None)
-                    # Use parse() with text_format parameter
-                    response = await client.responses.parse(
-                        text_format=text_format,
-                        **request_params
-                    )
-                else:
-                    # Use create() method for regular requests or when images are present
-                    if pydantic_model_for_parse is not None and has_images:
-                        # Convert Pydantic model to response_format for create() when images are present
-                        logger.info(
-                            f"Images detected - using create() with response_format instead of parse() "
-                            f"(parse() only supports PDFs, not images). Model: {pydantic_model_for_parse.__name__}"
-                        )
-                        # Get JSON schema from Pydantic model
-                        if hasattr(pydantic_model_for_parse, "model_json_schema"):
-                            schema_dict = pydantic_model_for_parse.model_json_schema()
-                        elif hasattr(pydantic_model_for_parse, "schema"):
-                            schema_dict = pydantic_model_for_parse.schema()
-                        else:
-                            schema_dict = {}
-                        
-                        # Create response_format from Pydantic schema
-                        schema_name = pydantic_model_for_parse.__name__
+                        # Ensure strict mode compliance (additionalProperties: false for all objects)
                         strict_schema_dict = copy.deepcopy(schema_dict)
                         _ensure_strict_json_schema(strict_schema_dict)
                         
+                        # Use schema title if available, otherwise use model name
+                        schema_name = strict_schema_dict.get("title", pydantic_model_for_parse.__name__)
+                        
+                        # Create response_format structure with strict schema
                         request_params["response_format"] = {
                             "type": "json_schema",
                             "json_schema": {
                                 "name": schema_name,
                                 "schema": strict_schema_dict,
-                                "strict": True
-                            }
+                                "strict": True,  # Enable strict mode
+                            },
                         }
-                        # Clear pydantic_model_for_parse so we use create() instead
-                        pydantic_model_for_parse = None
-                    
-                    logger.info(f"Calling OpenAI Responses API create() with stream=False, tools count: {len(request_params.get('tools', []))}")
-                    response = await client.responses.create(**request_params)
-                # Pass pydantic_model if we used parse() method
+                        logger.info(
+                            f"Using create() with strict JSON schema for {pydantic_model_for_parse.__name__}, "
+                            f"tools count: {len(request_params.get('tools', []))}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not extract JSON schema from {pydantic_model_for_parse.__name__}, "
+                            f"falling back to regular create() call"
+                        )
+                
+                # Use create() method for all requests
+                logger.info(f"Calling OpenAI Responses API create() with stream=False, tools count: {len(request_params.get('tools', []))}")
+                response = await client.responses.create(**request_params)
+                
+                # Pass pydantic_model for response parsing (create() returns structured output in response_format)
                 llm_response = await openai_response_to_llm_response(
                     response, 
                     url_fetch_timeout=self.url_fetch_timeout,
-                    pydantic_model=pydantic_model_for_parse if pydantic_model_for_parse is not None and not has_images else None
+                    pydantic_model=pydantic_model_for_parse
                 )
                 yield llm_response
 
