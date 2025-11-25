@@ -537,7 +537,7 @@ class TestOpenAIClass:
         mock_event1 = MagicMock()
         mock_event1.type = "response.created"
         mock_event1.response = MagicMock()
-        mock_event1.response.model = "gpt-4o"
+        mock_event1.response.model = "gpt-5.1"
         mock_event1.response.id = "resp_123"
         
         # Second event: content part added
@@ -1505,7 +1505,7 @@ class TestOpenAIClass:
         mock_event1 = MagicMock()
         mock_event1.type = "response.created"
         mock_event1.response = MagicMock()
-        mock_event1.response.model = "gpt-4o"
+        mock_event1.response.model = "gpt-5.1"
         mock_event1.response.id = "resp_123"
         
         # Second event: function call added
@@ -1578,7 +1578,7 @@ class TestOpenAIClass:
         mock_response.usage = MagicMock()
         mock_response.usage.input_tokens = 10
         mock_response.usage.output_tokens = 5
-        mock_response.model = "gpt-4o"
+        mock_response.model = "gpt-5.1"
         mock_response.incomplete_details = None
         mock_response.system_fingerprint = "fp_123"
 

@@ -1144,7 +1144,7 @@ class OpenAI(BaseLlm):
                          This is used when converting image_url content parts from external URLs.
     """
 
-    model: str = "gpt-4o"
+    model: str = "gpt-5.1"
     use_files_api: bool = True
     url_fetch_timeout: float = 30.0
 
