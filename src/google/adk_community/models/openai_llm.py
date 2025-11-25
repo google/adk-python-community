@@ -757,6 +757,27 @@ async def openai_response_to_llm_response(
     # Extract content from response
     content_parts = []
 
+    def _serialize_parsed_content(parsed_obj: Any) -> Optional[str]:
+        """Convert parsed content (Pydantic model, dict, etc.) into a JSON/text string."""
+        if parsed_obj is None:
+            return None
+        try:
+            if hasattr(parsed_obj, "model_dump_json"):
+                # Pydantic v2 helper
+                return parsed_obj.model_dump_json()
+            if hasattr(parsed_obj, "model_dump"):
+                return json.dumps(parsed_obj.model_dump())
+            if hasattr(parsed_obj, "dict"):
+                return json.dumps(parsed_obj.dict())
+            if isinstance(parsed_obj, (dict, list)):
+                return json.dumps(parsed_obj)
+            if isinstance(parsed_obj, bytes):
+                return parsed_obj.decode("utf-8", errors="replace")
+            return str(parsed_obj)
+        except Exception as exc:
+            logger.warning(f"Failed to serialize parsed content: {exc}")
+            return str(parsed_obj)
+
     # Check if this is a parse() response (returns parsed Pydantic model directly)
     # Parse() responses might be:
     # 1. A Pydantic model instance directly
@@ -767,6 +788,7 @@ async def openai_response_to_llm_response(
     is_pydantic_instance = False
     parsed_data = None
     is_parse_response = False
+    pydantic_instance_obj: Optional[Any] = None
     
     # First check if it's a Pydantic model instance directly
     if hasattr(response, "model_dump") or hasattr(response, "dict"):
@@ -774,13 +796,10 @@ async def openai_response_to_llm_response(
         # and doesn't have response-like attributes
         if not (hasattr(response, "output") or hasattr(response, "output_text") or hasattr(response, "usage")):
             is_pydantic_instance = True
+            pydantic_instance_obj = response
             if hasattr(response, "model_dump"):
-                # Pydantic v2
-                parsed_data = response.model_dump()
                 logger.debug(f"Detected Pydantic v2 model instance: {type(response).__name__}")
-            elif hasattr(response, "dict"):
-                # Pydantic v1
-                parsed_data = response.dict()
+            else:
                 logger.debug(f"Detected Pydantic v1 model instance: {type(response).__name__}")
             is_parse_response = True
     elif hasattr(response, "parsed"):
@@ -809,41 +828,23 @@ async def openai_response_to_llm_response(
                 pass
     
     if is_parse_response:
-        # This is a parse() response - convert parsed model to JSON text
-        try:
-            if parsed_data is not None:
-                # We have parsed data as a dict
-                json_text = json.dumps(parsed_data)
-            elif is_pydantic_instance:
-                # Use the response directly if it's a Pydantic instance
-                if hasattr(response, "model_dump_json"):
-                    json_text = response.model_dump_json()
-                elif hasattr(response, "json"):
-                    json_text = response.json()
-                elif hasattr(response, "model_dump"):
-                    json_text = json.dumps(response.model_dump())
-                elif hasattr(response, "dict"):
-                    json_text = json.dumps(response.dict())
-                else:
-                    json_text = str(response)
-            elif hasattr(response, "output_text") and response.output_text:
-                # Parse() might return data in output_text as JSON
-                json_text = response.output_text
-            else:
-                # Try to convert the entire response to JSON
-                try:
-                    json_text = json.dumps(response, default=str)
-                except (TypeError, ValueError):
-                    json_text = str(response)
-            
+        # This is a parse() response - convert parsed model to JSON/text
+        json_text: Optional[str] = None
+
+        if parsed_data is not None:
+            json_text = _serialize_parsed_content(parsed_data)
+        elif is_pydantic_instance:
+            json_text = _serialize_parsed_content(pydantic_instance_obj)
+        elif hasattr(response, "output_text") and response.output_text:
+            json_text = response.output_text
+        else:
+            json_text = _serialize_parsed_content(response)
+
+        if json_text:
             logger.debug(f"Converted parse() response to JSON text (length: {len(json_text)})")
             content_parts.append(types.Part(text=json_text))
-        except Exception as e:
-            logger.warning(f"Failed to convert parse() response to JSON: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            # Fallback: convert to string representation
-            content_parts.append(types.Part(text=str(response)))
+        else:
+            logger.warning("Parse() response serialization produced empty text.")
     else:
         # Regular Responses API format (has 'output' field and potentially 'output_text')
         # IMPORTANT: Both output_text and output array may contain the same text content.
@@ -925,6 +926,15 @@ async def openai_response_to_llm_response(
                                                 # Mark summary content
                                                 text_content = f"[SUMMARY] {text_content}"
                                             content_parts.append(types.Part(text=text_content))
+                                    elif content_type == "parsed":
+                                        parsed_content = getattr(content_part, "parsed", None)
+                                        if parsed_content is None and hasattr(content_part, "content"):
+                                            parsed_content = content_part.content
+                                        serialized = _serialize_parsed_content(parsed_content)
+                                        if serialized:
+                                            content_parts.append(types.Part(text=serialized))
+                                        else:
+                                            logger.debug("Parsed content part missing data after serialization.")
                                     
                                     # Handle image content types
                                     elif content_type in ("image_url", "input_image", "computer_screenshot"):
