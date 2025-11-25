@@ -1120,11 +1120,15 @@ class OpenAI(BaseLlm):
     - max_output_tokens: Set via GenerateContentConfig (Responses API uses max_output_tokens directly),
       temperature: Set via GenerateContentConfig in the request
     - Additional parameters: top_p, frequency_penalty, presence_penalty, seed,
-      candidate_count (maps to OpenAI's n), stop_sequences, logprobs can be set via GenerateContentConfig
-    - Note: logit_bias, top_logprobs, and user are OpenAI-specific and not supported in Google GenAI
+      candidate_count (maps to OpenAI's n), stop_sequences, logprobs, response_logprobs
+      can be set via GenerateContentConfig
+    - Note: Some OpenAI-specific parameters (logit_bias, top_logprobs, user, max_tool_calls,
+      metadata, prompt_cache_key, safety_identifier, truncation, store, background,
+      service_tier, reasoning_effort, caching_config, grounding_config, safety_settings)
+      are not available in GenerateContentConfig and cannot be mapped
     - Structured outputs: Supported via response_schema or response_mime_type in GenerateContentConfig
-    - Tool choice: Configurable via tool_config.function_calling_config.mode in GenerateContentConfig
-      (uses FunctionCallingConfigMode: NONE, AUTO, ANY, VALIDATED)
+    - Tool choice: Uses smart defaults based on conversation state (auto/required).
+      NOTE: tool_config cannot be mapped (not in GenerateContentConfig)
 
     File Input Support:
     - Documents (PDFs, Word docs, etc.) are uploaded via Files API when use_files_api=True
@@ -1775,10 +1779,8 @@ class OpenAI(BaseLlm):
             
             request_params["tools"] = validated_tools
             logger.debug(f"Added {len(validated_tools)} validated tool(s) to request params")
-            # Support configurable tool_choice using Google GenAI types only
-            # Use tool_config.function_calling_config.mode (strict Google GenAI format)
-            # 
-            # Smart default strategy for agentic environments:
+            # Smart default strategy for tool_choice in agentic environments:
+            # NOTE: tool_config cannot be mapped (not in GenerateContentConfig), so we use smart defaults
             # - If we have pending tool calls, we're waiting for tool results, so use "auto" to allow final answer
             # - If the last message was a tool response, we just got tool results, so use "auto" to allow final answer
             # - If we have tool calls in history, we're in a tool-using workflow, so use "auto" (model can decide to continue or finish)
@@ -1802,48 +1804,9 @@ class OpenAI(BaseLlm):
                 tool_choice = "required"
                 logger.debug("Fresh conversation with tools - using 'required' to ensure tools are called")
             
-            if llm_request.config:
-                # Check for tool_config (Google GenAI format: ToolConfig containing FunctionCallingConfig)
-                tool_config = getattr(llm_request.config, "tool_config", None)
-                if tool_config is not None:
-                    # Extract function_calling_config from ToolConfig
-                    function_calling_config = getattr(tool_config, "function_calling_config", None)
-                    if function_calling_config is not None:
-                        # Extract mode from FunctionCallingConfig
-                        if hasattr(function_calling_config, "mode") and function_calling_config.mode is not None:
-                            mode = function_calling_config.mode
-                            # Get mode name/value for comparison (handle both enum and string)
-                            mode_name = None
-                            if hasattr(mode, "name"):
-                                mode_name = mode.name
-                            elif hasattr(mode, "value"):
-                                mode_name = str(mode.value)
-                            elif isinstance(mode, str):
-                                mode_name = mode.upper()
-                            
-                            logger.debug(f"Function calling config mode: {mode}, mode_name: {mode_name}")
-                            
-                            # Map Google GenAI FunctionCallingConfigMode to OpenAI tool_choice
-                            if mode_name == "NONE" or mode == types.FunctionCallingConfigMode.NONE:
-                                tool_choice = "none"
-                            elif mode_name == "AUTO" or mode == types.FunctionCallingConfigMode.AUTO:
-                                tool_choice = "auto"
-                            elif mode_name in ("ANY", "VALIDATED") or mode in (types.FunctionCallingConfigMode.ANY, types.FunctionCallingConfigMode.VALIDATED):
-                                tool_choice = "required"  # ANY/VALIDATED means tools should be called, similar to required
-                            
-                            # Check for allowed_function_names for specific function selection
-                            if hasattr(function_calling_config, "allowed_function_names") and function_calling_config.allowed_function_names:
-                                # OpenAI supports function-specific tool_choice as a dict
-                                if len(function_calling_config.allowed_function_names) == 1:
-                                    tool_choice = {
-                                        "type": "function",
-                                        "function": {"name": function_calling_config.allowed_function_names[0]}
-                                    }
-                        else:
-                            logger.debug("Function calling config found but mode is None or missing")
-                    else:
-                        logger.debug("Tool config found but function_calling_config is None or missing")
-                # No fallback - only use Google GenAI tool_config format
+            # NOTE: tool_config cannot be mapped (not in GenerateContentConfig).
+            # If tool_config is needed, it must be added to the upstream GenAI SDK first.
+            # Tool choice is determined by the smart default strategy above.
             # Responses API uses tool_choice (same as Chat Completions)
             request_params["tool_choice"] = tool_choice
             # Responses API supports parallel_tool_calls
@@ -1851,6 +1814,11 @@ class OpenAI(BaseLlm):
             request_params["parallel_tool_calls"] = True
 
         # Map Google GenAI GenerateContentConfig parameters to Responses API
+        # NOTE: Only access attributes that exist on google.genai.types.GenerateContentConfig.
+        # The ADK SDK re-exports those autogenerated Pydantic models and we *must* keep
+        # them untouched. If a new OpenAI parameter is needed, add it to the upstream
+        # GenAI types first, regenerate, then reference it here. Adding ad-hoc fields
+        # directly on the config object will fail validation.
         # Currently mapped parameters:
         # - max_output_tokens → max_output_tokens (direct)
         # - temperature → temperature (direct)
@@ -1861,22 +1829,17 @@ class OpenAI(BaseLlm):
         # - candidate_count → n (direct)
         # - stop_sequences → stop (direct)
         # - logprobs → logprobs (direct)
-        # - top_logprobs → top_logprobs (direct, if available in config)
-        # - user → user (direct, if available in config)
-        # - max_tool_calls → max_tool_calls (direct, if available in config)
-        # - metadata → metadata (direct, if available in config)
-        # - prompt_cache_key → prompt_cache_key (direct, if available in config)
-        # - safety_identifier → safety_identifier (direct, if available in config)
-        # - truncation → truncation (direct, if available in config)
-        # - store → store (direct, if available in config)
-        # - background → background (direct, if available in config)
-        # - service_tier → service_tier (direct, if available in config)
+        # - response_logprobs → logprobs (enables logprobs if True)
         # - system_instruction → instructions (direct)
-        # - response_schema/response_mime_type → text (converted format)
-        # - tool_config.function_calling_config.mode → tool_choice (mapped)
+        # - response_schema/response_mime_type → response_format (converted format)
         # - tools → tools (converted to Responses API format)
         # - parallel_tool_calls → parallel_tool_calls (default: True)
-        # - reasoning_effort → reasoning (mapped: reasoning_effort → reasoning={"effort": ...})
+        # - tool_choice: Uses smart defaults (auto/required) based on conversation state
+        #
+        # Parameters that cannot be mapped (not in GenerateContentConfig):
+        # - top_logprobs, user, max_tool_calls, metadata, prompt_cache_key, safety_identifier,
+        #   truncation, store, background, service_tier, reasoning_effort, caching_config,
+        #   grounding_config, safety_settings, tool_config, response_format (OpenAI-specific)
         #
         # Responses API features not yet mapped (no GenAI equivalent):
         # - conversation: Built-in conversation state management
@@ -1939,145 +1902,23 @@ class OpenAI(BaseLlm):
             if logprobs is not None:
                 request_params["logprobs"] = logprobs
 
-            # top_logprobs - Responses API supports this
-            top_logprobs = getattr(llm_request.config, "top_logprobs", None)
-            if top_logprobs is not None:
-                request_params["top_logprobs"] = top_logprobs
-            
-            # user - Responses API supports this (for tracking/abuse prevention)
-            user = getattr(llm_request.config, "user", None)
-            if user is not None:
-                request_params["user"] = user
-            
-            # max_tool_calls - Responses API supports limiting tool calls
-            max_tool_calls = getattr(llm_request.config, "max_tool_calls", None)
-            if max_tool_calls is not None:
-                request_params["max_tool_calls"] = max_tool_calls
-            
-            # metadata - Responses API supports metadata for tracking
-            metadata = getattr(llm_request.config, "metadata", None)
-            if metadata is not None:
-                request_params["metadata"] = metadata
-            
-            # prompt_cache_key - Responses API supports prompt caching
-            prompt_cache_key = getattr(llm_request.config, "prompt_cache_key", None)
-            if prompt_cache_key is not None:
-                request_params["prompt_cache_key"] = prompt_cache_key
-            
-            # safety_identifier - Responses API supports safety tracking
-            safety_identifier = getattr(llm_request.config, "safety_identifier", None)
-            if safety_identifier is not None:
-                request_params["safety_identifier"] = safety_identifier
-            
-            # truncation - Responses API supports truncation control
-            truncation = getattr(llm_request.config, "truncation", None)
-            if truncation is not None:
-                request_params["truncation"] = truncation
-            
-            # store - Responses API supports storing responses
-            store = getattr(llm_request.config, "store", None)
-            if store is not None:
-                request_params["store"] = store
-            
-            # background - Responses API supports async/background processing
-            background = getattr(llm_request.config, "background", None)
-            if background is not None:
-                request_params["background"] = background
-            
-            # service_tier - Responses API supports different service tiers
-            service_tier = getattr(llm_request.config, "service_tier", None)
-            if service_tier is not None:
-                request_params["service_tier"] = service_tier
-            
-            # reasoning_effort - Map Google GenAI reasoning_effort to OpenAI Responses API reasoning parameter
-            # OpenAI Responses API uses: reasoning={"effort": "low"|"medium"|"high"}
-            # Google GenAI uses: reasoning_effort="low"|"medium"|"high"
-            reasoning_effort = getattr(llm_request.config, "reasoning_effort", None)
-            if reasoning_effort is not None:
-                # Validate and normalize the effort value
-                if isinstance(reasoning_effort, str):
-                    effort_lower = reasoning_effort.lower()
-                    # OpenAI Responses API accepts: "low", "medium", "high"
-                    if effort_lower in ("low", "medium", "high"):
-                        request_params["reasoning"] = {"effort": effort_lower}
-                        logger.debug(f"Mapped reasoning_effort={reasoning_effort} to reasoning={{'effort': '{effort_lower}'}}")
-                    else:
-                        logger.warning(
-                            f"reasoning_effort value '{reasoning_effort}' is not a valid Responses API effort value. "
-                            f"Expected: 'low', 'medium', or 'high'. Skipping reasoning parameter."
-                        )
-                else:
-                    logger.warning(
-                        f"reasoning_effort must be a string, got {type(reasoning_effort).__name__}. "
-                        f"Skipping reasoning parameter."
-                    )
-            
-            # Handle caching_config: Map to OpenAI Responses API cache parameters if available
-            caching_config = getattr(llm_request.config, "caching_config", None)
-            if caching_config is not None:
-                # OpenAI Responses API may support cache parameters
-                # Check if caching_config has enable_cache or similar
-                enable_cache = getattr(caching_config, "enable_cache", None)
-                if enable_cache is not None:
-                    # Try to map to OpenAI cache parameter (if it exists)
-                    # Note: OpenAI Responses API cache behavior may be automatic
-                    # If explicit cache control is needed, it might be via a 'cache' parameter
-                    # For now, log that caching_config was provided
-                    logger.debug(f"caching_config.enable_cache={enable_cache} - OpenAI Responses API cache behavior is automatic")
-                # Check for other cache-related fields
-                cache_ttl = getattr(caching_config, "ttl", None)
-                if cache_ttl is not None:
-                    logger.debug(f"caching_config.ttl={cache_ttl} - OpenAI Responses API does not support explicit TTL")
-            
-            # Handle grounding_config: Map to web search tool if applicable
-            grounding_config = getattr(llm_request.config, "grounding_config", None)
-            if grounding_config is not None:
-                # Check if grounding_config enables web search
-                # Google GenAI grounding_config may have web_search or similar fields
-                web_search_enabled = getattr(grounding_config, "web_search", None)
-                if web_search_enabled is True:
-                    # OpenAI Responses API supports web search via tools
-                    # Check if web search tool is already in tools list
-                    web_search_tool_exists = False
-                    current_tools = request_params.get("tools") or tools
-                    if current_tools:
-                        for tool in current_tools:
-                            if isinstance(tool, dict) and tool.get("type") == "web_search":
-                                web_search_tool_exists = True
-                                break
-                            elif hasattr(tool, "type") and tool.type == "web_search":
-                                web_search_tool_exists = True
-                                break
-                    
-                    if not web_search_tool_exists:
-                        # Add web search tool to tools list
-                        # Note: OpenAI Responses API may require web_search as a function tool with a name
-                        # For now, we'll skip adding it as a tool since it may not be supported in this format
-                        # or it needs to be handled differently
-                        logger.warning(
-                            "web_search tool requested but may not be supported in current OpenAI API format. "
-                            "Skipping web_search tool addition to avoid API errors. "
-                            "If web_search is needed, it should be added as a proper function tool with a name."
-                        )
-                        # If web_search needs to be added, it should have the structure:
-                        # {"type": "function", "function": {"name": "web_search", "description": "..."}}
-                        # For now, we skip it to prevent API errors
-                else:
-                    # Other grounding features might not have direct equivalents
-                    logger.debug(f"grounding_config provided but web_search not enabled - other grounding features may not be supported")
-            
-            # Handle safety_settings: OpenAI Responses API may have moderation features
-            safety_settings = getattr(llm_request.config, "safety_settings", None)
-            if safety_settings is not None:
-                # Google GenAI safety_settings is a list of SafetySetting objects
-                # OpenAI Responses API may have moderation parameters
-                # Check if OpenAI supports explicit moderation settings
-                # For now, note that OpenAI has built-in moderation that cannot be disabled
-                # but specific safety thresholds might not be configurable
-                if isinstance(safety_settings, list) and len(safety_settings) > 0:
-                    logger.debug(f"safety_settings provided with {len(safety_settings)} settings - OpenAI Responses API uses built-in moderation (not configurable)")
-                else:
-                    logger.debug("safety_settings provided - OpenAI Responses API uses built-in moderation (not configurable)")
+            # NOTE: The following OpenAI Responses API parameters cannot be mapped because
+            # they have no equivalent in google.genai.types.GenerateContentConfig:
+            # - top_logprobs: Cannot be mapped (not in GenerateContentConfig)
+            # - user: Cannot be mapped (not in GenerateContentConfig)
+            # - max_tool_calls: Cannot be mapped (not in GenerateContentConfig)
+            # - metadata: Cannot be mapped (not in GenerateContentConfig)
+            # - prompt_cache_key: Cannot be mapped (not in GenerateContentConfig)
+            # - safety_identifier: Cannot be mapped (not in GenerateContentConfig)
+            # - truncation: Cannot be mapped (not in GenerateContentConfig)
+            # - store: Cannot be mapped (not in GenerateContentConfig)
+            # - background: Cannot be mapped (not in GenerateContentConfig)
+            # - service_tier: Cannot be mapped (not in GenerateContentConfig)
+            # - reasoning_effort: Cannot be mapped (not in GenerateContentConfig)
+            # - caching_config: Cannot be mapped (not in GenerateContentConfig)
+            # - grounding_config: Cannot be mapped (not in GenerateContentConfig)
+            # - safety_settings: Cannot be mapped (not in GenerateContentConfig)
+            # If these are needed, they must be added to the upstream GenAI SDK first.
 
             # Handle structured output / response format
             # IMPORTANT: Skip response_format entirely when tools are present
@@ -2104,8 +1945,11 @@ class OpenAI(BaseLlm):
                     # (These are handled below in the response_schema section)
                     
                     # Then check for response_format (OpenAI-specific, for direct API compatibility)
-                    # Use getattr with None default to safely check for attribute
-                    # Check it's actually a dict with expected structure to avoid MagicMock issues
+                    # NOTE: response_format is NOT in GenerateContentConfig, but we check for it
+                    # via getattr() for direct OpenAI API compatibility (bypassing GenAI types).
+                    # This allows users to pass OpenAI-specific response_format directly.
+                    # Use getattr with None default to safely check for attribute.
+                    # Check it's actually a dict with expected structure to avoid MagicMock issues.
                     if not response_format_set:
                         response_format = getattr(llm_request.config, "response_format", None)
                         # Check if it's a dict and has the expected structure (not a MagicMock)
