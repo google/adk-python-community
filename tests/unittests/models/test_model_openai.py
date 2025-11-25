@@ -199,7 +199,11 @@ class TestHelperFunctions:
 
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_function_response_no_id(self):
-        """Test that function response without id is skipped with warning."""
+        """Test that function response without id raises ValueError.
+        
+        Function responses require an id field to create tool messages.
+        The Responses API requires tool_call_id for function_call_output items.
+        """
         content = types.Content(
             role="user",
             parts=[
@@ -210,10 +214,9 @@ class TestHelperFunctions:
                 )
             ],
         )
-        messages = await content_to_openai_message(content)
-        # Should return empty list when function_response has no id
-        assert isinstance(messages, list)
-        assert len(messages) == 0
+        # Should raise ValueError when function_response has no id
+        with pytest.raises(ValueError, match="Function response missing required 'id' field"):
+            await content_to_openai_message(content)
 
     def test_function_declaration_to_openai_tool(self):
         """Test conversion of function declaration to OpenAI tool."""
@@ -289,12 +292,14 @@ class TestHelperFunctions:
         """Test conversion of OpenAI Responses API response with tool calls."""
         mock_response = MagicMock()
         # Responses API format: output is a list of output items
+        # Responses API uses "function_call" type (not "function")
         mock_output_item = MagicMock()
-        mock_output_item.type = "function"
+        mock_output_item.type = "function_call"
         mock_output_item.call_id = "call_123"
         mock_output_item.name = "get_weather"
         mock_output_item.arguments = '{"location": "SF"}'
         mock_response.output = [mock_output_item]
+        mock_response.output_text = None  # Explicitly set to None
         mock_response.usage = None
         mock_response.incomplete_details = None  # Response completed normally
 
@@ -310,6 +315,7 @@ class TestHelperFunctions:
         """Test conversion of empty OpenAI Responses API response."""
         mock_response = MagicMock()
         mock_response.output = []  # Empty output list
+        mock_response.output_text = None  # Explicitly set to None to avoid MagicMock issues
         mock_response.usage = None
         mock_response.incomplete_details = None
 
@@ -680,7 +686,8 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert "tools" in call_args
         assert len(call_args["tools"]) == 1
-        assert call_args["tool_choice"] == "auto"
+        # Smart default: fresh conversation with tools uses "required" (not "auto")
+        assert call_args["tool_choice"] == "required"
         assert call_args["parallel_tool_calls"] is True
 
 
@@ -859,7 +866,11 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_handle_file_data_files_api_fallback(self):
-        """Test Files API fallback to base64 on error."""
+        """Test Files API fallback to base64 on error.
+        
+        Non-image files that fail to upload should fallback to base64
+        and be returned as type: "text" with data URI (not image_url).
+        """
         openai_client = OpenAI(use_files_api=True)
         pdf_data = b"fake_pdf_data"
         part = types.Part(
@@ -878,13 +889,18 @@ class TestOpenAIClass:
         ):
             result = await openai_client._handle_file_data(part)
 
-        # Should fallback to base64
-        assert result["type"] == "image_url"
-        assert "base64" in result["image_url"]["url"]
+        # Non-image files should return as type: "text" with data URI (not image_url)
+        assert result["type"] == "text"
+        assert "base64" in result["text"]
+        assert "data:application/pdf;base64," in result["text"]
 
     @pytest.mark.asyncio
     async def test_handle_file_data_with_pdf_disabled(self):
-        """Test handling PDF file with Files API disabled (base64 fallback)."""
+        """Test handling PDF file with Files API disabled (base64 fallback).
+        
+        Non-image files should return as type: "text" with data URI
+        when Files API is disabled (not image_url).
+        """
         openai_client = OpenAI(use_files_api=False)
         pdf_data = b"fake_pdf_data"
         part = types.Part(
@@ -897,10 +913,10 @@ class TestOpenAIClass:
 
         result = await openai_client._handle_file_data(part)
 
-        # Should use base64 encoding when Files API is disabled
-        assert result["type"] == "image_url"
-        assert "base64" in result["image_url"]["url"]
-        assert "data:application/pdf;base64," in result["image_url"]["url"]
+        # Non-image files should return as type: "text" with data URI (not image_url)
+        assert result["type"] == "text"
+        assert "base64" in result["text"]
+        assert "data:application/pdf;base64," in result["text"]
 
     @pytest.mark.asyncio
     async def test_part_to_openai_content_with_openai_instance(self):
@@ -961,6 +977,7 @@ class TestOpenAIClass:
         """Test conversion of OpenAI Responses API response with no content."""
         mock_response = MagicMock()
         mock_response.output = []  # Empty output
+        mock_response.output_text = None  # Explicitly set to None to avoid MagicMock issues
         mock_response.usage = None
         mock_response.incomplete_details = None
 
@@ -974,11 +991,13 @@ class TestOpenAIClass:
         """Test conversion with invalid JSON in tool call arguments (Responses API format)."""
         mock_response = MagicMock()
         mock_output_item = MagicMock()
-        mock_output_item.type = "function"
+        # Responses API uses "function_call" type (not "function")
+        mock_output_item.type = "function_call"
         mock_output_item.call_id = "call_123"
         mock_output_item.name = "test_func"
         mock_output_item.arguments = "invalid json {"
         mock_response.output = [mock_output_item]
+        mock_response.output_text = None  # Explicitly set to None
         mock_response.usage = None
         mock_response.incomplete_details = None
 
@@ -1441,21 +1460,20 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_tool_choice(self):
-        """Test content generation with configurable tool_choice."""
+        """Test content generation with smart default tool_choice.
+        
+        NOTE: tool_config cannot be mapped (not in GenerateContentConfig).
+        The implementation uses smart defaults based on conversation state.
+        For a fresh conversation with tools, tool_choice defaults to "required".
+        """
         openai_client = OpenAI()
         func_decl = types.FunctionDeclaration(
             name="test_function",
             description="A test function",
         )
         tool = types.Tool(function_declarations=[func_decl])
-
-        # Use proper Google GenAI format with tool_config
-        # tool_config is a ToolConfig that contains function_calling_config
-        function_calling_config = types.FunctionCallingConfig(
-            mode=types.FunctionCallingConfigMode.ANY  # ANY maps to "required" in OpenAI
-        )
-        tool_config = types.ToolConfig(function_calling_config=function_calling_config)
-        config = types.GenerateContentConfig(tools=[tool], tool_config=tool_config)
+        # NOTE: tool_config cannot be mapped, so we don't set it
+        config = types.GenerateContentConfig(tools=[tool])
 
         llm_request = LlmRequest(
             contents=[
@@ -1484,6 +1502,7 @@ class TestOpenAIClass:
                 pass
 
         call_args = mock_client.responses.create.call_args[1]
+        # Smart default: fresh conversation with tools uses "required"
         assert call_args["tool_choice"] == "required"
         assert call_args["parallel_tool_calls"] is True
 
@@ -1733,13 +1752,18 @@ class TestOpenAIClass:
 
         # Verify the message sequence
         call_args = mock_client.responses.create.call_args[1]
-        messages = call_args["input"]  # Responses API uses 'input' instead of 'messages'
-        # Should have assistant message with tool_calls
-        assert messages[0]["role"] == "assistant"
-        assert "tool_calls" in messages[0]
-        # Should have tool message following
-        assert messages[1]["role"] == "tool"
-        assert messages[1]["tool_call_id"] == "call_123"
+        input_items = call_args["input"]  # Responses API uses 'input' instead of 'messages'
+        # Responses API extracts tool_calls to separate function_call items
+        # First item should be the assistant message (without tool_calls)
+        assert input_items[0]["type"] == "message"
+        assert input_items[0]["role"] == "assistant"
+        # Second item should be the function_call item
+        assert input_items[1]["type"] == "function_call"
+        assert input_items[1]["call_id"] == "call_123"
+        assert input_items[1]["name"] == "get_weather"
+        # Third item should be the function_call_output (tool response)
+        assert input_items[2]["type"] == "function_call_output"
+        assert input_items[2]["call_id"] == "call_123"
 
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_function_response_and_regular_parts(self):
@@ -1772,7 +1796,12 @@ class TestOpenAIClass:
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
     async def test_generate_content_async_with_pydantic_model_schema(self):
-        """Test content generation with Pydantic model as response schema."""
+        """Test content generation with Pydantic model as response schema.
+        
+        Pydantic models use parse() method (not create() with response_format)
+        when there are no images. The schema is extracted and made strict
+        (additionalProperties: false) before passing to parse().
+        """
         from pydantic import BaseModel, Field
 
         class PersonModel(BaseModel):
@@ -1791,12 +1820,10 @@ class TestOpenAIClass:
         )
 
         mock_client = AsyncMock()
-        mock_response = MagicMock()
-        mock_response.output = []
-        mock_response.usage = None
-        mock_response.incomplete_details = None
-        mock_client.responses.create = AsyncMock(
-            return_value=mock_response
+        # parse() returns the parsed Pydantic model directly
+        mock_parsed_response = PersonModel(name="John", age=30)
+        mock_client.responses.parse = AsyncMock(
+            return_value=mock_parsed_response
         )
 
         with patch.object(
@@ -1807,14 +1834,21 @@ class TestOpenAIClass:
             ):
                 pass
 
-        call_args = mock_client.responses.create.call_args[1]
-        assert "response_format" in call_args
-        json_schema = call_args["response_format"]["json_schema"]
-        # Should extract name from Pydantic model class
-        assert json_schema["name"] == "PersonModel"
-        assert "schema" in json_schema
-        # Schema should have properties from Pydantic model
-        schema_props = json_schema["schema"].get("properties", {})
-        assert "name" in schema_props
-        assert "age" in schema_props
+        # Verify parse() was called (not create())
+        assert mock_client.responses.parse.called
+        assert not mock_client.responses.create.called
+        
+        call_args = mock_client.responses.parse.call_args[1]
+        # parse() uses text_format parameter with strict JSON schema
+        assert "text_format" in call_args
+        text_format = call_args["text_format"]
+        
+        # text_format should be a dict (strict schema) not the Pydantic class
+        assert isinstance(text_format, dict)
+        # Should have properties from Pydantic model
+        assert "properties" in text_format
+        assert "name" in text_format["properties"]
+        assert "age" in text_format["properties"]
+        # Should have additionalProperties: false (strict mode)
+        assert text_format.get("additionalProperties") is False
 

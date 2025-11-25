@@ -858,13 +858,19 @@ async def openai_response_to_llm_response(
         # This prevents duplicate messages when both output_text and output array contain the same text
         if not has_output_array:
             if hasattr(response, "output_text") and response.output_text:
-                logger.debug("Found output_text in Responses API response (no output array present)")
-                content_parts.append(types.Part(text=response.output_text))
+                # Ensure output_text is a string (not a MagicMock or other type)
+                output_text_value = response.output_text
+                if isinstance(output_text_value, str) and output_text_value:
+                    logger.debug("Found output_text in Responses API response (no output array present)")
+                    content_parts.append(types.Part(text=output_text_value))
         elif hasattr(response, "output_text") and response.output_text:
-            logger.debug(
-                "Both output_text and output array present - using output array to avoid duplicates. "
-                f"output_text will be ignored: {response.output_text[:100]}..."
-            )
+            # Ensure output_text is a string before slicing
+            output_text_value = response.output_text
+            if isinstance(output_text_value, str):
+                logger.debug(
+                    "Both output_text and output array present - using output array to avoid duplicates. "
+                    f"output_text will be ignored: {output_text_value[:100]}..."
+                )
     
     # Parse Responses API format (has 'output' field - list of items)
     # Skip this if we already handled a parse() response
@@ -2186,7 +2192,6 @@ class OpenAI(BaseLlm):
         
         # Final validation of tools before API call (in case tools were added after initial validation)
         if "tools" in request_params:
-            import json
             # Ensure tools is a list
             if not isinstance(request_params["tools"], list):
                 logger.error(
@@ -2304,7 +2309,6 @@ class OpenAI(BaseLlm):
                     
         # Log response_format if present (for structured outputs)
         if "response_format" in request_params:
-            import json
             response_format_param = request_params["response_format"]
             logger.info(f"RESPONSE_FORMAT BEING SENT: {json.dumps(response_format_param, indent=2, default=str)}")
         
