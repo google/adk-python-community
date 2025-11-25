@@ -738,15 +738,18 @@ def _ensure_strict_json_schema(
 async def openai_response_to_llm_response(
     response: Any,
     url_fetch_timeout: float = 30.0,
+    pydantic_model: Optional[Any] = None,
 ) -> LlmResponse:
     """Converts OpenAI Responses API response to ADK LlmResponse.
     
     Supports Responses API format (output list).
     Handles multimodal responses including images and other media.
+    Also handles parse() method responses which return parsed Pydantic models.
     
     Args:
-        response: The OpenAI Responses API response object
+        response: The OpenAI Responses API response object or parsed Pydantic model
         url_fetch_timeout: Timeout in seconds for fetching external image URLs (default: 30.0)
+        pydantic_model: Optional Pydantic model class if this is a parse() response
     """
     logger.info("Received response from OpenAI.")
     logger.debug(f"OpenAI response: {response}")
@@ -754,28 +757,119 @@ async def openai_response_to_llm_response(
     # Extract content from response
     content_parts = []
 
-    # Parse Responses API format (has 'output' field and potentially 'output_text')
-    # IMPORTANT: Both output_text and output array may contain the same text content.
-    # We should prioritize the output array if present, and only use output_text as fallback
-    # to avoid duplicate messages.
+    # Check if this is a parse() response (returns parsed Pydantic model directly)
+    # Parse() responses might be:
+    # 1. A Pydantic model instance directly
+    # 2. A response object with a 'parsed' field containing the model
+    # 3. A response object with the parsed data in output_text or output array
     
-    # Check if output array exists and has items
-    has_output_array = hasattr(response, "output") and response.output and len(response.output) > 0
+    # Check if response is a Pydantic model instance (has model_dump or dict method)
+    is_pydantic_instance = False
+    parsed_data = None
+    is_parse_response = False
     
-    # Only use output_text if output array is not present or empty
-    # This prevents duplicate messages when both output_text and output array contain the same text
-    if not has_output_array:
+    # First check if it's a Pydantic model instance directly
+    if hasattr(response, "model_dump") or hasattr(response, "dict"):
+        # Check if it looks like a Pydantic model (has __class__ and model fields)
+        # and doesn't have response-like attributes
+        if not (hasattr(response, "output") or hasattr(response, "output_text") or hasattr(response, "usage")):
+            is_pydantic_instance = True
+            if hasattr(response, "model_dump"):
+                # Pydantic v2
+                parsed_data = response.model_dump()
+                logger.debug(f"Detected Pydantic v2 model instance: {type(response).__name__}")
+            elif hasattr(response, "dict"):
+                # Pydantic v1
+                parsed_data = response.dict()
+                logger.debug(f"Detected Pydantic v1 model instance: {type(response).__name__}")
+            is_parse_response = True
+    elif hasattr(response, "parsed"):
+        # Response object with parsed field
+        parsed_data = response.parsed
+        if hasattr(parsed_data, "model_dump"):
+            parsed_data = parsed_data.model_dump()
+        elif hasattr(parsed_data, "dict"):
+            parsed_data = parsed_data.dict()
+        logger.debug(f"Found parsed field in response: {type(parsed_data)}")
+        is_parse_response = True
+    
+    # Also check if response has output_text but no output array (parse() might return it this way)
+    # Only if we have a pydantic_model hint
+    if pydantic_model is not None and not is_parse_response:
         if hasattr(response, "output_text") and response.output_text:
-            logger.debug("Found output_text in Responses API response (no output array present)")
-            content_parts.append(types.Part(text=response.output_text))
-    elif hasattr(response, "output_text") and response.output_text:
-        logger.debug(
-            "Both output_text and output array present - using output array to avoid duplicates. "
-            f"output_text will be ignored: {response.output_text[:100]}..."
-        )
+            # Check if output_text contains JSON that matches the Pydantic model
+            try:
+                import json
+                parsed_json = json.loads(response.output_text)
+                # If it's a dict and we have a pydantic model, treat it as parsed data
+                if isinstance(parsed_json, dict):
+                    parsed_data = parsed_json
+                    is_parse_response = True
+                    logger.debug(f"Found parse() response data in output_text for model {pydantic_model.__name__}")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+    
+    if is_parse_response:
+        # This is a parse() response - convert parsed model to JSON text
+        import json
+        try:
+            if parsed_data is not None:
+                # We have parsed data as a dict
+                json_text = json.dumps(parsed_data)
+            elif is_pydantic_instance:
+                # Use the response directly if it's a Pydantic instance
+                if hasattr(response, "model_dump_json"):
+                    json_text = response.model_dump_json()
+                elif hasattr(response, "json"):
+                    json_text = response.json()
+                elif hasattr(response, "model_dump"):
+                    json_text = json.dumps(response.model_dump())
+                elif hasattr(response, "dict"):
+                    json_text = json.dumps(response.dict())
+                else:
+                    json_text = str(response)
+            elif hasattr(response, "output_text") and response.output_text:
+                # Parse() might return data in output_text as JSON
+                json_text = response.output_text
+            else:
+                # Try to convert the entire response to JSON
+                try:
+                    json_text = json.dumps(response, default=str)
+                except (TypeError, ValueError):
+                    json_text = str(response)
+            
+            logger.debug(f"Converted parse() response to JSON text (length: {len(json_text)})")
+            content_parts.append(types.Part(text=json_text))
+        except Exception as e:
+            logger.warning(f"Failed to convert parse() response to JSON: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            # Fallback: convert to string representation
+            content_parts.append(types.Part(text=str(response)))
+    else:
+        # Regular Responses API format (has 'output' field and potentially 'output_text')
+        # IMPORTANT: Both output_text and output array may contain the same text content.
+        # We should prioritize the output array if present, and only use output_text as fallback
+        # to avoid duplicate messages.
+        
+        # Check if output array exists and has items
+        has_output_array = hasattr(response, "output") and response.output and len(response.output) > 0
+        
+        # Only use output_text if output array is not present or empty
+        # This prevents duplicate messages when both output_text and output array contain the same text
+        if not has_output_array:
+            if hasattr(response, "output_text") and response.output_text:
+                logger.debug("Found output_text in Responses API response (no output array present)")
+                content_parts.append(types.Part(text=response.output_text))
+        elif hasattr(response, "output_text") and response.output_text:
+            logger.debug(
+                "Both output_text and output array present - using output array to avoid duplicates. "
+                f"output_text will be ignored: {response.output_text[:100]}..."
+            )
     
     # Parse Responses API format (has 'output' field - list of items)
-    if hasattr(response, "output"):
+    # Skip this if we already handled a parse() response
+    if not is_parse_response and hasattr(response, "output"):
         try:
             output_value = response.output
             if output_value:
@@ -2674,7 +2768,12 @@ class OpenAI(BaseLlm):
                     
                     logger.info(f"Calling OpenAI Responses API create() with stream=False, tools count: {len(request_params.get('tools', []))}")
                     response = await client.responses.create(**request_params)
-                llm_response = await openai_response_to_llm_response(response, url_fetch_timeout=self.url_fetch_timeout)
+                # Pass pydantic_model if we used parse() method
+                llm_response = await openai_response_to_llm_response(
+                    response, 
+                    url_fetch_timeout=self.url_fetch_timeout,
+                    pydantic_model=pydantic_model_for_parse if pydantic_model_for_parse is not None and not has_images else None
+                )
                 yield llm_response
 
         except openai.APIError as e:
@@ -2899,7 +2998,8 @@ class OpenAI(BaseLlm):
                 )
 
             # Use base64 if Files API is disabled, not supported, or upload failed
-            # Encode as base64 data URI for Responses API
+            # For non-image files, return as text with data URI since Responses API
+            # doesn't support non-image base64 data URIs in the same way as images
             data_b64 = base64.b64encode(data).decode()
             data_uri = f"data:{mime_type};base64,{data_b64}"
             
@@ -2908,19 +3008,12 @@ class OpenAI(BaseLlm):
                 f"(Files API disabled/unsupported/failed, size: {len(data)} bytes, base64: {len(data_b64)} chars)"
             )
             
-            # Return appropriate format based on content type
-            if self._is_image_mime_type(mime_type):
-                return {
-                    "type": "image_url",
-                    "image_url": {"url": data_uri},
-                }
-            else:
-                # For non-image files, we might need to handle differently
-                # For now, use image_url format as fallback
-                return {
-                    "type": "image_url",
-                    "image_url": {"url": data_uri},
-                }
+            # Non-image files should be returned as text with data URI
+            # (Images are already handled and returned earlier, so we never reach here for images)
+            return {
+                "type": "text",
+                "text": data_uri,
+            }
 
         elif part.file_data:
             # Handle file references (URIs)
