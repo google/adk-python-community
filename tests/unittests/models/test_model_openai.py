@@ -537,7 +537,7 @@ class TestOpenAIClass:
         mock_event1 = MagicMock()
         mock_event1.type = "response.created"
         mock_event1.response = MagicMock()
-        mock_event1.response.model = "gpt-5.1"
+        mock_event1.response.model = "gpt-4"
         mock_event1.response.id = "resp_123"
         
         # Second event: content part added
