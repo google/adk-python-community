@@ -2681,6 +2681,109 @@ class OpenAI(BaseLlm):
             logger.error(f"Error calling OpenAI API: {e}")
             yield LlmResponse(error_code="OPENAI_API_ERROR", error_message=str(e))
 
+    def _is_image_mime_type(self, mime_type: str) -> bool:
+        """Check if MIME type is an image type."""
+        return mime_type.startswith("image/")
+
+    def _is_supported_files_api_mime_type(self, mime_type: str) -> bool:
+        """Check if MIME type is supported by OpenAI Files API for context stuffing.
+        
+        Supported formats: .art, .bat, .brf, .c, .cls, .css, .diff, .eml, .es, .h, .hs, 
+        .htm, .html, .ics, .ifb, .java, .js, .json, .ksh, .ltx, .mail, .markdown, .md, 
+        .mht, .mhtml, .mjs, .nws, .patch, .pdf, .pl, .pm, .pot, .py, .scala, .sh, .shtml, 
+        .srt, .sty, .tex, .text, .txt, .vcf, .vtt, .xml, .yaml, .yml
+        
+        Note: Images are NOT supported and must use base64 encoding.
+        """
+        # Map of supported MIME types to their extensions
+        supported_mime_types = {
+            # Text files
+            "text/plain": True,
+            "text/markdown": True,
+            "text/html": True,
+            "text/css": True,
+            "text/xml": True,
+            "text/yaml": True,
+            "text/x-yaml": True,
+            "text/x-python": True,
+            "text/x-java": True,
+            "text/x-javascript": True,
+            "text/x-scala": True,
+            "text/x-shellscript": True,
+            "text/x-perl": True,
+            "text/x-latex": True,
+            "text/x-tex": True,
+            "text/x-diff": True,
+            "text/x-patch": True,
+            "text/vcard": True,
+            "text/vtt": True,
+            "text/srt": True,
+            "text/x-mail": True,
+            "message/rfc822": True,  # .eml
+            # Documents
+            "application/pdf": True,
+            "application/json": True,
+            "application/xml": True,
+            "application/yaml": True,
+            "application/x-yaml": True,
+            "application/javascript": True,
+            "application/x-javascript": True,
+            "application/x-httpd-php": True,
+            # Code files (by extension mapping)
+            "text/x-c": True,
+            "text/x-c++": True,
+            "text/x-csharp": True,
+            "text/x-go": True,
+            "text/x-rust": True,
+            # Other document types
+            "application/x-httpd-erb": True,
+            "application/x-sh": True,
+            "application/x-perl": True,
+            "application/x-python": True,
+            "application/x-java": True,
+            "application/x-scala": True,
+            "application/x-latex": True,
+            "application/x-tex": True,
+            "application/x-diff": True,
+            "application/x-patch": True,
+            "application/x-vcard": True,
+            "application/x-subrip": True,  # .srt
+            "application/x-ics": True,  # .ics
+            "application/x-ifb": True,  # .ifb
+            "application/x-mht": True,  # .mht
+            "application/x-mhtml": True,  # .mhtml
+            "application/x-news": True,  # .nws
+            "application/x-art": True,  # .art
+            "application/x-bat": True,  # .bat
+            "application/x-brf": True,  # .brf
+            "application/x-cls": True,  # .cls
+            "application/x-es": True,  # .es
+            "application/x-h": True,  # .h
+            "application/x-hs": True,  # .hs
+            "application/x-ksh": True,  # .ksh
+            "application/x-ltx": True,  # .ltx
+            "application/x-mail": True,  # .mail
+            "application/x-mjs": True,  # .mjs
+            "application/x-pl": True,  # .pl
+            "application/x-pm": True,  # .pm
+            "application/x-pot": True,  # .pot
+            "application/x-shtml": True,  # .shtml
+            "application/x-sty": True,  # .sty
+            "application/x-vcf": True,  # .vcf
+        }
+        
+        # Check exact match first
+        if mime_type in supported_mime_types:
+            return True
+        
+        # Check if it's a text/* type (many text files are supported)
+        if mime_type.startswith("text/"):
+            # Exclude image types that might be misclassified
+            if not self._is_image_mime_type(mime_type):
+                return True
+        
+        return False
+
     def _get_file_extension(self, mime_type: str) -> str:
         """Get file extension from MIME type."""
         mime_to_ext = {
@@ -2746,15 +2849,34 @@ class OpenAI(BaseLlm):
                 os.unlink(temp_file_path)
 
     async def _handle_file_data(self, part: types.Part) -> Union[Dict[str, Any], str]:
-        """Handle file data using Files API (for documents and images) or base64 encoding (only if Files API is disabled)."""
+        """Handle file data using Files API (for supported documents only) or base64 encoding (for images and unsupported types).
+        
+        Note: Images must use base64 encoding as they are not supported by Files API for context stuffing.
+        Only supported document types (.pdf, .txt, .md, .json, etc.) can use Files API.
+        """
         if part.inline_data:
             # Handle inline data
             mime_type = part.inline_data.mime_type or "application/octet-stream"
             data = part.inline_data.data
             display_name = part.inline_data.display_name
 
-            # Try Files API first if enabled (for both documents and images)
-            if self.use_files_api:
+            # Images must always use base64 encoding (Files API doesn't support images for context stuffing)
+            if self._is_image_mime_type(mime_type):
+                data_b64 = base64.b64encode(data).decode()
+                data_uri = f"data:{mime_type};base64,{data_b64}"
+                
+                logger.debug(
+                    f"Encoding image {mime_type} as base64 data URI "
+                    f"(Images must use base64, not Files API, size: {len(data)} bytes)"
+                )
+                
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": data_uri},
+                }
+
+            # For non-image files, try Files API if enabled and supported
+            if self.use_files_api and self._is_supported_files_api_mime_type(mime_type):
                 try:
                     file_id = await self._upload_file_to_openai(
                         data, mime_type, display_name
@@ -2770,21 +2892,35 @@ class OpenAI(BaseLlm):
                         f"Failed to upload file to OpenAI Files API: {e}. Falling back to base64 encoding."
                     )
                     # Fall through to base64 encoding only if upload failed
+            elif self.use_files_api:
+                logger.debug(
+                    f"MIME type {mime_type} is not supported by Files API for context stuffing. "
+                    f"Using base64 encoding instead."
+                )
 
-            # Only use base64 if Files API is disabled or upload failed
+            # Use base64 if Files API is disabled, not supported, or upload failed
             # Encode as base64 data URI for Responses API
             data_b64 = base64.b64encode(data).decode()
             data_uri = f"data:{mime_type};base64,{data_b64}"
             
             logger.debug(
                 f"Encoding {mime_type} as base64 data URI "
-                f"(Files API disabled or failed, size: {len(data)} bytes, base64: {len(data_b64)} chars)"
+                f"(Files API disabled/unsupported/failed, size: {len(data)} bytes, base64: {len(data_b64)} chars)"
             )
             
-            return {
-                "type": "image_url",
-                "image_url": {"url": data_uri},
-            }
+            # Return appropriate format based on content type
+            if self._is_image_mime_type(mime_type):
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": data_uri},
+                }
+            else:
+                # For non-image files, we might need to handle differently
+                # For now, use image_url format as fallback
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": data_uri},
+                }
 
         elif part.file_data:
             # Handle file references (URIs)
