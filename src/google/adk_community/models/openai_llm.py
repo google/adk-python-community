@@ -1935,7 +1935,7 @@ class OpenAI(BaseLlm):
             # Priority: Google GenAI types (response_schema, response_mime_type) first
             # Responses API uses 'text' parameter with 'format' for structured output:
             # 1. JSON mode: {"format": {"type": "json_object"}}
-            # 2. Structured outputs with schema: {"format": {"type": "json_schema", "json_schema": {...}}}
+            # 2. Structured outputs with schema: {"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
             
             # Check if tools are present - if so, skip text format entirely
             has_tools_for_text_format = "tools" in request_params and request_params.get("tools")
@@ -1955,8 +1955,8 @@ class OpenAI(BaseLlm):
                             llm_request.config, "response_schema", None
                         )
                         if response_schema is not None:
-                            # Convert ADK schema to OpenAI JSON schema format
-                            # OpenAI requires: {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}
+                            # Convert ADK schema to Responses API text format
+                            # Responses API requires: {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}
                             schema_name = None
                             schema_dict = None
                             
@@ -1964,11 +1964,13 @@ class OpenAI(BaseLlm):
                                 # If it's already a dict, check if it's already in OpenAI format
                                 if "name" in response_schema and "schema" in response_schema:
                                     # Already in OpenAI format (nested json_schema)
-                                    # Convert to Responses API text format
+                                    # Convert to Responses API text format - flatten the structure
                                     request_params["text"] = {
                                         "format": {
                                             "type": "json_schema",
-                                            "json_schema": response_schema,  # Nested format
+                                            "name": response_schema.get("name", "ResponseSchema"),
+                                            "schema": response_schema.get("schema", {}),
+                                            "strict": response_schema.get("strict", True),
                                         }
                                     }
                                 else:
@@ -2092,11 +2094,9 @@ class OpenAI(BaseLlm):
                                 request_params["text"] = {
                                     "format": {
                                         "type": "json_schema",
-                                        "json_schema": {
-                                            "name": schema_name or "ResponseSchema",
-                                            "schema": strict_schema_dict,
-                                            "strict": True  # Always enable strict mode for structured outputs
-                                        },
+                                        "name": schema_name or "ResponseSchema",
+                                        "schema": strict_schema_dict,
+                                        "strict": True  # Always enable strict mode for structured outputs
                                     }
                                 }
                                 logger.info(
@@ -2265,7 +2265,7 @@ class OpenAI(BaseLlm):
         # Responses API uses 'text' parameter with 'format' for structured output
         # The text format structure:
         # - For json_object: {"format": {"type": "json_object"}}
-        # - For json_schema: {"format": {"type": "json_schema", "json_schema": {"name": "...", "schema": {...}, "strict": true}}}
+        # - For json_schema: {"format": {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}}
         if "text" in request_params:
             # Check if tools are present - if so, remove text format to allow function calls
             if "tools" in request_params and request_params.get("tools"):
@@ -2281,21 +2281,20 @@ class OpenAI(BaseLlm):
                 if isinstance(text_param, dict) and "format" in text_param:
                     format_obj = text_param["format"]
                     if isinstance(format_obj, dict) and format_obj.get("type") == "json_schema":
-                        json_schema_obj = format_obj.get("json_schema", {})
-                        if isinstance(json_schema_obj, dict) and "schema" in json_schema_obj:
-                            schema_dict = json_schema_obj["schema"]
-                            if isinstance(schema_dict, dict):
-                                # Make a deep copy to avoid mutating the original
-                                schema_dict = copy.deepcopy(schema_dict)
-                                _ensure_strict_json_schema(schema_dict)
-                                # Update the schema in the text format
-                                json_schema_obj["schema"] = schema_dict
-                                # Ensure strict mode is enabled
-                                json_schema_obj["strict"] = True
-                                logger.info(
-                                    f"Ensured strict JSON schema compliance for text format: "
-                                    f"name={json_schema_obj.get('name', 'ResponseSchema')}, strict=True"
-                                )
+                        # Schema is directly in format_obj (Responses API structure)
+                        if "schema" in format_obj and isinstance(format_obj["schema"], dict):
+                            schema_dict = format_obj["schema"]
+                            # Make a deep copy to avoid mutating the original
+                            schema_dict = copy.deepcopy(schema_dict)
+                            _ensure_strict_json_schema(schema_dict)
+                            # Update the schema in the text format
+                            format_obj["schema"] = schema_dict
+                            # Ensure strict mode is enabled
+                            format_obj["strict"] = True
+                            logger.info(
+                                f"Ensured strict JSON schema compliance for text format: "
+                                f"name={format_obj.get('name', 'ResponseSchema')}, strict=True"
+                            )
                     
         # Log text format if present (for structured outputs)
         if "text" in request_params:
@@ -2382,11 +2381,9 @@ class OpenAI(BaseLlm):
                         request_params["text"] = {
                             "format": {
                                 "type": "json_schema",
-                                "json_schema": {
-                                    "name": schema_name,
-                                    "schema": strict_schema_dict,
-                                    "strict": True,  # Enable strict mode
-                                },
+                                "name": schema_name,
+                                "schema": strict_schema_dict,
+                                "strict": True,  # Enable strict mode
                             }
                         }
                         logger.info(
@@ -2613,11 +2610,9 @@ class OpenAI(BaseLlm):
                         request_params["text"] = {
                             "format": {
                                 "type": "json_schema",
-                                "json_schema": {
-                                    "name": schema_name,
-                                    "schema": strict_schema_dict,
-                                    "strict": True,  # Enable strict mode
-                                },
+                                "name": schema_name,
+                                "schema": strict_schema_dict,
+                                "strict": True,  # Enable strict mode
                             }
                         }
                         logger.info(

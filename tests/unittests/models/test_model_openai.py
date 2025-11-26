@@ -1277,12 +1277,10 @@ class TestOpenAIClass:
         assert "format" in call_args["text"]
         format_obj = call_args["text"]["format"]
         assert format_obj["type"] == "json_schema"
-        assert "json_schema" in format_obj
-        json_schema = format_obj["json_schema"]
-        # OpenAI requires "name" and "schema" fields
-        assert "name" in json_schema
-        assert "schema" in json_schema
-        assert json_schema["schema"]["type"] == "object"
+        # Responses API has a flatter structure - name and schema directly in format
+        assert "name" in format_obj
+        assert "schema" in format_obj
+        assert format_obj["schema"]["type"] == "object"
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1653,10 +1651,9 @@ class TestOpenAIClass:
         # Responses API uses 'text' parameter with 'format'
         assert "text" in call_args
         format_obj = call_args["text"]["format"]
-        json_schema = format_obj["json_schema"]
-        # Should use title from schema as name
-        assert json_schema["name"] == "PersonSchema"
-        assert "schema" in json_schema
+        # Responses API has a flatter structure - name and schema directly in format
+        assert format_obj["name"] == "PersonSchema"
+        assert "schema" in format_obj
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1702,10 +1699,9 @@ class TestOpenAIClass:
         # Responses API uses 'text' parameter with 'format'
         assert "text" in call_args
         format_obj = call_args["text"]["format"]
-        json_schema = format_obj["json_schema"]
-        # Should use the already-formatted schema as-is
-        assert json_schema["name"] == "MySchema"
-        assert "schema" in json_schema
+        # Responses API has a flatter structure - name and schema directly in format
+        assert format_obj["name"] == "MySchema"
+        assert "schema" in format_obj
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
@@ -1854,12 +1850,11 @@ class TestOpenAIClass:
         assert "format" in call_args["text"]
         format_obj = call_args["text"]["format"]
         assert format_obj["type"] == "json_schema"
-        json_schema = format_obj["json_schema"]
-        # Should have strict mode enabled
-        assert json_schema["strict"] == True
+        # Responses API has a flatter structure - schema and strict directly in format
+        assert format_obj["strict"] == True
+        assert "schema" in format_obj
+        schema = format_obj["schema"]
         # Schema should have additionalProperties: false
-        assert "schema" in json_schema
-        schema = json_schema["schema"]
         assert "additionalProperties" in schema
         assert schema["additionalProperties"] == False
         # Should have properties from Pydantic model
