@@ -675,17 +675,22 @@ def _ensure_strict_json_schema(
     json_schema: Dict[str, Any],
     path: tuple = (),
 ) -> Dict[str, Any]:
-    """Recursively ensures all object types in a JSON schema have additionalProperties: false.
-    
-    This is required by OpenAI's Responses API when using strict mode.
-    Mutates the schema in place to add additionalProperties: false to all object types.
-    
+    """Recursively normalise JSON Schema for OpenAI Responses strict mode.
+
+    OpenAI's Responses API applies additional constraints on JSON Schema when
+    using strict structured outputs:
+    - All object types MUST have ``additionalProperties: false``
+    - All object types MUST have a ``required`` array that includes *every*
+      key in ``properties`` (even if fields are optional in the original schema)
+
+    This helper mutates the schema in place to satisfy those constraints.
+
     Args:
         json_schema: The JSON schema dictionary to process
-        path: Current path in the schema (for error reporting)
-    
+        path: Current path in the schema (for debugging)
+
     Returns:
-        The modified schema dictionary
+        The modified schema dictionary.
     """
     if not isinstance(json_schema, dict):
         return json_schema
@@ -726,12 +731,29 @@ def _ensure_strict_json_schema(
                 if isinstance(sub_schema, dict):
                     _ensure_strict_json_schema(sub_schema, path=(*path, keyword, i))
     
-    # Add additionalProperties: false to all object types
+    # Normalise object schemas for Responses strict mode
     schema_type = json_schema.get("type")
-    if schema_type == "object" and "additionalProperties" not in json_schema:
-        json_schema["additionalProperties"] = False
-        logger.debug(f"Added additionalProperties: false to object at path: {path if path else 'root'}")
-    
+    if schema_type == "object":
+        # 1) additionalProperties: false (if not explicitly set)
+        if "additionalProperties" not in json_schema:
+            json_schema["additionalProperties"] = False
+            logger.debug(
+                f"Added additionalProperties: false to object at path: "
+                f"{path if path else 'root'}"
+            )
+
+        # 2) required: must include *all* properties keys (OpenAI requirement)
+        props = json_schema.get("properties")
+        if isinstance(props, dict) and props:
+            prop_keys = list(props.keys())
+            # Always overwrite with the full set of property keys to satisfy
+            # "required must include every key in properties"
+            json_schema["required"] = prop_keys
+            logger.debug(
+                f"Set required={prop_keys} for object at path: "
+                f"{path if path else 'root'}"
+            )
+
     return json_schema
 
 
