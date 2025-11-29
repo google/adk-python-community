@@ -133,7 +133,10 @@ def _convert_content_type_for_responses_api(
                 content["image_url"] = url
                 logger.debug(f"Converted image_url to Responses API format: {url[:100]}...")
             else:
+                # Failed to extract URL - revert type change and add error marker
                 logger.error("Failed to extract image URL for Responses API")
+                content["type"] = "input_text"  # Fall back to text type
+                content["text"] = "[IMAGE ERROR: Could not extract image URL]"
         # If image_url is already a string in the content, keep it
     elif content_type == "file":
         content["type"] = "input_file"  # Files are input
@@ -847,8 +850,8 @@ async def openai_response_to_llm_response(
                     parsed_data = parsed_json
                     is_parse_response = True
                     logger.debug(f"Found parse() response data in output_text for model {pydantic_model.__name__}")
-            except (json.JSONDecodeError, AttributeError):
-                pass
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.debug(f"Could not parse output_text as JSON for pydantic model: {e}")
     
     if is_parse_response:
         # This is a parse() response - convert parsed model to JSON/text
@@ -1303,7 +1306,9 @@ class OpenAI(BaseLlm):
 
         # Convert contents to messages
         # Track tool_call_ids from assistant messages to ensure they're all responded to
+        # Also track which assistant message (by index) made each tool call for proper placeholder insertion
         pending_tool_call_ids = set()
+        tool_call_to_assistant_idx: Dict[str, int] = {}  # tool_call_id -> assistant message index
         has_pending_tool_calls = False  # Track if we're in the middle of a tool-calling sequence
         
         for content in llm_request.contents:
@@ -1313,27 +1318,37 @@ class OpenAI(BaseLlm):
             if isinstance(message_or_messages, list):
                 for msg in message_or_messages:
                     messages.append(msg)
+                    msg_idx = len(messages) - 1
                     # Track tool calls and responses
                     if msg.get("role") == "assistant" and "tool_calls" in msg:
-                        # Add all tool_call_ids to pending set
+                        # Add all tool_call_ids to pending set and track their source assistant message
                         for tool_call in msg["tool_calls"]:
-                            pending_tool_call_ids.add(tool_call["id"])
+                            tool_call_id = tool_call["id"]
+                            pending_tool_call_ids.add(tool_call_id)
+                            tool_call_to_assistant_idx[tool_call_id] = msg_idx
                         has_pending_tool_calls = len(pending_tool_call_ids) > 0
                     elif msg.get("role") == "tool" and "tool_call_id" in msg:
                         # Remove from pending when we get a tool response
-                        pending_tool_call_ids.discard(msg["tool_call_id"])
+                        tool_call_id = msg["tool_call_id"]
+                        pending_tool_call_ids.discard(tool_call_id)
+                        tool_call_to_assistant_idx.pop(tool_call_id, None)
                         has_pending_tool_calls = len(pending_tool_call_ids) > 0
             else:
                 messages.append(message_or_messages)
+                msg_idx = len(messages) - 1
                 # Track tool calls and responses
                 if message_or_messages.get("role") == "assistant" and "tool_calls" in message_or_messages:
-                    # Add all tool_call_ids to pending set
+                    # Add all tool_call_ids to pending set and track their source assistant message
                     for tool_call in message_or_messages["tool_calls"]:
-                        pending_tool_call_ids.add(tool_call["id"])
+                        tool_call_id = tool_call["id"]
+                        pending_tool_call_ids.add(tool_call_id)
+                        tool_call_to_assistant_idx[tool_call_id] = msg_idx
                     has_pending_tool_calls = len(pending_tool_call_ids) > 0
                 elif message_or_messages.get("role") == "tool" and "tool_call_id" in message_or_messages:
                     # Remove from pending when we get a tool response
-                    pending_tool_call_ids.discard(message_or_messages["tool_call_id"])
+                    tool_call_id = message_or_messages["tool_call_id"]
+                    pending_tool_call_ids.discard(tool_call_id)
+                    tool_call_to_assistant_idx.pop(tool_call_id, None)
                     has_pending_tool_calls = len(pending_tool_call_ids) > 0
         
         # Calculate final state of pending tool calls after processing all messages
@@ -1383,12 +1398,75 @@ class OpenAI(BaseLlm):
                         f"{[{'idx': idx, 'role': m.get('role'), 'tool_call_id': m.get('tool_call_id'), 'has_tool_calls': 'tool_calls' in m} for idx, m in enumerate(messages[max(0, i-1):min(len(messages), i+5)])]}"
                     )
         
-        # Log warning if there are pending tool calls without responses
+        # Handle pending tool calls without responses - inject placeholder responses
+        # OpenAI API requires every tool_call to have a corresponding tool response
+        # IMPORTANT: Placeholders must be inserted immediately after their corresponding assistant message,
+        # not appended at the end, to maintain proper message sequence
         if pending_tool_call_ids:
             logger.warning(
                 f"Found {len(pending_tool_call_ids)} tool call(s) without responses: {pending_tool_call_ids}. "
-                "This may cause OpenAI API errors."
+                "Injecting placeholder tool responses to prevent API errors."
             )
+            
+            # Group pending tool calls by their source assistant message index
+            # so we can insert all placeholders for each assistant message together
+            assistant_idx_to_tool_calls: Dict[int, List[str]] = {}
+            for tool_call_id in pending_tool_call_ids:
+                assistant_idx = tool_call_to_assistant_idx.get(tool_call_id)
+                if assistant_idx is not None:
+                    if assistant_idx not in assistant_idx_to_tool_calls:
+                        assistant_idx_to_tool_calls[assistant_idx] = []
+                    assistant_idx_to_tool_calls[assistant_idx].append(tool_call_id)
+                else:
+                    # Fallback: if we lost track of the assistant message, log error
+                    # This shouldn't happen but handle it gracefully
+                    logger.error(
+                        f"Lost track of assistant message for tool_call_id: {tool_call_id}. "
+                        f"Will append placeholder at end (may cause API errors)."
+                    )
+            
+            # Insert placeholders in reverse order of assistant message index
+            # to avoid index shifting issues when inserting
+            for assistant_idx in sorted(assistant_idx_to_tool_calls.keys(), reverse=True):
+                tool_call_ids_for_assistant = assistant_idx_to_tool_calls[assistant_idx]
+                
+                # Find the insertion point: right after all existing tool responses for this assistant message
+                # Start from the message after the assistant message
+                insert_idx = assistant_idx + 1
+                
+                # Skip past any existing tool responses that immediately follow
+                while insert_idx < len(messages) and messages[insert_idx].get("role") == "tool":
+                    insert_idx += 1
+                
+                # Insert placeholders for all missing tool calls from this assistant message
+                for tool_call_id in tool_call_ids_for_assistant:
+                    placeholder_response = {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": "[Tool execution was interrupted or response was lost. Please retry the operation.]"
+                    }
+                    messages.insert(insert_idx, placeholder_response)
+                    logger.debug(
+                        f"Injected placeholder tool response for tool_call_id: {tool_call_id} "
+                        f"at index {insert_idx} (after assistant message at index {assistant_idx})"
+                    )
+                    insert_idx += 1  # Move insertion point for next placeholder
+            
+            # Handle any tool calls where we lost track of the assistant message (fallback)
+            orphan_tool_calls = [
+                tc_id for tc_id in pending_tool_call_ids 
+                if tool_call_to_assistant_idx.get(tc_id) is None
+            ]
+            for tool_call_id in orphan_tool_calls:
+                placeholder_response = {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": "[Tool execution was interrupted or response was lost. Please retry the operation.]"
+                }
+                messages.append(placeholder_response)
+                logger.warning(
+                    f"Appended orphan placeholder tool response for tool_call_id: {tool_call_id} at end of messages"
+                )
 
         # Prepare tools if present
         tools = []
@@ -1563,8 +1641,6 @@ class OpenAI(BaseLlm):
                     input_items.append(message_item)
                     
                     # Then add each tool_call as a separate function_call item
-                    # Track all function_call IDs we create so we can validate tool messages match them
-                    function_call_ids = []
                     for tool_call in tool_calls:
                         # Extract 'id' from Google GenAI format and convert to 'call_id' for OpenAI Responses API
                         # Google GenAI uses 'id' in tool_calls, but OpenAI Responses API uses 'call_id'
@@ -1594,7 +1670,6 @@ class OpenAI(BaseLlm):
                             )
                         
                         call_id = call_id.strip()
-                        function_call_ids.append(call_id)
                         
                         function_name = tool_call.get("function", {}).get("name", "")
                         function_arguments = tool_call.get("function", {}).get("arguments", "{}")
@@ -2391,7 +2466,8 @@ class OpenAI(BaseLlm):
                                 schema_dict = instance.schema()
                             else:
                                 schema_dict = None
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Could not extract schema from Pydantic model (streaming): {e}")
                             schema_dict = None
                     
                     if schema_dict is not None:
@@ -2442,8 +2518,8 @@ class OpenAI(BaseLlm):
                         if event_type == "response.created":
                             if hasattr(event, "response") and hasattr(event.response, "model"):
                                 model_name = event.response.model
-                            if hasattr(event, "response") and hasattr(event.response, "id"):
-                                response_id = event.response.id
+                            # Note: response.id is available but not currently used
+                            # Could be used for conversation state management in future
                         
                         # Handle content part added events (text content)
                         elif event_type == "response.content_part.added":
@@ -2523,7 +2599,6 @@ class OpenAI(BaseLlm):
 
                 # Build final complete response with all accumulated data
                 final_parts = []
-                function_calls_list = []
                 
                 if accumulated_text:
                     final_parts.append(types.Part(text=accumulated_text))
@@ -2548,7 +2623,6 @@ class OpenAI(BaseLlm):
                             args=function_args,
                         )
                         final_parts.append(types.Part(function_call=function_call))
-                        function_calls_list.append(function_call)
 
                 final_content = (
                     types.Content(role="model", parts=final_parts)
@@ -2620,7 +2694,8 @@ class OpenAI(BaseLlm):
                                 schema_dict = instance.schema()
                             else:
                                 schema_dict = None
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(f"Could not extract schema from Pydantic model: {e}")
                             schema_dict = None
                     
                     if schema_dict is not None:
@@ -2662,6 +2737,21 @@ class OpenAI(BaseLlm):
                 )
                 yield llm_response
 
+        except openai.RateLimitError as e:
+            logger.error(f"OpenAI rate limit exceeded: {e}")
+            yield LlmResponse(error_code="RATE_LIMIT_ERROR", error_message=str(e))
+        except openai.AuthenticationError as e:
+            logger.error(f"OpenAI authentication failed: {e}")
+            yield LlmResponse(error_code="AUTHENTICATION_ERROR", error_message=str(e))
+        except openai.BadRequestError as e:
+            logger.error(f"OpenAI bad request: {e}")
+            yield LlmResponse(error_code="BAD_REQUEST_ERROR", error_message=str(e))
+        except openai.APIConnectionError as e:
+            logger.error(f"OpenAI API connection error: {e}")
+            yield LlmResponse(error_code="CONNECTION_ERROR", error_message=str(e))
+        except openai.APITimeoutError as e:
+            logger.error(f"OpenAI API timeout: {e}")
+            yield LlmResponse(error_code="TIMEOUT_ERROR", error_message=str(e))
         except openai.APIError as e:
             logger.error(f"Error calling OpenAI API: {e}")
             yield LlmResponse(error_code="OPENAI_API_ERROR", error_message=str(e))
