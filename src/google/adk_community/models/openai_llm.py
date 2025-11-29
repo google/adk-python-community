@@ -1180,7 +1180,7 @@ class OpenAI(BaseLlm):
     model: str = "gpt-5.1"
     use_files_api: bool = True
     url_fetch_timeout: float = 30.0
-    reasoning_effort: Optional[ReasoningEffort]
+    reasoning_effort: Optional[ReasoningEffort] = None
 
     @classmethod
     @override
@@ -1732,7 +1732,7 @@ class OpenAI(BaseLlm):
         }
         if self.reasoning_effort:
             request_params["reasoning"] = {"effort": self.reasoning_effort}
-            
+
         # Add instructions if present (Responses API uses 'instructions' for system prompt)
         if instructions:
             request_params["instructions"] = instructions
