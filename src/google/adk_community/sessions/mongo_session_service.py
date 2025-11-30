@@ -330,7 +330,6 @@ class MongoSessionService(BaseSessionService):
     if not update:
       return
 
-    update.setdefault("$setOnInsert", {}).update({"_id": key})
     await self._kv.update_one({"_id": key}, update, upsert=True)
 
   def _apply_event_filters(
