@@ -1050,7 +1050,7 @@ async def openai_response_to_llm_response(
     )
 
     # Extract usage metadata
-    usage_metadata = None
+    usage_metadata: Optional[types.GenerateContentResponseUsageMetadata] = None
     if hasattr(response, "usage") and response.usage:
         # Responses API format
         if hasattr(response.usage, "input_tokens"):
@@ -1061,7 +1061,7 @@ async def openai_response_to_llm_response(
             )
 
     # Extract finish reason
-    finish_reason = None
+    finish_reason: Optional[str] = None
     if hasattr(response, "incomplete_details"):
         # Responses API format - check if response is incomplete
         if response.incomplete_details:
@@ -1072,8 +1072,8 @@ async def openai_response_to_llm_response(
         # Responses API format - error occurred
         finish_reason = "FINISH_REASON_UNSPECIFIED"
         # Extract error details if available
-        error_code = None
-        error_message = None
+        error_code: Optional[str] = None
+        error_message: Optional[str] = None
         if hasattr(response.error, "code"):
             error_code = str(response.error.code)
         if hasattr(response.error, "message"):
@@ -1092,13 +1092,13 @@ async def openai_response_to_llm_response(
         finish_reason = "STOP"
 
     # Extract model name if available
-    model_name = None
+    model_name: Optional[str] = None
     if hasattr(response, "model"):
         model_name = response.model
         logger.debug(f"Response from model: {model_name}")
 
     # Extract system fingerprint if available
-    system_fingerprint = None
+    system_fingerprint: Optional[str] = None
     if hasattr(response, "system_fingerprint"):
         system_fingerprint = response.system_fingerprint
         logger.debug(f"System fingerprint: {system_fingerprint}")
@@ -2411,34 +2411,7 @@ class OpenAI(BaseLlm):
                         f"Tool: {tool}"
                     )
 
-        # Helper function to detect if request contains images
-        # parse() method only supports PDFs via context stuffing, not images
-        def has_images_in_request(request_params):
-            """Check if request contains images (parse() only supports PDFs, not images)"""
-            messages = request_params.get("messages", [])
-            for message in messages:
-                content = message.get("content", [])
-                if isinstance(content, list):
-                    for content_item in content:
-                        if isinstance(content_item, dict):
-                            content_type = content_item.get("type")
-                            # Check for image content types
-                            if content_type in ("input_image", "image_url"):
-                                return True
-                            # Check for base64 data URIs with image MIME types
-                            if content_type == "input_image" and "image_url" in content_item:
-                                image_url = content_item.get("image_url", "")
-                                if isinstance(image_url, str) and image_url.startswith("data:image/"):
-                                    return True
-                            # Also check for file_id - we can't determine type, but if it's not a PDF
-                            # and we're using parse(), it might fail. However, Files API typically
-                            # handles this, so we'll be conservative and only flag explicit images
-            return False
-        
         try:
-            # Check if request contains images (parse() only supports PDFs via context stuffing, not images)
-            has_images = has_images_in_request(request_params)
-            
             if stream:
                 # Handle streaming response using Responses API
                 logger.info(f"Calling OpenAI Responses API with stream=True, tools count: {len(request_params.get('tools', []))}")
@@ -2504,98 +2477,99 @@ class OpenAI(BaseLlm):
                 # Accumulate content and tool calls across events
                 accumulated_text = ""
                 accumulated_tool_calls: Dict[str, Dict[str, Any]] = {}
-                finish_reason = None
-                usage_metadata = None
-                model_name = None
-                system_fingerprint = None
+                finish_reason: Optional[str] = None
+                usage_metadata: Optional[types.GenerateContentResponseUsageMetadata] = None
+                model_name: Optional[str] = None
+                system_fingerprint: Optional[str] = None
 
                 async for event in stream_response:
                     # Track model name and response ID from response.created event
-                    if hasattr(event, "type"):
-                        event_type = getattr(event, "type", None)
-                        
-                        # Handle response.created event
-                        if event_type == "response.created":
-                            if hasattr(event, "response") and hasattr(event.response, "model"):
-                                model_name = event.response.model
-                            # Note: response.id is available but not currently used
-                            # Could be used for conversation state management in future
-                        
-                        # Handle content part added events (text content)
-                        elif event_type == "response.content_part.added":
-                            if hasattr(event, "part"):
-                                part = event.part
-                                if hasattr(part, "type"):
-                                    if part.type == "text" and hasattr(part, "text"):
-                                        accumulated_text += part.text
-                                        # Create partial response with accumulated text
-                                        partial_content = types.Content(
-                                            role="model",
-                                            parts=[types.Part(text=accumulated_text)],
-                                        )
-                                        yield LlmResponse(
-                                            content=partial_content,
-                                            partial=True,
-                                            turn_complete=False,
-                                        )
-                        
-                        # Handle reasoning text done events
-                        elif event_type == "response.reasoning_text.done":
-                            if hasattr(event, "text"):
-                                accumulated_text += event.text
-                                partial_content = types.Content(
-                                    role="model",
-                                    parts=[types.Part(text=accumulated_text)],
-                                )
-                                yield LlmResponse(
-                                    content=partial_content,
-                                    partial=True,
-                                    turn_complete=False,
-                                )
-                        
-                        # Handle function tool call events
-                        elif event_type == "response.function_call.added":
-                            if hasattr(event, "function_call"):
-                                func_call = event.function_call
-                                call_id = getattr(func_call, "call_id", None) or getattr(func_call, "id", None)
-                                if call_id:
-                                    accumulated_tool_calls[call_id] = {
-                                        "id": call_id,
-                                        "type": "function",
-                                        "function": {
-                                            "name": getattr(func_call, "name", ""),
-                                            "arguments": getattr(func_call, "arguments", ""),
-                                        },
-                                    }
-                        
-                        # Handle function arguments delta events
-                        elif event_type == "response.function_call.arguments_delta":
-                            if hasattr(event, "delta") and hasattr(event, "call_id"):
-                                call_id = event.call_id
-                                if call_id in accumulated_tool_calls:
-                                    delta_text = getattr(event.delta, "text", "")
-                                    accumulated_tool_calls[call_id]["function"]["arguments"] += delta_text
-                        
-                        # Handle response done event
-                        elif event_type == "response.done":
-                            if hasattr(event, "response"):
-                                resp = event.response
-                                # Extract usage metadata
-                                if hasattr(resp, "usage") and resp.usage:
-                                    if hasattr(resp.usage, "input_tokens"):
-                                        usage_metadata = types.GenerateContentResponseUsageMetadata(
-                                            prompt_token_count=getattr(resp.usage, "input_tokens", 0),
-                                            candidates_token_count=getattr(resp.usage, "output_tokens", 0),
-                                            total_token_count=getattr(resp.usage, "input_tokens", 0) + getattr(resp.usage, "output_tokens", 0),
-                                        )
-                                
-                                # Extract finish reason
-                                if hasattr(resp, "incomplete_details") and resp.incomplete_details:
-                                    finish_reason = "MAX_TOKENS"
-                                elif hasattr(resp, "error") and resp.error:
-                                    finish_reason = "FINISH_REASON_UNSPECIFIED"
-                                else:
-                                    finish_reason = "STOP"
+                    event_type = getattr(event, "type", None)
+                    if not event_type:
+                        continue
+                    
+                    # Handle response.created event
+                    if event_type == "response.created":
+                        if hasattr(event, "response") and hasattr(event.response, "model"):
+                            model_name = event.response.model
+                        # Note: response.id is available but not currently used
+                        # Could be used for conversation state management in future
+                    
+                    # Handle content part added events (text content)
+                    elif event_type == "response.content_part.added":
+                        if hasattr(event, "part"):
+                            part = event.part
+                            if hasattr(part, "type"):
+                                if part.type == "text" and hasattr(part, "text"):
+                                    accumulated_text += part.text
+                                    # Create partial response with accumulated text
+                                    partial_content = types.Content(
+                                        role="model",
+                                        parts=[types.Part(text=accumulated_text)],
+                                    )
+                                    yield LlmResponse(
+                                        content=partial_content,
+                                        partial=True,
+                                        turn_complete=False,
+                                    )
+                    
+                    # Handle reasoning text done events
+                    elif event_type == "response.reasoning_text.done":
+                        if hasattr(event, "text"):
+                            accumulated_text += event.text
+                            partial_content = types.Content(
+                                role="model",
+                                parts=[types.Part(text=accumulated_text)],
+                            )
+                            yield LlmResponse(
+                                content=partial_content,
+                                partial=True,
+                                turn_complete=False,
+                            )
+                    
+                    # Handle function tool call events
+                    elif event_type == "response.function_call.added":
+                        if hasattr(event, "function_call"):
+                            func_call = event.function_call
+                            call_id = getattr(func_call, "call_id", None) or getattr(func_call, "id", None)
+                            if call_id:
+                                accumulated_tool_calls[call_id] = {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(func_call, "name", ""),
+                                        "arguments": getattr(func_call, "arguments", ""),
+                                    },
+                                }
+                    
+                    # Handle function arguments delta events
+                    elif event_type == "response.function_call.arguments_delta":
+                        if hasattr(event, "delta") and hasattr(event, "call_id"):
+                            call_id = event.call_id
+                            if call_id in accumulated_tool_calls:
+                                delta_text = getattr(event.delta, "text", "")
+                                accumulated_tool_calls[call_id]["function"]["arguments"] += delta_text
+                    
+                    # Handle response done event
+                    elif event_type == "response.done":
+                        if hasattr(event, "response"):
+                            resp = event.response
+                            # Extract usage metadata
+                            if hasattr(resp, "usage") and resp.usage:
+                                if hasattr(resp.usage, "input_tokens"):
+                                    usage_metadata = types.GenerateContentResponseUsageMetadata(
+                                        prompt_token_count=getattr(resp.usage, "input_tokens", 0),
+                                        candidates_token_count=getattr(resp.usage, "output_tokens", 0),
+                                        total_token_count=getattr(resp.usage, "input_tokens", 0) + getattr(resp.usage, "output_tokens", 0),
+                                    )
+                            
+                            # Extract finish reason
+                            if hasattr(resp, "incomplete_details") and resp.incomplete_details:
+                                finish_reason = "MAX_TOKENS"
+                            elif hasattr(resp, "error") and resp.error:
+                                finish_reason = "FINISH_REASON_UNSPECIFIED"
+                            else:
+                                finish_reason = "STOP"
 
                 # Build final complete response with all accumulated data
                 final_parts = []
@@ -2633,6 +2607,7 @@ class OpenAI(BaseLlm):
                 # Create GenerateContentResponse to match Google GenAI structure
                 # IMPORTANT: function_calls is a computed property that extracts from content.parts
                 # We don't need to set it directly - function calls are already in final_parts
+                final_response: LlmResponse
                 try:
                     genai_response = types.GenerateContentResponse(
                         candidates=[
@@ -3012,7 +2987,7 @@ class OpenAI(BaseLlm):
 
         return {"type": "text", "text": str(part)}
 
-    def _preprocess_request(self, llm_request: LlmRequest):
+    def _preprocess_request(self, llm_request: LlmRequest) -> None:
         """Preprocesses the request before sending to OpenAI."""
         # Set model if not specified
         if not llm_request.model:
