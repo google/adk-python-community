@@ -41,7 +41,7 @@ class MongoKeys:
 
   @staticmethod
   def session(app_name: str, user_id: str, session_id: str) -> str:
-    return f"session::{app_name}::{user_id}::{session_id}"
+    return f"session:{app_name}:{user_id}:{session_id}"
 
   @staticmethod
   def app_state(app_name: str) -> str:
