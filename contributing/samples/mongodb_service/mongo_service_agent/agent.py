@@ -16,17 +16,18 @@ from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool
 
-MODEL_ID = "gemini-2.0-flash"
-
 load_dotenv()
-
 
 # Tool 1
 def get_invoice_status(service: str) -> dict:
-  """Retrieves the status of invoices for a given service.
+  """Return the invoice status details for the requested service.
+
+  Args:
+    service: Business category to query (for example 'gas' or 'restaurant').
 
   Returns:
-  dict: A dictionary with invoice status details with a "status" key indicating the invoice status and a "report" key providing additional information.
+    dict: Contains a ``status`` entry with the invoice state and a ``report``
+      entry that gives the relevant context for that status.
   """
   if service == "university":
     return {"status": "success", "report": "All TEC invoices are paid."}
@@ -46,10 +47,14 @@ invoice_tool = FunctionTool(func=get_invoice_status)
 
 # Tool 2
 def calculate_service_tax(amount: float) -> dict:
-  """Calculates the tax for a given service amount.
+  """Calculate tax for a service amount using a fixed rate.
+
+  Args:
+    amount: Untaxed amount that needs a tax calculation.
 
   Returns:
-  dict: A dictionary with the original amount, calculated tax amount, and total amount including tax.
+    dict: Keys ``amount``, ``tax_amount``, and ``total_amount`` capturing the
+      original value, the computed tax, and the amount plus tax respectively.
   """
   tax_rate = 0.16
   tax_amount = amount * tax_rate
@@ -65,20 +70,18 @@ tax_tool = FunctionTool(func=calculate_service_tax)
 
 # Agent
 root_agent = Agent(
-    model=MODEL_ID,
+    model="gemini-2.0-flash",
     name="financial_advisor_agent",
-    description=(
-        "Financial advisor agent for managing invoices and calculating service taxes."
-    ),
+    description="Financial advisor agent for managing invoices and calculating service taxes.",
     instruction=(
-        "You are an AI agent designed to assist users with financial",
-        " inquiries related to invoices and service tax calculations.\n",
-        "**Available Tools:**\n",
+        "You are an AI agent designed to assist users with financial"
+        " inquiries related to invoices and service tax calculations.\n"
+        "**Available Tools:**\n"
         "1. get_invoice_status(service): Retrieves the status of invoices\n"
         "2. calculate_service_tax(amount): Calculates the tax for a given amount\n"
-        "Use these tools to assist users with their financial inquiries.\n",
-        "If the user asks about other financial topics, respond politely",
-        " that you can only assist with invoice status and tax calculations.\n",
+        "Use these tools to assist users with their financial inquiries.\n"
+        "If the user asks about other financial topics, respond politely"
+        " that you can only assist with invoice status and tax calculations.\n"
     ),
     tools=[invoice_tool, tax_tool],
 )
