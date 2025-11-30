@@ -35,6 +35,12 @@ from google.adk_community.models.openai_llm import (
     part_to_openai_content,
     to_openai_role,
 )
+# Import private functions for testing
+from google.adk_community.models.openai_llm import (
+    convert_tools_to_responses_api_format,
+    _ensure_strict_json_schema,
+    _convert_content_type_for_responses_api,
+)
 from google.genai import types
 
 
@@ -259,6 +265,142 @@ class TestHelperFunctions:
         assert props["number_param"]["type"] == "number"
         assert props["bool_param"]["type"] == "boolean"
 
+    def test_convert_tools_to_responses_api_format(self):
+        """Test conversion of tools from Chat Completions to Responses API format."""
+        # Chat Completions format (nested in "function" object)
+        tools_chat_format = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "location": {"type": "string"}
+                        },
+                        "required": ["location"]
+                    }
+                }
+            }
+        ]
+        
+        # Convert to Responses API format (flattened)
+        converted = convert_tools_to_responses_api_format(tools_chat_format)
+        assert len(converted) == 1
+        assert converted[0]["type"] == "function"
+        assert converted[0]["name"] == "get_weather"  # Flattened, not nested
+        assert converted[0]["description"] == "Get weather"
+        assert "parameters" in converted[0]
+        assert "function" not in converted[0]  # Should not have nested function object
+
+    def test_convert_tools_to_responses_api_format_invalid(self):
+        """Test conversion handles invalid tools gracefully."""
+        invalid_tools = [
+            {"type": "function"},  # Missing function object
+            {"type": "function", "function": {}},  # Missing name
+            "not_a_dict",  # Not a dict
+        ]
+        converted = convert_tools_to_responses_api_format(invalid_tools)
+        # Non-dict tools are skipped, but invalid dict tools are passed through with warnings
+        # Only "not_a_dict" should be skipped (not a dict)
+        assert len(converted) == 2  # Two dict tools passed through
+        assert converted[0] == {"type": "function"}  # Passed through as-is
+        assert converted[1] == {"type": "function", "function": {}}  # Passed through as-is
+
+    def test_ensure_strict_json_schema(self):
+        """Test strict JSON schema normalization for OpenAI Responses API."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+                "nested": {
+                    "type": "object",
+                    "properties": {
+                        "value": {"type": "string"}
+                    }
+                }
+            }
+        }
+        
+        strict_schema = _ensure_strict_json_schema(schema)
+        
+        # Root object should have additionalProperties: false
+        assert strict_schema["additionalProperties"] == False
+        # Root object should have all properties in required
+        assert "required" in strict_schema
+        assert set(strict_schema["required"]) == {"name", "age", "nested"}
+        
+        # Nested object should also be strict
+        nested = strict_schema["properties"]["nested"]
+        assert nested["additionalProperties"] == False
+        assert "required" in nested
+        assert "value" in nested["required"]
+
+    def test_ensure_strict_json_schema_with_defs(self):
+        """Test strict JSON schema normalization with $defs."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "person": {"$ref": "#/$defs/Person"}
+            },
+            "$defs": {
+                "Person": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"}
+                    }
+                }
+            }
+        }
+        
+        strict_schema = _ensure_strict_json_schema(schema)
+        
+        # Root should be strict
+        assert strict_schema["additionalProperties"] == False
+        
+        # $defs should also be strict
+        person_def = strict_schema["$defs"]["Person"]
+        assert person_def["additionalProperties"] == False
+        assert "required" in person_def
+        assert "name" in person_def["required"]
+
+    def test_convert_content_type_for_responses_api_text(self):
+        """Test content type conversion for Responses API - text content."""
+        # User/system messages use input_text
+        content_user = {"type": "text", "text": "Hello"}
+        converted_user = _convert_content_type_for_responses_api(content_user.copy(), "user")
+        assert converted_user["type"] == "input_text"
+        
+        # Assistant/model messages use output_text
+        content_assistant = {"type": "text", "text": "Hi"}
+        converted_assistant = _convert_content_type_for_responses_api(content_assistant.copy(), "model")
+        assert converted_assistant["type"] == "output_text"
+
+    def test_convert_content_type_for_responses_api_image_url(self):
+        """Test content type conversion for Responses API - image_url."""
+        content = {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}
+        }
+        converted = _convert_content_type_for_responses_api(content.copy(), "user")
+        assert converted["type"] == "input_image"
+        # Responses API expects URL string directly, not object
+        assert "image_url" in converted
+        assert isinstance(converted["image_url"], str)
+        assert "data:image/png;base64" in converted["image_url"]
+
+    def test_convert_content_type_for_responses_api_file(self):
+        """Test content type conversion for Responses API - file."""
+        content = {
+            "type": "file",
+            "file_id": "file-123"
+        }
+        converted = _convert_content_type_for_responses_api(content.copy(), "user")
+        assert converted["type"] == "input_file"
+        assert converted["file_id"] == "file-123"
+
     @pytest.mark.asyncio
     async def test_openai_response_to_llm_response_text(self):
         """Test conversion of OpenAI Responses API response with text to LlmResponse."""
@@ -479,10 +621,10 @@ class TestOpenAIClass:
         assert result["type"] == "text"
         assert "FILE REFERENCE" in result["text"]
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_non_streaming(self):
+    async def test_generate_content_async_non_streaming(self, monkeypatch):
         """Test non-streaming content generation."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         openai_client = OpenAI(model="gpt-4")
         llm_request = LlmRequest(
             contents=[
@@ -524,10 +666,10 @@ class TestOpenAIClass:
         assert responses[0].content is not None
         assert responses[0].content.parts[0].text == "Hi there!"
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_streaming(self):
+    async def test_generate_content_async_streaming(self, monkeypatch):
         """Test streaming content generation."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         openai_client = OpenAI(model="gpt-4")
         llm_request = LlmRequest(
             contents=[
@@ -601,9 +743,9 @@ class TestOpenAIClass:
         final_response = responses[-1]
         assert final_response.turn_complete is True
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_system_instruction(self):
+    async def test_generate_content_async_with_system_instruction(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with system instruction."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -645,9 +787,9 @@ class TestOpenAIClass:
         assert len(messages) == 1
         assert messages[0]["role"] == "user"
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_tools(self):
+    async def test_generate_content_async_with_tools(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with tools."""
         openai_client = OpenAI()
         func_decl = types.FunctionDeclaration(
@@ -686,14 +828,20 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert "tools" in call_args
         assert len(call_args["tools"]) == 1
+        # Verify tools are in Responses API format (flattened, not nested)
+        tool = call_args["tools"][0]
+        assert tool["type"] == "function"
+        assert "name" in tool  # Flattened structure
+        assert tool["name"] == "get_weather"
+        assert "function" not in tool  # Should not have nested function object
         # Smart default: fresh conversation with tools uses "required" (not "auto")
         assert call_args["tool_choice"] == "required"
         assert call_args["parallel_tool_calls"] is True
 
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_error_handling(self):
+    async def test_generate_content_async_error_handling(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test error handling in content generation."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -722,9 +870,9 @@ class TestOpenAIClass:
         assert responses[0].error_code == "OPENAI_API_ERROR"
         assert "API Error" in responses[0].error_message
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_upload_file_to_openai_disabled(self):
+    async def test_upload_file_to_openai_disabled(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test file upload when Files API is disabled."""
         openai_client = OpenAI(use_files_api=False)
         with pytest.raises(ValueError, match="Files API is disabled"):
@@ -732,9 +880,9 @@ class TestOpenAIClass:
                 b"test data", "application/pdf", "test.pdf"
             )
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_upload_file_to_openai_enabled(self):
+    async def test_upload_file_to_openai_enabled(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test file upload when Files API is enabled."""
         openai_client = OpenAI(use_files_api=True)
 
@@ -795,9 +943,9 @@ class TestOpenAIClass:
                 if os.path.exists(real_temp_path):
                     os.unlink(real_temp_path)
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_handle_file_data_with_files_api_pdf(self):
+    async def test_handle_file_data_with_files_api_pdf(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test handling PDF file with Files API enabled."""
         openai_client = OpenAI(use_files_api=True)
         pdf_data = b"fake_pdf_data"
@@ -863,9 +1011,9 @@ class TestOpenAIClass:
                 if os.path.exists(real_temp_path):
                     os.unlink(real_temp_path)
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_handle_file_data_files_api_fallback(self):
+    async def test_handle_file_data_files_api_fallback(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test Files API fallback to base64 on error.
         
         Non-image files that fail to upload should fallback to base64
@@ -1010,9 +1158,9 @@ class TestOpenAIClass:
             == "invalid json {"
         )
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_config_max_tokens(self):
+    async def test_generate_content_async_with_config_max_tokens(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with max_output_tokens from config (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1044,9 +1192,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["max_output_tokens"] == 200
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_config_max_completion_tokens_o1(self):
+    async def test_generate_content_async_with_config_max_completion_tokens_o1(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with max_output_tokens for o1 models (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1079,9 +1227,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["max_output_tokens"] == 200
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_config_max_completion_tokens_o1_mini(self):
+    async def test_generate_content_async_with_config_max_completion_tokens_o1_mini(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with max_output_tokens for o1-mini model (Responses API uses max_output_tokens directly)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1114,9 +1262,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["max_output_tokens"] == 150
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_config_temperature(self):
+    async def test_generate_content_async_with_config_temperature(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with temperature from config."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1148,9 +1296,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["temperature"] == 0.9
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_json_mode(self):
+    async def test_generate_content_async_with_json_mode(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with JSON mode (structured output)."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1184,9 +1332,9 @@ class TestOpenAIClass:
         assert "text" in call_args
         assert call_args["text"]["format"] == {"type": "json_object"}
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_response_format(self):
+    async def test_generate_content_async_with_response_format(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with JSON mode via response_mime_type.
         
         The response_mime_type="application/json" is converted to the Responses API's
@@ -1229,9 +1377,9 @@ class TestOpenAIClass:
         assert "text" in call_args
         assert call_args["text"]["format"] == {"type": "json_object"}
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_response_schema(self):
+    async def test_generate_content_async_with_response_schema(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with JSON schema for structured outputs."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(
@@ -1282,9 +1430,9 @@ class TestOpenAIClass:
         assert "schema" in format_obj
         assert format_obj["schema"]["type"] == "object"
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_top_p(self):
+    async def test_generate_content_async_with_top_p(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with top_p parameter."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(top_p=0.9)
@@ -1317,9 +1465,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["top_p"] == 0.9
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_frequency_penalty(self):
+    async def test_generate_content_async_with_frequency_penalty(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with frequency_penalty parameter."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(frequency_penalty=0.5)
@@ -1352,9 +1500,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["frequency_penalty"] == 0.5
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_presence_penalty(self):
+    async def test_generate_content_async_with_presence_penalty(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with presence_penalty parameter."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(presence_penalty=0.3)
@@ -1387,9 +1535,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["presence_penalty"] == 0.3
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_seed(self):
+    async def test_generate_content_async_with_seed(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with seed parameter."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(seed=42)
@@ -1421,9 +1569,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["seed"] == 42
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_stop(self):
+    async def test_generate_content_async_with_stop(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with stop sequences."""
         openai_client = OpenAI()
         # Use proper Google GenAI format with stop_sequences
@@ -1458,9 +1606,9 @@ class TestOpenAIClass:
         call_args = mock_client.responses.create.call_args[1]
         assert call_args["stop"] == ["\n", "END"]
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_tool_choice(self):
+    async def test_generate_content_async_with_tool_choice(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with smart default tool_choice.
         
         NOTE: tool_config cannot be mapped (not in GenerateContentConfig).
@@ -1507,9 +1655,135 @@ class TestOpenAIClass:
         assert call_args["tool_choice"] == "required"
         assert call_args["parallel_tool_calls"] is True
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_streaming_with_tool_calls(self):
+    async def test_generate_content_async_with_tool_choice_after_tool_response(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """Test tool_choice is "auto" after receiving tool responses."""
+        openai_client = OpenAI()
+        func_decl = types.FunctionDeclaration(
+            name="test_function",
+            description="A test function",
+        )
+        tool = types.Tool(function_declarations=[func_decl])
+        config = types.GenerateContentConfig(tools=[tool])
+
+        # Create request with tool call and tool response (simulating continuation)
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="call_123",
+                                name="test_function",
+                                args={}
+                            )
+                        )
+                    ]
+                ),
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                id="call_123",
+                                response={"result": "success"}
+                            )
+                        )
+                    ]
+                )
+            ],
+            config=config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.responses.create.call_args[1]
+        # After tool response, should use "auto" to allow final answer
+        assert call_args["tool_choice"] == "auto"
+        assert call_args["parallel_tool_calls"] is True
+
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_placeholder_tool_responses(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """Test that placeholder tool responses are injected for missing tool responses."""
+        openai_client = OpenAI()
+        func_decl = types.FunctionDeclaration(
+            name="test_function",
+            description="A test function",
+        )
+        tool = types.Tool(function_declarations=[func_decl])
+        config = types.GenerateContentConfig(tools=[tool])
+
+        # Create request with tool call but NO tool response (should inject placeholder)
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="call_123",
+                                name="test_function",
+                                args={}
+                            )
+                        )
+                    ]
+                )
+                # Missing tool response - should inject placeholder
+            ],
+            config=config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.responses.create.call_args[1]
+        input_items = call_args["input"]
+        
+        # Should have: message, function_call, and placeholder function_call_output
+        assert len(input_items) >= 3
+        # Find the function_call_output item
+        function_call_outputs = [item for item in input_items if item.get("type") == "function_call_output"]
+        assert len(function_call_outputs) > 0
+        # Should have placeholder content
+        placeholder = function_call_outputs[0]
+        assert placeholder["call_id"] == "call_123"
+        assert "Tool execution was interrupted" in placeholder["output"]
+
+    @pytest.mark.asyncio
+    async def test_generate_content_async_streaming_with_tool_calls(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test streaming response with tool calls accumulation."""
         openai_client = OpenAI()
         llm_request = LlmRequest(
@@ -1606,9 +1880,9 @@ class TestOpenAIClass:
         assert result.content is not None
         assert result.usage_metadata is not None
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_response_schema_with_title(self):
+    async def test_generate_content_async_with_response_schema_with_title(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with JSON schema that has a title."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(
@@ -1655,9 +1929,9 @@ class TestOpenAIClass:
         assert format_obj["name"] == "PersonSchema"
         assert "schema" in format_obj
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_response_schema_already_formatted(self):
+    async def test_generate_content_async_with_response_schema_already_formatted(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with response_schema already in OpenAI format."""
         openai_client = OpenAI()
         config = types.GenerateContentConfig(
@@ -1703,9 +1977,9 @@ class TestOpenAIClass:
         assert format_obj["name"] == "MySchema"
         assert "schema" in format_obj
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_tool_calls_and_responses(self):
+    async def test_generate_content_async_with_tool_calls_and_responses(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with tool calls followed by tool responses."""
         openai_client = OpenAI()
         # Create a request with assistant message (tool calls) and tool responses
@@ -1767,6 +2041,9 @@ class TestOpenAIClass:
         # Third item should be the function_call_output (tool response)
         assert input_items[2]["type"] == "function_call_output"
         assert input_items[2]["call_id"] == "call_123"
+        # Verify call_id is a string (OpenAI Responses API requirement)
+        assert isinstance(input_items[1]["call_id"], str)
+        assert isinstance(input_items[2]["call_id"], str)
 
     @pytest.mark.asyncio
     async def test_content_to_openai_message_with_function_response_and_regular_parts(self):
@@ -1796,9 +2073,9 @@ class TestOpenAIClass:
         assert messages[1]["tool_call_id"] == "call_123"
 
     @pytest.mark.skipif(not PYDANTIC_AVAILABLE, reason="Pydantic not available")
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
     @pytest.mark.asyncio
-    async def test_generate_content_async_with_pydantic_model_schema(self):
+    async def test_generate_content_async_with_pydantic_model_schema(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
         """Test content generation with Pydantic model as response schema.
         
         Pydantic models use create() with text format (strict schema)
@@ -1861,4 +2138,159 @@ class TestOpenAIClass:
         assert "properties" in schema
         assert "name" in schema["properties"]
         assert "age" in schema["properties"]
+        # All properties should be in required (strict mode requirement)
+        assert "required" in schema
+        assert "name" in schema["required"]
+        assert "age" in schema["required"]
+
+    @pytest.mark.asyncio
+    async def test_generate_content_async_with_reasoning_effort(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """Test content generation with reasoning_effort parameter."""
+        openai_client = OpenAI(reasoning_effort="high")
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Solve this problem")]
+                )
+            ]
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.responses.create.call_args[1]
+        # Responses API uses 'reasoning' parameter with 'effort'
+        assert "reasoning" in call_args
+        assert call_args["reasoning"]["effort"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_generate_content_async_text_format_skipped_with_tools(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """Test that text format is skipped when tools are present."""
+        openai_client = OpenAI()
+        func_decl = types.FunctionDeclaration(
+            name="test_function",
+            description="A test function",
+        )
+        tool = types.Tool(function_declarations=[func_decl])
+        # Set both JSON mode and tools - text format should be skipped
+        config = types.GenerateContentConfig(
+            tools=[tool],
+            response_mime_type="application/json"
+        )
+
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="user", parts=[types.Part(text="Return JSON")]
+                )
+            ],
+            config=config,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.responses.create.call_args[1]
+        # Text format should be removed when tools are present
+        assert "text" not in call_args
+        # Tools should still be present
+        assert "tools" in call_args
+        assert len(call_args["tools"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_content_async_function_call_output_validation(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        """Test that function_call_output items have required call_id field."""
+        openai_client = OpenAI()
+        # Create request with tool response that has tool_call_id
+        llm_request = LlmRequest(
+            contents=[
+                types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            function_call=types.FunctionCall(
+                                id="call_123",
+                                name="test_function",
+                                args={}
+                            )
+                        )
+                    ]
+                ),
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                id="call_123",
+                                response={"result": "success"}
+                            )
+                        )
+                    ]
+                )
+            ]
+        )
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.output = []
+        mock_response.usage = None
+        mock_response.incomplete_details = None
+        mock_client.responses.create = AsyncMock(
+            return_value=mock_response
+        )
+
+        with patch.object(
+            openai_client, "_get_openai_client", return_value=mock_client
+        ):
+            async for _ in openai_client.generate_content_async(
+                llm_request, stream=False
+            ):
+                pass
+
+        call_args = mock_client.responses.create.call_args[1]
+        input_items = call_args["input"]
+        
+        # Find function_call_output items
+        function_call_outputs = [item for item in input_items if item.get("type") == "function_call_output"]
+        assert len(function_call_outputs) > 0
+        
+        for output_item in function_call_outputs:
+            # Each function_call_output must have call_id
+            assert "call_id" in output_item
+            assert output_item["call_id"] is not None
+            assert isinstance(output_item["call_id"], str)
+            assert output_item["call_id"].strip() != ""
+            # Should have output field
+            assert "output" in output_item
 
