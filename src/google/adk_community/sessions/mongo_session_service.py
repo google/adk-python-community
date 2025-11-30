@@ -89,11 +89,7 @@ class MongoSessionService(BaseSessionService):
     app_name = self._resolve_app_name(app_name)
     await self._ensure_indexes()
 
-    session_id = (
-        session_id.strip()
-        if session_id and session_id.strip()
-        else str(uuid.uuid4())
-    )
+    session_id = (session_id or "").strip() or str(uuid.uuid4())
     doc_id = MongoKeys.session(app_name, user_id, session_id)
 
     state_deltas = _session_util.extract_state_delta(state or {})
