@@ -59,7 +59,7 @@ class MongoSessionService(BaseSessionService):
       self,
       client: Optional[AsyncMongoClient] = None,
       connection_string: Optional[str] = None,
-      database_name: Optional[str] = "adk_sessions_db",
+      database_name: str = "adk_sessions_db",
       session_collection: str = "sessions",
       state_collection: str = "session_state",
       default_app_name: Optional[str] = "adk-mongo-session-service",

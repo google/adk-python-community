@@ -127,7 +127,7 @@ What is the status of my university invoice? Also, calculate the tax for a servi
 
 ## Configuration options (`MongoSessionService`)
 
-- `database_name` (str, optional): Mongo database to store session data (defaults to `adk_sessions_db`)
+- `database_name` (str, default `adk_sessions_db`): Mongo database to store session data.
 - `connection_string` (str, optional): Mongo URI (mutually exclusive with `client`)
 - `client` (AsyncMongoClient, optional): Provide your own client/connection pool
 - `session_collection` (str, default `sessions`): Collection for session docs

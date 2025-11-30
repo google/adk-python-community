@@ -231,8 +231,7 @@ class TestMongoSessionService:
     assert update_doc["$set"]["state.initial_key"] == "updated_value"
     # Temp state should not be persisted.
     assert "state.temp:key" not in update_doc.get("$set", {})
-    if "$unset" in update_doc:
-      assert "state.temp:key" in update_doc["$unset"]
+    assert "state.temp:key" not in update_doc.get("$unset", {})
 
   @pytest.mark.asyncio
   async def test_get_session_with_config(self, mongo_service):
