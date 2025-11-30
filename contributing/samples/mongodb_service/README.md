@@ -62,7 +62,7 @@ from google.adk.runners import Runner
 from google.adk_community.sessions import MongoSessionService
 
 session_service = MongoSessionService(
-    connection_string=os.environ["MONGODB_URI"]
+    connection_string=os.environ.get("MONGODB_URI")
 )
 
 await session_service.create_session(
@@ -126,13 +126,12 @@ What is the status of my university invoice? Also, calculate the tax for a servi
 
 ## Configuration options (`MongoSessionService`)
 
-- `database_name` (str, required): Mongo database to store session data
+- `database_name` (str, optional): Mongo database to store session data (defaults to `adk_sessions_db`)
 - `connection_string` (str, optional): Mongo URI (mutually exclusive with `client`)
 - `client` (AsyncMongoClient, optional): Provide your own client/connection pool
 - `session_collection` (str, default `sessions`): Collection for session docs
 - `state_collection` (str, default `session_state`): Collection for shared state
-- `default_app_name` (str, optional): Fallback app name when not provided per call
-- `mongo_appname` (str, default `adk-cosmos-session-service`): App name tag for Mongo driver telemetry
+- `default_app_name` (str, optional): Fallback app name when not provided per call (defaults to `adk-cosmos-session-service`)
 
 ## Tips
 

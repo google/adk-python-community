@@ -14,6 +14,7 @@
 
 """Example of using MongoDB for Session Service."""
 
+import os
 import asyncio
 
 from google.adk.runners import Runner
@@ -29,15 +30,18 @@ SESSION_ID = "session_07"
 
 async def main():
   """Main function to run the agent asynchronously."""
+  
   #   You can create the MongoSessionService in two ways:
   #   1. With an existing AsyncMongoClient instance
   #   2. By providing a connection string directly
   #   from pymongo import AsyncMongoClient
   #   client = AsyncMongoClient(host="localhost", port=27017)
   #   session_service = MongoSessionService(client=client)
-  session_service = MongoSessionService(
-      connection_string="mongodb+srv://<user>:<db_password>@<cluster-url>/"
-  )
+
+  connection_string = os.environ.get("MONGODB_URI")
+  if not connection_string:
+    raise ValueError("MONGODB_URI environment variable not set. See README.md for setup.")
+  session_service = MongoSessionService(connection_string=connection_string)
   await session_service.create_session(
       app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
   )

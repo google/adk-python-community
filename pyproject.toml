@@ -28,7 +28,7 @@ dependencies = [
   "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "google-adk", # Google ADK
   "httpx>=0.27.0, <1.0.0", # For OpenMemory service
-  "pymongo>=4.15.4, <5.0.0" , # MongoDB for session storage
+  "pymongo>=4.15.4, <5.0.0", # MongoDB for session storage
   "redis>=5.0.0, <6.0.0", # Redis for session storage
   # go/keep-sorted end
   "orjson>=3.11.3",

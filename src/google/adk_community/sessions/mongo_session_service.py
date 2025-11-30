@@ -160,6 +160,8 @@ class MongoSessionService(BaseSessionService):
       filters["user_id"] = user_id
 
     cursor = self._sessions.find(filters, projection={"events": False})
+    # NOTE: BaseSessionService expects the full list to be returned, so we have
+    # to materialize the entire cursor which may load many sessions into memory.
     docs = await cursor.to_list(length=None)
 
     sessions: list[Session] = []
