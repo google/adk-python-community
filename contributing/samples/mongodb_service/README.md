@@ -68,7 +68,7 @@ await session_service.create_session(
     app_name="my_app", user_id="user1", session_id="demo"
 )
 
-runner = Runner(app_name="my_app", agent=root_agent, session_service=session_service)
+runner = Runner(app_name="my_app", agent=your_agent, session_service=session_service)
 query = "Hello, can you help me with my account?"
 content = types.Content(role="user", parts=[types.Part(text=query)])
 

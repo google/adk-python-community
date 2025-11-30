@@ -170,10 +170,8 @@ class MongoSessionService(BaseSessionService):
 
     sessions: list[Session] = []
     for doc in docs:
-      doc.setdefault("events", [])
       session = self._doc_to_session(doc)
       merged = await self._merge_state(session)
-      merged.events = []
       sessions.append(merged)
 
     return ListSessionsResponse(sessions=sessions)

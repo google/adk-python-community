@@ -131,7 +131,6 @@ class TestMongoSessionService:
             "user_id": user_id,
             "id": "s1",
             "state": {"session_key": "v1"},
-            "events": [{"author": "user", "timestamp": 1.0}],
         },
         {
             "_id": MongoKeys.session(app_name, user_id, "s2"),
@@ -156,6 +155,10 @@ class TestMongoSessionService:
     kv_collection.find_one.side_effect = _kv_find_one
 
     response = await service.list_sessions(app_name=app_name, user_id=user_id)
+
+    sessions_collection.find.assert_called_once_with(
+        {"app_name": app_name, "user_id": user_id}, projection={"events": False}
+    )
 
     assert len(response.sessions) == 2
     for doc, sess in zip(docs, response.sessions):
