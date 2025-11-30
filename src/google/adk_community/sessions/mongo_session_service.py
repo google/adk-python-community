@@ -98,7 +98,7 @@ class MongoSessionService(BaseSessionService):
 
     state_deltas = _session_util.extract_state_delta(state or {})
     await self._apply_state_delta(
-        app_name, user_id, state_deltas["app"], state_deltas["user"]
+        app_name, user_id, state_deltas.get("app"), state_deltas.get("user")
     )
 
     session_doc = {
@@ -106,7 +106,7 @@ class MongoSessionService(BaseSessionService):
         "app_name": app_name,
         "user_id": user_id,
         "id": session_id,
-        "state": state_deltas["session"] or {},
+        "state": state_deltas.get("session", {}),
         "events": [],
         "last_update_time": time.time(),
     }
@@ -207,8 +207,8 @@ class MongoSessionService(BaseSessionService):
     await self._apply_state_delta(
         session.app_name,
         session.user_id,
-        state_deltas["app"],
-        state_deltas["user"],
+        state_deltas.get("app"),
+        state_deltas.get("user"),
     )
 
     updates: dict[str, Any] = {
@@ -313,12 +313,12 @@ class MongoSessionService(BaseSessionService):
       delta: dict[str, Any],
   ) -> None:
     set_ops = {
-        f"state.{key}": value
-        for key, value in delta.items()
-        if value is not None
+        f"state.{k}": v
+        for k, v in delta.items()
+        if v is not None
     }
     unset_ops = {
-        f"state.{key}": "" for key, value in delta.items() if value is None
+        f"state.{k}": "" for k, v in delta.items() if v is None
     }
 
     update: dict[str, Any] = {}
@@ -349,9 +349,9 @@ class MongoSessionService(BaseSessionService):
   def _doc_to_session(self, doc: dict[str, Any]) -> Session:
     events = [Event.model_validate(e) for e in doc.get("events", [])]
     return Session(
-        id=doc["id"],
-        app_name=doc["app_name"],
-        user_id=doc["user_id"],
+        id=doc.get("id"),
+        app_name=doc.get("app_name"),
+        user_id=doc.get("user_id"),
         state=doc.get("state", {}),
         events=events,
         last_update_time=doc.get("last_update_time", 0.0),
