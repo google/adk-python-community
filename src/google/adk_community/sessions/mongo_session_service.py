@@ -293,19 +293,20 @@ class MongoSessionService(BaseSessionService):
       self,
       app_name: str,
       user_id: str,
-      app_state_delta: dict[str, Any],
-      user_state_delta: dict[str, Any],
+      app_state_delta: Optional[dict[str, Any]],
+      user_state_delta: Optional[dict[str, Any]],
   ) -> None:
+    tasks = []
     if app_state_delta:
-      await self._update_state_document(
-          MongoKeys.app_state(app_name),
-          app_state_delta,
-      )
+      tasks.append(self._update_state_document(
+          MongoKeys.app_state(app_name), app_state_delta
+      ))
     if user_state_delta:
-      await self._update_state_document(
-          MongoKeys.user_state(app_name, user_id),
-          user_state_delta,
-      )
+      tasks.append(self._update_state_document(
+          MongoKeys.user_state(app_name, user_id), user_state_delta
+      ))
+    if tasks:
+      await asyncio.gather(*tasks)
 
   async def _update_state_document(
       self,
