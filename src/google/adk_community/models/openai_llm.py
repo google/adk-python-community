@@ -1297,7 +1297,7 @@ class OpenAI(BaseLlm):
 
         # Convert request to Responses API format
         messages = []
-        instructions = None
+        instructions: Optional[str] = None
 
         # Extract system instruction for Responses API (uses 'instructions' parameter)
         if llm_request.config and llm_request.config.system_instruction:
@@ -2057,8 +2057,8 @@ class OpenAI(BaseLlm):
                         if response_schema is not None:
                             # Convert ADK schema to Responses API text format
                             # Responses API requires: {"type": "json_schema", "name": "...", "schema": {...}, "strict": true}
-                            schema_name = None
-                            schema_dict = None
+                            schema_name: Optional[str] = None
+                            schema_dict: Optional[Dict[str, Any]] = None
                             
                             if isinstance(response_schema, dict):
                                 # If it's already a dict, check if it's already in OpenAI format
