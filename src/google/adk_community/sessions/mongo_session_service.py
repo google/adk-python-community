@@ -161,6 +161,12 @@ class MongoSessionService(BaseSessionService):
     # NOTE: BaseSessionService expects the full list to be returned, so we have
     # to materialize the entire cursor which may load many sessions into memory.
     docs = await cursor.to_list(length=None)
+    if len(docs) > 1000:
+      logger.warning(
+          "Loading a large number of sessions (%d) into memory for app '%s'.",
+          len(docs),
+          app_name,
+      )
 
     sessions: list[Session] = []
     for doc in docs:

@@ -132,7 +132,7 @@ What is the status of my university invoice? Also, calculate the tax for a servi
 - `client` (AsyncMongoClient, optional): Provide your own client/connection pool
 - `session_collection` (str, default `sessions`): Collection for session docs
 - `state_collection` (str, default `session_state`): Collection for shared state
-- `default_app_name` (str, optional): Fallback app name when not provided per call (defaults to `adk-cosmos-session-service`)
+- `default_app_name` (str, optional): Fallback app name when not provided per call (defaults to `adk-mongo-session-service`)
 
 ## Tips
 

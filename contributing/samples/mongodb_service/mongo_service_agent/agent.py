@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool
 
+
+_TAX_RATE = 0.16
 load_dotenv()
 
 # Tool 1
@@ -56,8 +58,7 @@ def calculate_service_tax(amount: float) -> dict:
     dict: Keys ``amount``, ``tax_amount``, and ``total_amount`` capturing the
       original value, the computed tax, and the amount plus tax respectively.
   """
-  tax_rate = 0.16
-  tax_amount = amount * tax_rate
+  tax_amount = amount * _TAX_RATE
   total_amount = amount + tax_amount
   return {
       "amount": amount,
