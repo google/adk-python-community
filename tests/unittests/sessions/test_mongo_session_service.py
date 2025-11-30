@@ -78,8 +78,6 @@ class TestMongoSessionService:
     assert session is None
     sessions_collection.find_one.assert_awaited_once_with({
         "_id": MongoKeys.session("test_app", "test_user", "missing"),
-        "app_name": "test_app",
-        "user_id": "test_user",
     })
     assert service._indexes_built is True
 

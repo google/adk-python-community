@@ -133,11 +133,9 @@ class MongoSessionService(BaseSessionService):
     app_name = self._resolve_app_name(app_name)
     await self._ensure_indexes()
 
-    doc = await self._sessions.find_one({
-        "_id": MongoKeys.session(app_name, user_id, session_id),
-        "app_name": app_name,
-        "user_id": user_id,
-    })
+    doc = await self._sessions.find_one(
+        {"_id": MongoKeys.session(app_name, user_id, session_id)}
+    )
     if not doc:
       return None
 
@@ -350,7 +348,7 @@ class MongoSessionService(BaseSessionService):
         id=doc["id"],
         app_name=doc["app_name"],
         user_id=doc["user_id"],
-        state=doc.get("state", {}) or {},
+        state=doc.get("state", {}),
         events=events,
         last_update_time=doc.get("last_update_time", 0.0),
     )

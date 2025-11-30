@@ -16,7 +16,7 @@ community `MongoSessionService`.
 ### 1. Install dependencies
 
 ```bash
-pip install google-adk google-adk-community
+pip install google-adk google-adk-community python-dotenv
 ```
 
 ### 2. Configure environment variables
@@ -31,9 +31,7 @@ GOOGLE_API_KEY=your-google-api-key
 MONGODB_URI=mongodb+srv://<user>:<password>@<cluster-url>/
 ```
 
-**Note:** Keep your Mongo credentials out of source control. The sample reads
-the URI directly in `main.py`; you can swap in `os.environ["MONGODB_URI"]` to
-load it from the environment.
+**Note:** Keep your Mongo credentials out of source control. The sample loads the connection string from the `MONGODB_URI` environment variable, which is loaded from the `.env` file at runtime.
 
 ### 3. Pick a database name
 
@@ -59,6 +57,7 @@ python main.py
 ```python
 import os
 from google.adk.runners import Runner
+from google.genai import types
 from google.adk_community.sessions import MongoSessionService
 
 session_service = MongoSessionService(
@@ -70,6 +69,8 @@ await session_service.create_session(
 )
 
 runner = Runner(app_name="my_app", agent=root_agent, session_service=session_service)
+query = "Hello, can you help me with my account?"
+content = types.Content(role="user", parts=[types.Part(text=query)])
 
 async for event in runner.run_async(
     user_id="user1",

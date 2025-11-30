@@ -19,6 +19,7 @@ import asyncio
 
 from google.adk.runners import Runner
 from google.genai import types
+from google.adk.errors.already_exists_error import AlreadyExistsError
 from mongo_service_agent import root_agent
 
 from google.adk_community.sessions import MongoSessionService
@@ -42,9 +43,13 @@ async def main():
   if not connection_string:
     raise ValueError("MONGODB_URI environment variable not set. See README.md for setup.")
   session_service = MongoSessionService(connection_string=connection_string)
-  await session_service.create_session(
-      app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-  )
+  try:
+    await session_service.create_session(
+        app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
+    )
+  except AlreadyExistsError:
+    # Session already exists, which is fine for this example.
+    pass
 
   runner = Runner(
       agent=root_agent, app_name=APP_NAME, session_service=session_service
