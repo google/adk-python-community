@@ -55,7 +55,7 @@ class RedisKeys:
 
     @staticmethod
     def user_sessions(app_name: str, user_id: str) -> str:
-        return f"{State.APP_PREFIX}:{app_name}:{user_id}"
+        return f"{State.APP_PREFIX}{app_name}:{user_id}"
 
     @staticmethod
     def app_state(app_name: str) -> str:
