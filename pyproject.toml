@@ -25,7 +25,6 @@ classifiers = [ # List of https://pypi.org/classifiers/
 ]
 dependencies = [
   # go/keep-sorted start
-  "boto3>=1.28.0", # For S3ArtifactService
   "google-adk", # Google ADK
   "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "httpx>=0.27.0, <1.0.0", # For OpenMemory service
@@ -42,6 +41,9 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+s3 = [
+    "boto3>=1.28.0",  # For S3ArtifactService
+]
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
