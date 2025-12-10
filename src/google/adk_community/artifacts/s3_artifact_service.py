@@ -34,6 +34,7 @@ from google.adk.artifacts.base_artifact_service import BaseArtifactService
 from google.adk.errors.input_validation_error import InputValidationError
 from google.genai import types
 from typing_extensions import override
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger("google_adk_community." + __name__)
 
@@ -73,8 +74,19 @@ class S3ArtifactService(BaseArtifactService):
     try:
       self.s3_client.head_bucket(Bucket=self.bucket_name)
       logger.info("S3ArtifactService initialized with bucket: %s", bucket_name)
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Cannot access S3 bucket '%s': %s (Error: %s)",
+          bucket_name,
+          e,
+          error_code,
+      )
+      raise
     except Exception as e:
-      logger.error("Cannot access S3 bucket '%s': %s", bucket_name, e)
+      logger.error(
+          "Unexpected error accessing S3 bucket '%s': %s", bucket_name, e
+      )
       raise
 
   def _encode_filename(self, filename: str) -> str:
@@ -310,8 +322,19 @@ class S3ArtifactService(BaseArtifactService):
           object_key,
       )
       return version
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Failed to save artifact '%s' to S3: %s (Error: %s)",
+          filename,
+          e,
+          error_code,
+      )
+      raise
     except Exception as e:
-      logger.error("Failed to save artifact '%s' to S3: %s", filename, e)
+      logger.error(
+          "Unexpected error saving artifact '%s' to S3: %s", filename, e
+      )
       raise
 
   def _load_artifact_sync(
@@ -362,8 +385,19 @@ class S3ArtifactService(BaseArtifactService):
           "Artifact %s version %d not found in S3", filename, version
       )
       return None
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Failed to load artifact '%s' from S3: %s (Error: %s)",
+          filename,
+          e,
+          error_code,
+      )
+      raise
     except Exception as e:
-      logger.error("Failed to load artifact '%s' from S3: %s", filename, e)
+      logger.error(
+          "Unexpected error loading artifact '%s' from S3: %s", filename, e
+      )
       raise
 
   def _list_artifact_keys_sync(
@@ -391,9 +425,19 @@ class S3ArtifactService(BaseArtifactService):
               encoded_filename = parts[0]
               filename = self._decode_filename(encoded_filename)
               filenames.add(filename)
+      except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "Unknown")
+        logger.error(
+            "Failed to list session artifacts for %s: %s (Error: %s)",
+            session_id,
+            e,
+            error_code,
+        )
       except Exception as e:
         logger.error(
-            "Failed to list session artifacts for %s: %s", session_id, e
+            "Unexpected error listing session artifacts for %s: %s",
+            session_id,
+            e,
         )
 
     # List user-scoped artifacts
@@ -411,8 +455,18 @@ class S3ArtifactService(BaseArtifactService):
             encoded_filename = parts[0]
             filename = self._decode_filename(encoded_filename)
             filenames.add(f"user:{filename}")
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Failed to list user artifacts for %s: %s (Error: %s)",
+          user_id,
+          e,
+          error_code,
+      )
     except Exception as e:
-      logger.error("Failed to list user artifacts for %s: %s", user_id, e)
+      logger.error(
+          "Unexpected error listing user artifacts for %s: %s", user_id, e
+      )
 
     return sorted(list(filenames))
 
@@ -438,8 +492,18 @@ class S3ArtifactService(BaseArtifactService):
       try:
         self.s3_client.delete_object(Bucket=self.bucket_name, Key=object_key)
         logger.debug("Deleted S3 object: %s", object_key)
+      except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "Unknown")
+        logger.error(
+            "Failed to delete S3 object %s: %s (Error: %s)",
+            object_key,
+            e,
+            error_code,
+        )
       except Exception as e:
-        logger.error("Failed to delete S3 object %s: %s", object_key, e)
+        logger.error(
+            "Unexpected error deleting S3 object %s: %s", object_key, e
+        )
 
   def _list_versions_sync(
       self,
@@ -481,8 +545,19 @@ class S3ArtifactService(BaseArtifactService):
           if version_str.isdigit():
             versions.append(int(version_str))
       return sorted(versions)
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Failed to list versions for '%s': %s (Error: %s)",
+          filename,
+          e,
+          error_code,
+      )
+      return []
     except Exception as e:
-      logger.error("Failed to list versions for '%s': %s", filename, e)
+      logger.error(
+          "Unexpected error listing versions for '%s': %s", filename, e
+      )
       return []
 
   def _get_artifact_version_sync(
@@ -536,9 +611,19 @@ class S3ArtifactService(BaseArtifactService):
           "Artifact %s version %d not found in S3", filename, version
       )
       return None
+    except ClientError as e:
+      error_code = e.response.get("Error", {}).get("Code", "Unknown")
+      logger.error(
+          "Failed to get artifact version for '%s' version %d: %s (Error: %s)",
+          filename,
+          version,
+          e,
+          error_code,
+      )
+      return None
     except Exception as e:
       logger.error(
-          "Failed to get artifact version for '%s' version %d: %s",
+          "Unexpected error getting artifact version for '%s' version %d: %s",
           filename,
           version,
           e,
