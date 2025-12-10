@@ -368,9 +368,6 @@ class S3ArtifactService(BaseArtifactService):
       content_type = response.get("ContentType", "application/octet-stream")
       data = response["Body"].read()
 
-      if not data:
-        return None
-
       artifact = types.Part.from_bytes(data=data, mime_type=content_type)
       logger.debug(
           "Loaded artifact %s version %d from S3 key %s",

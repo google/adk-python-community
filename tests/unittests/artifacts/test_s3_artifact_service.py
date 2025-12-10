@@ -516,3 +516,32 @@ async def test_custom_metadata(mock_s3_service):
   assert version_info.custom_metadata["author"] == "test"
   assert version_info.custom_metadata["tags"] == "integration,test"
 
+
+@pytest.mark.asyncio
+async def test_empty_artifact(mock_s3_service):
+  """Tests saving and loading empty (0-byte) artifacts."""
+  # Create empty artifact
+  empty_artifact = types.Part.from_bytes(data=b"", mime_type="text/plain")
+  
+  version = await mock_s3_service.save_artifact(
+      app_name="app0",
+      user_id="user0",
+      session_id="123",
+      filename="empty.txt",
+      artifact=empty_artifact,
+  )
+  
+  assert version == 0
+  
+  # Load empty artifact - should succeed, not return None
+  loaded = await mock_s3_service.load_artifact(
+      app_name="app0",
+      user_id="user0",
+      session_id="123",
+      filename="empty.txt",
+  )
+  
+  assert loaded is not None
+  assert loaded.inline_data is not None
+  assert loaded.inline_data.data == b""
+
