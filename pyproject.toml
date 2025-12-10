@@ -25,12 +25,13 @@ classifiers = [ # List of https://pypi.org/classifiers/
 ]
 dependencies = [
   # go/keep-sorted start
-  "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
+  "boto3>=1.28.0", # For S3ArtifactService
   "google-adk", # Google ADK
+  "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "httpx>=0.27.0, <1.0.0", # For OpenMemory service
+  "orjson>=3.11.3",
   "redis>=5.0.0, <6.0.0", # Redis for session storage
   # go/keep-sorted end
-  "orjson>=3.11.3",
 ]
 dynamic = ["version"]
 

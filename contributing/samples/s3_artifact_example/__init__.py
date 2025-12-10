@@ -12,8 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import artifacts
-from . import memory
-from . import sessions
-from . import version
-__version__ = version.__version__
+from . import agent
+
