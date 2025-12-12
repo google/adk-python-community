@@ -44,8 +44,8 @@ s3 = [
     "aioboto3>=13.0.0",  # For S3ArtifactService
 ]
 test = [
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.2.0",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.2.0",
 ]
 sdc-agents = [
     "sdc-agents>=4.3.3; python_version >= '3.11'",
@@ -78,8 +78,8 @@ build-backend = "flit_core.buildapi"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.2.0",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.2.0",
 ]
 
 

@@ -20,10 +20,17 @@ import time
 import uuid
 from typing import Any, Optional
 
-import orjson
-import redis.asyncio as redis
-from redis.crc import key_slot
 from typing_extensions import override
+
+try:
+    import orjson
+    import redis.asyncio as redis
+    from redis.crc import key_slot
+except ImportError as exc:
+    raise ImportError(
+        "redis and orjson are required to use RedisSessionService. "
+        "Install it with: pip install google-adk-community[redis]"
+    ) from exc
 
 from google.adk.events.event import Event
 from google.adk.sessions.base_session_service import (

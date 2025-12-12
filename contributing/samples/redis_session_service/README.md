@@ -13,7 +13,7 @@ This sample demonstrates how to use Redis as a session storage backend for ADK a
 ### 1. Install Dependencies
 
 ```bash
-pip install google-adk google-adk-community
+pip install google-adk-community[redis]
 ```
 
 ### 2. Set Up Redis Server
@@ -109,7 +109,7 @@ async def get_health():
     return {"status": "ok"}
 
 # Run the server
-uvicorn.run(app, host="0.0.0.0", port=8080)
+uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 ```
 
 ### Direct RedisSessionService Usage
@@ -117,7 +117,7 @@ uvicorn.run(app, host="0.0.0.0", port=8080)
 You can also use `RedisSessionService` directly without FastAPI:
 
 ```python
-from google.adk_community.sessions import RedisSessionService
+from google.adk_community.sessions.redis_session_service import RedisSessionService
 from google.adk.runners import Runner
 from google.adk.errors.already_exists_error import AlreadyExistsError
 from google.adk.agents import Agent
