@@ -45,6 +45,11 @@ test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+redis-vl = [
+    "redisvl>=0.4.0",
+    "nltk>=3.8.0",
+    "sentence-transformers>=2.2.0",
+]
 
 
 [tool.pyink]
