@@ -83,8 +83,13 @@ class FirestoreWordMemoryService(BaseMemoryService):
         user_ref = self.db.collection(self.collection_name).document(user_key)
         events_ref = user_ref.collection("events")
 
+        # batch up additions for efficiency
+        batch = self.db.batch()
+        has_events_to_add = False
+
         for event in session.events:
             if event.content and event.content.parts:
+                has_events_to_add = True
                 event_data = {
                     "session_id": session.id,
                     "content": self._serialize_content(event.content),
@@ -102,7 +107,9 @@ class FirestoreWordMemoryService(BaseMemoryService):
                 }
                 # Using timestamp or a hash of content as ID if event doesn't have one
                 # Base ADK Event might not have a unique ID, so we use a generated one or timestamp
-                await events_ref.add(event_data)
+                batch.set(events_ref.document(), event_data)
+        if has_events_to_add:
+            await batch.commit()
 
     @override
     async def search_memory(
