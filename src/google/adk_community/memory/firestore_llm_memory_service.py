@@ -180,42 +180,52 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             )
             return
 
-        # 3. Apply operations to Firestore
-        batch = self.db.batch()
-        has_operations = False
+        # 3. Apply operations to Firestore in chunks of 500 (Firestore limit)
+        all_ops = []
 
         for fact_text in operations.get("add", []):
             if isinstance(fact_text, str):
-                new_doc_ref = facts_collection_ref.document()
-                batch.set(
-                    new_doc_ref,
-                    {
-                        "text": fact_text,
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                        "source_session_id": session.id,
-                    },
+                all_ops.append(
+                    (
+                        "SET",
+                        facts_collection_ref.document(),
+                        {
+                            "text": fact_text,
+                            "timestamp": firestore.SERVER_TIMESTAMP,
+                            "source_session_id": session.id,
+                        },
+                    )
                 )
-                has_operations = True
 
         for update in operations.get("update", []):
             if isinstance(update, dict) and "id" in update and "text" in update:
-                doc_ref = facts_collection_ref.document(update["id"])
-                batch.update(
-                    doc_ref,
-                    {
-                        "text": update["text"],
-                        "timestamp": firestore.SERVER_TIMESTAMP,
-                        "source_session_id": session.id,
-                    },
+                all_ops.append(
+                    (
+                        "UPDATE",
+                        facts_collection_ref.document(update["id"]),
+                        {
+                            "text": update["text"],
+                            "timestamp": firestore.SERVER_TIMESTAMP,
+                            "source_session_id": session.id,
+                        },
+                    )
                 )
-                has_operations = True
 
         for doc_id in operations.get("delete", []):
             if isinstance(doc_id, str):
-                batch.delete(facts_collection_ref.document(doc_id))
-                has_operations = True
+                all_ops.append(("DELETE", facts_collection_ref.document(doc_id), None))
 
-        if has_operations:
+        # Commit in chunks of 500
+        for i in range(0, len(all_ops), 500):
+            batch = self.db.batch()
+            chunk = all_ops[i : i + 500]
+            for op_type, doc_ref, data in chunk:
+                if op_type == "SET":
+                    batch.set(doc_ref, data)
+                elif op_type == "UPDATE":
+                    batch.update(doc_ref, data)
+                elif op_type == "DELETE":
+                    batch.delete(doc_ref)
             await batch.commit()
 
     @override
