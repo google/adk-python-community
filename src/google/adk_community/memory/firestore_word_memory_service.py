@@ -113,7 +113,7 @@ class FirestoreWordMemoryService(BaseMemoryService):
 
     @override
     async def search_memory(
-        self, *, app_name: str, user_id: str, query: str
+        self, *, app_name: str, user_id: str, query: str, limit: int = 100
     ) -> SearchMemoryResponse:
         """Searches memory in Firestore based on keyword matching."""
         user_key = f"{app_name}:{user_id}"
@@ -145,9 +145,13 @@ class FirestoreWordMemoryService(BaseMemoryService):
             )
             query_words_list = query_words_list[:30]
 
-        docs = events_query.where(
-            filter=FieldFilter("words", "array_contains_any", query_words_list)
-        ).stream()
+        docs = (
+            events_query.where(
+                filter=FieldFilter("words", "array_contains_any", query_words_list)
+            )
+            .limit(limit)
+            .stream()
+        )
 
         async for doc in docs:
             data = doc.to_dict()
