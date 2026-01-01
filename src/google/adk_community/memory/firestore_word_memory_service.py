@@ -105,8 +105,7 @@ class FirestoreWordMemoryService(BaseMemoryService):
                         )
                     ),
                 }
-                # Using timestamp or a hash of content as ID if event doesn't have one
-                # Base ADK Event might not have a unique ID, so we use a generated one or timestamp
+                # Add to batch with firestore-generated ID
                 batch.set(events_ref.document(), event_data)
         if has_events_to_add:
             await batch.commit()
