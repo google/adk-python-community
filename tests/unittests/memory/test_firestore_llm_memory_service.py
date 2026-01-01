@@ -216,5 +216,4 @@ class TestFirestoreLLMMemoryService:
 
         # Verify that no commit happened because no valid operations were found
         mock_batch = mock_firestore.batch.return_value
-        print(f"\nMock batch commit call count: {mock_batch.commit.call_count}")
         assert mock_batch.commit.call_count == 0
