@@ -51,10 +51,11 @@ class FirestoreWordMemoryService(BaseMemoryService):
             str
         ] = "(default)",  # use generous free tier default by default
     ):
-        """Initializes the FirestoreMemoryService.
+        """Initializes the FirestoreWordMemoryService.
 
         Args:
             collection_name: The root collection name in Firestore.
+            database: The Firestore database to use. (Uses free tier by default)
         """
         credentials, project_id = google.auth.default()
         self.db = firestore.AsyncClient(
