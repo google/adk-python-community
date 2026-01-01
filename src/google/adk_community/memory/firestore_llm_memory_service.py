@@ -21,7 +21,6 @@ from typing_extensions import override
 
 import google.auth
 from google.cloud import firestore
-from google.cloud.firestore_v1.base_query import FieldFilter
 from google.genai import types
 
 from google.adk.agents.llm_agent import Agent
