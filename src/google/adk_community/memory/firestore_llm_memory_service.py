@@ -193,7 +193,6 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         for update in operations.get("update", []):
             if isinstance(update, dict) and "id" in update and "text" in update:
-                logger.info(f"UPDATE FACT: {update}")
                 doc_ref = facts_collection_ref.document(update["id"])
                 batch.update(
                     doc_ref,
