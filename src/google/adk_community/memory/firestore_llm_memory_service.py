@@ -263,7 +263,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         # 3. Construct response
         search_response = SearchMemoryResponse()
-        relevant_facts = [f for f in all_facts if f["id"] in relevant_ids]
+        relevant_facts = [f for f in all_facts if f["id"] in set(relevant_ids)]
         for fact in relevant_facts:
             search_response.memories.append(
                 MemoryEntry(
