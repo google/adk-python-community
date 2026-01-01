@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from typing_extensions import override
 
 import google.auth
@@ -32,7 +32,6 @@ from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
 
 if TYPE_CHECKING:
-    from google.adk.events.event import Event
     from google.adk.sessions.session import Session
 
 logger = logging.getLogger(__name__)
@@ -117,6 +116,23 @@ class FirestoreLLMMemoryService(BaseMemoryService):
                 return final_response.content.parts[0].text
         return ""
 
+    def _parse_llm_json_response(self, content: str) -> Any | None:
+        """Utility to strip markdown and parse JSON from LLM response, with error logging."""
+        if not content:
+            return None
+        try:
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:-3].strip()
+            elif content.startswith("```"):
+                content = content[3:-3].strip()
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"Failed to parse Agent JSON response {e}. Response: {content}"
+            )
+            return None
+
     @override
     async def add_session_to_memory(self, session: Session):
         """Extracts facts from the session and updates Firestore."""
@@ -145,18 +161,10 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         )
 
         content = await self._call_agent(prompt)
-        try:
-            # Clean up potential markdown formatting in response
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-            elif content.startswith("```"):
-                content = content[3:-3].strip()
-
-            operations = json.loads(content)
-        except Exception as e:
-            logger.error(
-                f"Failed to parse Agent response for fact reconciliation: {e}. Response: {content}"
+        operations = self._parse_llm_json_response(content)
+        if not operations:
+            logger.warning(
+                f"No valid operations returned from Agent for session {session.id}."
             )
             return
 
@@ -228,17 +236,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         )
 
         content = await self._call_agent(prompt)
-        try:
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:-3].strip()
-            elif content.startswith("```"):
-                content = content[3:-3].strip()
-            relevant_ids = json.loads(content)
-        except Exception as e:
-            logger.error(
-                f"Failed to parse Agent response for memory search: {e}. Response: {content}"
-            )
+        relevant_ids = self._parse_llm_json_response(content)
+        if not relevant_ids:
             return SearchMemoryResponse()
 
         # 3. Construct response
