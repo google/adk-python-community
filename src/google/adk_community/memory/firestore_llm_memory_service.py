@@ -172,29 +172,32 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         batch = self.db.batch()
 
         for fact_text in operations.get("add", []):
-            new_doc_ref = facts_ref.document()
-            batch.set(
-                new_doc_ref,
-                {
-                    "text": fact_text,
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                    "source_session_id": session.id,
-                },
-            )
+            if isinstance(fact_text, str):
+                new_doc_ref = facts_ref.document()
+                batch.set(
+                    new_doc_ref,
+                    {
+                        "text": fact_text,
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                        "source_session_id": session.id,
+                    },
+                )
 
         for update in operations.get("update", []):
-            doc_ref = facts_ref.document(update["id"])
-            batch.update(
-                doc_ref,
-                {
-                    "text": update["text"],
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                    "source_session_id": session.id,
-                },
-            )
+            if isinstance(update, dict) and "id" in update and "text" in update:
+                doc_ref = facts_ref.document(update["id"])
+                batch.update(
+                    doc_ref,
+                    {
+                        "text": update["text"],
+                        "timestamp": firestore.SERVER_TIMESTAMP,
+                        "source_session_id": session.id,
+                    },
+                )
 
         for doc_id in operations.get("delete", []):
-            batch.delete(facts_ref.document(doc_id))
+            if isinstance(doc_id, str):
+                batch.delete(facts_ref.document(doc_id))
 
         await batch.commit()
 
