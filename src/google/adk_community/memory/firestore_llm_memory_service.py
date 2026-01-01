@@ -147,7 +147,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         existing_facts = []
         async for doc in facts_ref.stream():
             data = doc.to_dict()
-            existing_facts.append({"id": doc.id, "text": data["text"]})
+            if data and "text" in data:
+                existing_facts.append({"id": doc.id, "text": data["text"]})
 
         # 2. Reconcile with the Agent
         session_text = self._format_session(session)
