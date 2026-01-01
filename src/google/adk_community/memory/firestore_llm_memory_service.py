@@ -144,7 +144,9 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             .collection("facts")
         )
         # get a subset of existing facts to reconcile against
-        facts_ref = facts_collection_ref.limit(limit)
+        facts_ref = facts_collection_ref.order_by(
+            "timestamp", direction=firestore.Query.DESCENDING
+        ).limit(limit)
 
         # 1. Fetch existing facts
         existing_facts = []
