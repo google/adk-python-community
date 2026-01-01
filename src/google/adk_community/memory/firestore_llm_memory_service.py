@@ -281,7 +281,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         content = await self._call_agent(prompt)
         relevant_ids = self._parse_llm_json_response(content)
-        if not relevant_ids:
+        if not relevant_ids or not isinstance(relevant_ids, list):
             return SearchMemoryResponse()
 
         # 3. Construct response
