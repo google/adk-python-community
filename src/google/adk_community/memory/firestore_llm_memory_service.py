@@ -193,7 +193,11 @@ class FirestoreLLMMemoryService(BaseMemoryService):
                 )
 
         for update in operations.get("update", []):
-            if isinstance(update, dict) and isinstance(update.get("id"), str) and isinstance(update.get("text"), str):
+            if (
+                isinstance(update, dict)
+                and isinstance(update.get("id"), str)
+                and isinstance(update.get("text"), str)
+            ):
                 all_ops.append(
                     (
                         "UPDATE",
@@ -211,17 +215,21 @@ class FirestoreLLMMemoryService(BaseMemoryService):
                 all_ops.append(("DELETE", facts_collection_ref.document(doc_id), None))
 
         # Commit in chunks of 500
-        for i in range(0, len(all_ops), 500):
-            batch = self.db.batch()
-            chunk = all_ops[i : i + 500]
-            for op_type, doc_ref, data in chunk:
-                if op_type == "SET":
-                    batch.set(doc_ref, data)
-                elif op_type == "UPDATE":
-                    batch.update(doc_ref, data)
-                elif op_type == "DELETE":
-                    batch.delete(doc_ref)
-            await batch.commit()
+        try:
+            for i in range(0, len(all_ops), 500):
+                batch = self.db.batch()
+                chunk = all_ops[i : i + 500]
+                for op_type, doc_ref, data in chunk:
+                    if op_type == "SET":
+                        batch.set(doc_ref, data)
+                    elif op_type == "UPDATE":
+                        batch.update(doc_ref, data)
+                    elif op_type == "DELETE":
+                        batch.delete(doc_ref)
+                await batch.commit()
+        except Exception as e:
+            logger.error(f"Error applying fact operations to Firestore: {e}")
+            pass
 
     @override
     async def search_memory(
@@ -281,7 +289,9 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         # 3. Construct response
         search_response = SearchMemoryResponse()
-        relevant_facts = [f for f in all_facts if f["id"] in set(map(str, relevant_ids))]
+        relevant_facts = [
+            f for f in all_facts if f["id"] in set(map(str, relevant_ids))
+        ]
         for fact in relevant_facts:
             search_response.memories.append(
                 MemoryEntry(
