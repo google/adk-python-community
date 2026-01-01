@@ -211,6 +211,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         )
 
         # 1. Fetch all facts
+        # Note: If expecting a large number of facts,
+        # consider vector search (would require embedding cloud function, etc.)
         all_facts = []
         async for doc in facts_ref.stream():
             data = doc.to_dict()
