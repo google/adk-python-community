@@ -59,6 +59,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             collection_name: The root collection name in Firestore.
             model: The LLM model to use for memory management.
             database: The Firestore database to use. (Uses free tier by default)
+            reconciliation_limit: The maximum number of recent facts to consider
+                during reconciliation.
         """
         credentials, project_id = google.auth.default()
         self.db = firestore.AsyncClient(
