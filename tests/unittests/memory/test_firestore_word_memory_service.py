@@ -146,7 +146,6 @@ class TestFirestoreWordMemoryService:
     async def test_search_memory_success(self, service, mock_firestore):
         # Setup mock for stream()
         mock_query = MagicMock()
-        mock_docs = MagicMock()
 
         # Create mock document snapshots
         mock_doc1 = MagicMock()
