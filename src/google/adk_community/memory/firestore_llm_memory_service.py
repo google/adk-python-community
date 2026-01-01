@@ -230,6 +230,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             self.db.collection(self.collection_name)
             .document(user_key)
             .collection("facts")
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
             .limit(limit)
         )
 
