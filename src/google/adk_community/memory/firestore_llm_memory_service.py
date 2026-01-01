@@ -215,7 +215,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         async for doc in facts_ref.stream():
             data = doc.to_dict()
             timestamp_obj = data.get("timestamp")
-            timestamp = timestamp_obj.timestamp() if timestamp_obj else None
+            timestamp = timestamp_obj.timestamp() if timestamp_obj else 0
             all_facts.append(
                 {
                     "id": doc.id,
