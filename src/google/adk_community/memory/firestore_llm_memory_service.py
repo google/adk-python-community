@@ -193,7 +193,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
                 )
 
         for update in operations.get("update", []):
-            if isinstance(update, dict) and "id" in update and "text" in update:
+            if isinstance(update, dict) and isinstance(update.get("id"), str) and isinstance(update.get("text"), str):
                 all_ops.append(
                     (
                         "UPDATE",
