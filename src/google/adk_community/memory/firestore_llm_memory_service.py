@@ -51,7 +51,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         database: Optional[
             str
         ] = "(default)",  # use generous free tier default by default
-        reconciliation_limit: int = 100,
+        fact_limit: int = 100,
     ):
         """Initializes the FirestoreLLMMemoryService.
 
@@ -59,8 +59,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             collection_name: The root collection name in Firestore.
             model: The LLM model to use for memory management.
             database: The Firestore database to use. (Uses free tier by default)
-            reconciliation_limit: The maximum number of recent facts to consider
-                during reconciliation.
+            fact_limit: The maximum number of recent facts to store, search and reconcile.
+
         """
         credentials, project_id = google.auth.default()
         self.db = firestore.AsyncClient(
@@ -68,8 +68,8 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         )
         self.collection_name = collection_name
 
-        # reconciliation limit
-        self._reconciliation_limit = reconciliation_limit
+        # limit for storing, reconciling, and searching facts
+        self._fact_limit = fact_limit
 
         # The internal agent dedicated to managing the memory state.
         self._memory_agent = Agent(
@@ -152,7 +152,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         # get a subset of existing facts to reconcile against
         facts_ref = facts_collection_ref.order_by(
             "timestamp", direction=firestore.Query.DESCENDING
-        ).limit(self._reconciliation_limit)
+        ).limit(self._fact_limit)
 
         # 1. Fetch existing facts
         existing_facts = []
@@ -220,7 +220,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
     @override
     async def search_memory(
-        self, *, app_name: str, user_id: str, query: str, limit: int = 100
+        self, *, app_name: str, user_id: str, query: str
     ) -> SearchMemoryResponse:
         """
         Uses the Agent to find relevant facts based on the query.
@@ -228,7 +228,6 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             app_name: The application name.
             user_id: The user ID.
             query: The search query.
-            limit: Maximum number of facts to consider.
         """
         user_key = f"{app_name}:{user_id}"
         facts_ref = (
@@ -236,7 +235,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             .document(user_key)
             .collection("facts")
             .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(limit)
+            .limit(self._fact_limit)
         )
 
         # 1. Fetch facts
