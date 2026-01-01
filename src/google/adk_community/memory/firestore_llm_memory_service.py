@@ -51,6 +51,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         database: Optional[
             str
         ] = "(default)",  # use generous free tier default by default
+        reconciliation_limit: int = 100,
     ):
         """Initializes the FirestoreLLMMemoryService.
 
@@ -64,6 +65,9 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             credentials=credentials, project=project_id, database=database
         )
         self.collection_name = collection_name
+
+        # reconciliation limit
+        self._reconciliation_limit = reconciliation_limit
 
         # The internal agent dedicated to managing the memory state.
         self._memory_agent = Agent(
@@ -134,7 +138,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             return None
 
     @override
-    async def add_session_to_memory(self, session: Session, limit: int = 100):
+    async def add_session_to_memory(self, session: Session):
         """Extracts facts from the session and updates Firestore."""
         user_key = f"{session.app_name}:{session.user_id}"
         # reference to the facts subcollection
@@ -146,7 +150,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         # get a subset of existing facts to reconcile against
         facts_ref = facts_collection_ref.order_by(
             "timestamp", direction=firestore.Query.DESCENDING
-        ).limit(limit)
+        ).limit(self._reconciliation_limit)
 
         # 1. Fetch existing facts
         existing_facts = []
