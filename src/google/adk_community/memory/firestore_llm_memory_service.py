@@ -134,13 +134,14 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             return None
 
     @override
-    async def add_session_to_memory(self, session: Session):
+    async def add_session_to_memory(self, session: Session, limit: int = 100):
         """Extracts facts from the session and updates Firestore."""
         user_key = f"{session.app_name}:{session.user_id}"
         facts_ref = (
             self.db.collection(self.collection_name)
             .document(user_key)
             .collection("facts")
+            .limit(limit)
         )
 
         # 1. Fetch existing facts
