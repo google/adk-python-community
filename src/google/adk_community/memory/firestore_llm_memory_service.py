@@ -209,14 +209,22 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
     @override
     async def search_memory(
-        self, *, app_name: str, user_id: str, query: str
+        self, *, app_name: str, user_id: str, query: str, limit: int = 100
     ) -> SearchMemoryResponse:
-        """Uses the Agent to find relevant facts based on the query."""
+        """
+            Uses the Agent to find relevant facts based on the query.
+        Args:
+            app_name: The application name.
+            user_id: The user ID.
+            query: The search query.
+            limit: Maximum number of facts to consider.
+        """
         user_key = f"{app_name}:{user_id}"
         facts_ref = (
             self.db.collection(self.collection_name)
             .document(user_key)
             .collection("facts")
+            .limit(limit)
         )
 
         # 1. Fetch all facts
