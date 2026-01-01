@@ -76,8 +76,10 @@ def mock_firestore(mock_firestore_class):
     mock_collection.document.return_value = mock_document
     mock_document.collection.return_value = mock_subcollection
 
-    # Async methods
-    mock_subcollection.add = AsyncMock()
+    # Batch mock
+    mock_batch = MagicMock()
+    mock_batch.commit = AsyncMock()
+    mock_client.batch.return_value = mock_batch
 
     yield mock_client
 
@@ -123,12 +125,14 @@ class TestFirestoreWordMemoryService:
         )
         mock_subcollection.assert_called_with("events")
 
+        mock_batch = mock_firestore.batch.return_value
         # Should be 2 calls for the 2 events with content
-        assert mock_subcollection.return_value.add.call_count == 2
+        assert mock_batch.set.call_count == 2
+        mock_batch.commit.assert_called_once()
 
         # Verify first event data
-        call_args = mock_subcollection.return_value.add.call_args_list[0]
-        event_data = call_args.args[0]
+        call_args = mock_batch.set.call_args_list[0]
+        event_data = call_args.args[1]
         assert event_data["session_id"] == MOCK_SESSION_ID
         assert event_data["author"] == "user"
         assert "python" in event_data["words"]
