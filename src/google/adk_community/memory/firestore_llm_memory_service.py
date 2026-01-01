@@ -110,7 +110,11 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         async with Aclosing(llm.generate_content_async(request)) as agen:
             response_text_parts = []
             async for response in agen:
-                if response.content and response.content.parts and response.content.parts[0].text:
+                if (
+                    response.content
+                    and response.content.parts
+                    and response.content.parts[0].text
+                ):
                     response_text_parts.append(response.content.parts[0].text)
             return "".join(response_text_parts)
 
@@ -246,7 +250,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         all_facts = []
         async for doc in facts_ref.stream():
             data = doc.to_dict()
-            if not data:
+            if not data or not data.get("text"):
                 continue
             timestamp_obj = data.get("timestamp")
             timestamp = timestamp_obj.timestamp() if timestamp_obj else 0
