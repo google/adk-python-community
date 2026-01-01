@@ -137,12 +137,14 @@ class FirestoreLLMMemoryService(BaseMemoryService):
     async def add_session_to_memory(self, session: Session, limit: int = 100):
         """Extracts facts from the session and updates Firestore."""
         user_key = f"{session.app_name}:{session.user_id}"
-        facts_ref = (
+        # reference to the facts subcollection
+        facts_collection_ref = (
             self.db.collection(self.collection_name)
             .document(user_key)
             .collection("facts")
-            .limit(limit)
         )
+        # get a subset of existing facts to reconcile against
+        facts_ref = facts_collection_ref.limit(limit)
 
         # 1. Fetch existing facts
         existing_facts = []
@@ -176,7 +178,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         for fact_text in operations.get("add", []):
             if isinstance(fact_text, str):
-                new_doc_ref = facts_ref.document()
+                new_doc_ref = facts_collection_ref.document()
                 batch.set(
                     new_doc_ref,
                     {
@@ -190,11 +192,11 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         for update in operations.get("update", []):
             if isinstance(update, dict) and "id" in update and "text" in update:
                 logger.info(f"UPDATE FACT: {update}")
-                doc_ref = facts_ref.document(update["id"])
+                doc_ref = facts_collection_ref.document(update["id"])
                 batch.update(
                     doc_ref,
                     {
-                        "text": update.get("text"),
+                        "text": update["text"],
                         "timestamp": firestore.SERVER_TIMESTAMP,
                         "source_session_id": session.id,
                     },
@@ -203,7 +205,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         for doc_id in operations.get("delete", []):
             if isinstance(doc_id, str):
-                batch.delete(facts_ref.document(doc_id))
+                batch.delete(facts_collection_ref.document(doc_id))
                 has_operations = True
 
         if has_operations:
@@ -229,7 +231,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
             .limit(limit)
         )
 
-        # 1. Fetch all facts
+        # 1. Fetch facts
         # Note: If expecting a large number of facts,
         # consider vector search (would require embedding cloud function, etc.)
         all_facts = []
