@@ -193,3 +193,28 @@ class TestFirestoreLLMMemoryService:
 
         mock_batch = mock_firestore.batch.return_value
         assert mock_batch.commit.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_add_session_structurally_invalid_json(self, service, mock_firestore):
+        # Mock LLM returning valid JSON but with missing/incorrect keys
+        mock_response = MagicMock()
+        mock_response.partial = False
+        # Case: missing 'text' in update
+        mock_response.content.parts = [
+            types.Part(text='{"update": [{"id": "fact-1"}]}')
+        ]
+
+        async def mock_generate(*args, **kwargs):
+            yield mock_response
+
+        service._memory_agent.canonical_model.generate_content_async.side_effect = (
+            mock_generate
+        )
+
+        # The method should handle this gracefully without crashing
+        await service.add_session_to_memory(MOCK_SESSION)
+
+        # Verify that no commit happened because no valid operations were found
+        mock_batch = mock_firestore.batch.return_value
+        print(f"\nMock batch commit call count: {mock_batch.commit.call_count}")
+        assert mock_batch.commit.call_count == 0

@@ -170,6 +170,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         # 3. Apply operations to Firestore
         batch = self.db.batch()
+        has_operations = False
 
         for fact_text in operations.get("add", []):
             if isinstance(fact_text, str):
@@ -182,24 +183,29 @@ class FirestoreLLMMemoryService(BaseMemoryService):
                         "source_session_id": session.id,
                     },
                 )
+                has_operations = True
 
         for update in operations.get("update", []):
             if isinstance(update, dict) and "id" in update and "text" in update:
+                logger.info(f"UPDATE FACT: {update}")
                 doc_ref = facts_ref.document(update["id"])
                 batch.update(
                     doc_ref,
                     {
-                        "text": update["text"],
+                        "text": update.get("text"),
                         "timestamp": firestore.SERVER_TIMESTAMP,
                         "source_session_id": session.id,
                     },
                 )
+                has_operations = True
 
         for doc_id in operations.get("delete", []):
             if isinstance(doc_id, str):
                 batch.delete(facts_ref.document(doc_id))
+                has_operations = True
 
-        await batch.commit()
+        if has_operations:
+            await batch.commit()
 
     @override
     async def search_memory(
