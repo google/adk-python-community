@@ -63,6 +63,7 @@ def mock_firestore():
         mock_client.collection.return_value = mock_collection
         mock_collection.document.return_value = mock_document
         mock_document.collection.return_value = mock_subcollection
+        mock_subcollection.order_by.return_value = mock_subcollection
         mock_subcollection.limit.return_value = mock_subcollection
 
         # Batch mock
@@ -102,10 +103,10 @@ class TestFirestoreLLMMemoryService:
         async def mock_stream():
             yield mock_doc
 
-        mock_events = (
-            mock_firestore.collection.return_value.document.return_value.collection
+        mock_subcollection = (
+            mock_firestore.collection.return_value.document.return_value.collection.return_value
         )
-        mock_events.return_value.stream.return_value = mock_stream()
+        mock_subcollection.stream.return_value = mock_stream()
 
         # 2. Mock LLM Response
         llm_response_json = {
@@ -148,10 +149,14 @@ class TestFirestoreLLMMemoryService:
         async def mock_stream():
             yield mock_doc
 
-        mock_events = (
-            mock_firestore.collection.return_value.document.return_value.collection
+        # Setup the subcollection mock chain
+        mock_subcollection = MagicMock()
+        mock_firestore.collection.return_value.document.return_value.collection.return_value = (
+            mock_subcollection
         )
-        mock_events.return_value.stream.return_value = mock_stream()
+        mock_subcollection.order_by.return_value = mock_subcollection
+        mock_subcollection.limit.return_value = mock_subcollection
+        mock_subcollection.stream.return_value = mock_stream()
 
         # 2. Mock LLM Filtering Response
         mock_response = MagicMock()

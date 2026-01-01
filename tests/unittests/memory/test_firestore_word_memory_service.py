@@ -75,6 +75,8 @@ def mock_firestore(mock_firestore_class):
     mock_client.collection.return_value = mock_collection
     mock_collection.document.return_value = mock_document
     mock_document.collection.return_value = mock_subcollection
+    mock_subcollection.where.return_value = mock_subcollection
+    mock_subcollection.limit.return_value = mock_subcollection
 
     # Batch mock
     mock_batch = MagicMock()
@@ -150,6 +152,7 @@ class TestFirestoreWordMemoryService:
     async def test_search_memory_success(self, service, mock_firestore):
         # Setup mock for stream()
         mock_query = MagicMock()
+        mock_query.limit.return_value = mock_query
 
         # Create mock document snapshots
         mock_doc1 = MagicMock()
