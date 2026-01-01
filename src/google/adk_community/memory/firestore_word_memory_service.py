@@ -144,12 +144,19 @@ class FirestoreWordMemoryService(BaseMemoryService):
 
         async for doc in docs:
             data = doc.to_dict()
-            response.memories.append(
-                MemoryEntry(
-                    content=self._deserialize_content(data["content"]),
-                    author=data["author"],
-                    timestamp=_utils.format_timestamp(data["timestamp"]),
+            if (
+                data
+                and data.get("content")
+                and data.get("author")
+                and data.get("timestamp")
+            ):
+
+                response.memories.append(
+                    MemoryEntry(
+                        content=self._deserialize_content(data["content"]),
+                        author=data["author"],
+                        timestamp=_utils.format_timestamp(data["timestamp"]),
+                    )
                 )
-            )
 
         return response
