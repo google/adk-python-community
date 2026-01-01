@@ -108,19 +108,11 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         )
 
         async with Aclosing(llm.generate_content_async(request)) as agen:
-            final_response = None
+            response_text_parts = []
             async for response in agen:
-                if not response.partial:
-                    final_response = response
-
-            if (
-                final_response
-                and final_response.content
-                and final_response.content.parts
-                and final_response.content.parts[0].text
-            ):
-                return final_response.content.parts[0].text
-        return ""
+                if response.content and response.content.parts and response.content.parts[0].text:
+                    response_text_parts.append(response.content.parts[0].text)
+            return "".join(response_text_parts)
 
     def _parse_llm_json_response(self, content: str) -> Any | None:
         """Utility to strip markdown and parse JSON from LLM response, with error logging."""
