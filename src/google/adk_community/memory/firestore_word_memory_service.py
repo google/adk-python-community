@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 def _extract_words_lower(text: str) -> set[str]:
     """Extracts words from a string and converts them to lowercase."""
-    return set([word.lower() for word in re.findall(r"[A-Za-z]+", text)])
+    return set([word.lower() for word in re.findall(r"\w+", text)])
 
 
 class FirestoreWordMemoryService(BaseMemoryService):
