@@ -63,6 +63,7 @@ def mock_firestore():
         mock_client.collection.return_value = mock_collection
         mock_collection.document.return_value = mock_document
         mock_document.collection.return_value = mock_subcollection
+        mock_subcollection.limit.return_value = mock_subcollection
 
         # Batch mock
         mock_batch = MagicMock()
