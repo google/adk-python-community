@@ -174,7 +174,7 @@ class FirestoreLLMMemoryService(BaseMemoryService):
 
         content = await self._call_agent(prompt)
         operations = self._parse_llm_json_response(content)
-        if not operations:
+        if not operations or not isinstance(operations, dict):
             logger.warning(
                 f"No valid operations returned from Agent for session {session.id}."
             )
