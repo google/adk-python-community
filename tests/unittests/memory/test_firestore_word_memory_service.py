@@ -40,7 +40,7 @@ MOCK_SESSION = Session(
         ),
         Event(
             id="event-2",
-            author="model",
+            author="agent",
             timestamp=12346,
             content=types.Content(
                 parts=[types.Part(text="Python is a great programming language.")]

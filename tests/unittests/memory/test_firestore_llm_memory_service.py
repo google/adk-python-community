@@ -109,7 +109,7 @@ class TestFirestoreLLMMemoryService:
         # 2. Mock LLM Response
         llm_response_json = {
             "add": ["Likes hiking"],
-            "update": [{"id": "fact-1", "text": "Actually hates hiking"}],
+            "update": [{"id": "fact-1", "text": "Actually dislikes hiking"}],
             "delete": [],
         }
 
