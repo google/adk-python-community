@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import TYPE_CHECKING, Optional, Any
 from typing_extensions import override
@@ -28,8 +29,8 @@ from google.adk.memory.memory_entry import MemoryEntry
 import google.auth
 
 if TYPE_CHECKING:
-    from google.adk.events.event import Event
     from google.adk.sessions.session import Session
+logger = logging.getLogger(__name__)
 
 
 def _extract_words_lower(text: str) -> set[str]:
@@ -130,6 +131,13 @@ class FirestoreWordMemoryService(BaseMemoryService):
 
         # Firestore array_contains_any handles up to 30 elements
         # If query is longer, we might need multiple queries or client-side filtering
+        # warn that this is a simple implementation and may not scale for very large queries
+        if len(query_words_list) > 30:
+            logger.warning(
+                "Query contains more than 30 unique words; truncating for Firestore query."
+            )
+            query_words_list = query_words_list[:30]
+
         docs = events_query.where(
             filter=FieldFilter("words", "array_contains_any", query_words_list)
         ).stream()
