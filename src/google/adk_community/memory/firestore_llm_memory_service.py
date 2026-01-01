@@ -127,9 +127,9 @@ class FirestoreLLMMemoryService(BaseMemoryService):
         try:
             content = content.strip()
             if content.startswith("```json"):
-                content = content[7:-3].strip()
+                content = content.removeprefix("```json").removesuffix("```").strip()
             elif content.startswith("```"):
-                content = content[3:-3].strip()
+                content = content.removeprefix("```").removesuffix("```").strip()
             return json.loads(content)
         except json.JSONDecodeError as e:
             logger.error(
