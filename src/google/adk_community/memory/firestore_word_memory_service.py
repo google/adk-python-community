@@ -32,10 +32,58 @@ if TYPE_CHECKING:
     from google.adk.sessions.session import Session
 logger = logging.getLogger(__name__)
 
+# Basic set of stop words to filter out from keyword indexing
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "am",
+    "as",
+    "at",
+    "any",
+    "be",
+    "by",
+    "but",
+    "for",
+    "from",
+    "had",
+    "has",
+    "have",
+    "he",
+    "her",
+    "his",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "she",
+    "the",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "to",
+    "us",
+    "you",
+    "your",
+    "we",
+    "were",
+    "with",
+}
+
 
 def _extract_words_lower(text: str) -> set[str]:
-    """Extracts words from a string and converts them to lowercase."""
-    return {word.lower() for word in re.findall(r"\w+", text)}
+    """Extracts words from a string and converts them to lowercase, filtering stop words."""
+    return {
+        word.lower()
+        for word in re.findall(r"\w+", text)
+        if word.lower() not in STOP_WORDS
+    }
 
 
 class FirestoreWordMemoryService(BaseMemoryService):
