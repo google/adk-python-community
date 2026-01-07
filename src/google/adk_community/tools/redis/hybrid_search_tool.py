@@ -36,9 +36,13 @@ class RedisHybridSearchTool(BaseRedisSearchTool):
   """Hybrid search tool combining vector similarity and BM25 text search.
 
   This tool performs a hybrid search that combines semantic vector similarity
-  with keyword-based BM25 text matching. This is useful when you want to
-  leverage both the semantic understanding of embeddings and the precision
-  of keyword matching.
+  with keyword-based BM25 text matching using Redis's native FT.HYBRID command.
+  This is useful when you want to leverage both the semantic understanding of
+  embeddings and the precision of keyword matching.
+
+  Requirements:
+      - Redis >= 8.4.0 (for native FT.HYBRID command support)
+      - redis-py >= 7.1.0
 
   Example:
       ```python
@@ -69,11 +73,19 @@ class RedisHybridSearchTool(BaseRedisSearchTool):
       vectorizer: BaseVectorizer,
       text_field_name: str = "content",
       vector_field_name: str = "embedding",
+      vector_param_name: str = "vector",
       text_scorer: str = "BM25STD",
+      yield_text_score_as: Optional[str] = None,
+      vector_search_method: Optional[str] = None,
+      knn_ef_runtime: int = 10,
+      range_radius: Optional[float] = None,
+      range_epsilon: float = 0.01,
+      yield_vsim_score_as: Optional[str] = None,
       combination_method: Optional[str] = None,
       linear_alpha: float = 0.3,
       rrf_window: int = 20,
       rrf_constant: int = 60,
+      yield_combined_score_as: Optional[str] = None,
       num_results: int = 10,
       return_fields: Optional[List[str]] = None,
       filter_expression: Optional[Any] = None,
@@ -90,11 +102,19 @@ class RedisHybridSearchTool(BaseRedisSearchTool):
         vectorizer: The vectorizer for embedding queries.
         text_field_name: The name of the text field for BM25 search.
         vector_field_name: The name of the vector field for similarity search.
+        vector_param_name: Name of the parameter substitution for vector blob.
         text_scorer: The text scoring algorithm (default: "BM25STD").
+        yield_text_score_as: Field name to yield the text score as.
+        vector_search_method: Vector search method - "KNN" or "RANGE".
+        knn_ef_runtime: Exploration factor for HNSW when using KNN (default: 10).
+        range_radius: Search radius when using RANGE vector search.
+        range_epsilon: Epsilon for RANGE search accuracy (default: 0.01).
+        yield_vsim_score_as: Field name to yield the vector similarity score as.
         combination_method: Score combination method - "RRF" or "LINEAR".
         linear_alpha: Weight of text score when using LINEAR (default: 0.3).
         rrf_window: Window size for RRF combination (default: 20).
         rrf_constant: Constant for RRF combination (default: 60).
+        yield_combined_score_as: Field name to yield the combined score as.
         num_results: Default number of results to return (default: 10).
         return_fields: Optional list of fields to return in results.
         filter_expression: Optional filter expression to narrow results.
@@ -113,11 +133,19 @@ class RedisHybridSearchTool(BaseRedisSearchTool):
     )
     self._text_field_name = text_field_name
     self._vector_field_name = vector_field_name
+    self._vector_param_name = vector_param_name
     self._text_scorer = text_scorer
+    self._yield_text_score_as = yield_text_score_as
+    self._vector_search_method = vector_search_method
+    self._knn_ef_runtime = knn_ef_runtime
+    self._range_radius = range_radius
+    self._range_epsilon = range_epsilon
+    self._yield_vsim_score_as = yield_vsim_score_as
     self._combination_method = combination_method
     self._linear_alpha = linear_alpha
     self._rrf_window = rrf_window
     self._rrf_constant = rrf_constant
+    self._yield_combined_score_as = yield_combined_score_as
     self._num_results = num_results
     self._filter_expression = filter_expression
     self._dtype = dtype
@@ -168,12 +196,20 @@ class RedisHybridSearchTool(BaseRedisSearchTool):
         text_field_name=self._text_field_name,
         vector=embedding,
         vector_field_name=self._vector_field_name,
+        vector_param_name=self._vector_param_name,
         text_scorer=self._text_scorer,
+        yield_text_score_as=self._yield_text_score_as,
+        vector_search_method=self._vector_search_method,
+        knn_ef_runtime=self._knn_ef_runtime,
+        range_radius=self._range_radius,
+        range_epsilon=self._range_epsilon,
+        yield_vsim_score_as=self._yield_vsim_score_as,
+        filter_expression=self._filter_expression,
         combination_method=self._combination_method,
-        linear_alpha=self._linear_alpha,
         rrf_window=self._rrf_window,
         rrf_constant=self._rrf_constant,
-        filter_expression=self._filter_expression,
+        linear_alpha=self._linear_alpha,
+        yield_combined_score_as=self._yield_combined_score_as,
         dtype=self._dtype,
         num_results=num_results,
         return_fields=self._return_fields,
