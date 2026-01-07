@@ -46,7 +46,7 @@ test = [
     "pytest-asyncio>=1.2.0",
 ]
 redis-vl = [
-    "redisvl>=0.4.0",
+    "redisvl>=0.13.2",
     "nltk>=3.8.0",
     "sentence-transformers>=2.2.0",
 ]
