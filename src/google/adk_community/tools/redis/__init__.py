@@ -40,6 +40,7 @@ Example:
 
 try:
   from .base_search_tool import BaseRedisSearchTool
+  from .base_search_tool import VectorizedSearchTool
   from .hybrid_search_tool import RedisHybridSearchTool
   from .range_search_tool import RedisRangeSearchTool
   from .text_search_tool import RedisTextSearchTool
@@ -52,6 +53,7 @@ except ImportError as e:
 
 __all__ = [
     "BaseRedisSearchTool",
+    "VectorizedSearchTool",
     "RedisVectorSearchTool",
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",

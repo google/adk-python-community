@@ -29,10 +29,10 @@ from redisvl.index import SearchIndex
 from redisvl.query import HybridQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
-from .base_search_tool import BaseRedisSearchTool
+from .base_search_tool import VectorizedSearchTool
 
 
-class RedisHybridSearchTool(BaseRedisSearchTool):
+class RedisHybridSearchTool(VectorizedSearchTool):
   """Hybrid search tool combining vector similarity and BM25 text search.
 
   This tool performs a hybrid search that combines semantic vector similarity

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from typing import Dict
 from typing import List
@@ -25,12 +24,13 @@ from typing import Set
 from typing import Tuple
 from typing import Union
 
-from google.adk.tools import BaseTool
 from google.adk.tools.tool_context import ToolContext
 from google.genai import types
 from redisvl.index import AsyncSearchIndex
 from redisvl.index import SearchIndex
 from redisvl.query import TextQuery
+
+from .base_search_tool import BaseRedisSearchTool
 
 # Type alias for sort specification
 SortSpec = Optional[
@@ -38,7 +38,7 @@ SortSpec = Optional[
 ]
 
 
-class RedisTextSearchTool(BaseTool):
+class RedisTextSearchTool(BaseRedisSearchTool):
   """Full-text search tool using BM25 scoring.
 
   This tool performs keyword-based full-text search using BM25 scoring.
@@ -97,19 +97,21 @@ class RedisTextSearchTool(BaseTool):
         name: The name of the tool (exposed to LLM).
         description: The description of the tool (exposed to LLM).
     """
-    super().__init__(name=name, description=description)
-    self._index = index
+    super().__init__(
+        name=name,
+        description=description,
+        index=index,
+        return_fields=return_fields,
+    )
     self._text_field_name = text_field_name
     self._text_scorer = text_scorer
     self._num_results = num_results
-    self._return_fields = return_fields
     self._filter_expression = filter_expression
     self._return_score = return_score
     self._dialect = dialect
     self._sort_by = sort_by
     self._in_order = in_order
     self._stopwords = stopwords
-    self._is_async_index = isinstance(index, AsyncSearchIndex)
 
   def _get_declaration(self) -> types.FunctionDeclaration:
     """Get the function declaration for the LLM."""
@@ -147,15 +149,12 @@ class RedisTextSearchTool(BaseTool):
     Returns:
         A dictionary with status, count, and results.
     """
-    query_text = args.get("query", "")
 
-    if not query_text:
-      return {"status": "error", "error": "Query text is required."}
-
-    try:
+    async def build_query_fn(
+        query_text: str, args: Dict[str, Any]
+    ) -> TextQuery:
       num_results = args.get("num_results", self._num_results)
-
-      text_query = TextQuery(
+      return TextQuery(
           text=query_text,
           text_field_name=self._text_field_name,
           text_scorer=self._text_scorer,
@@ -169,19 +168,4 @@ class RedisTextSearchTool(BaseTool):
           stopwords=self._stopwords,
       )
 
-      # Execute the query - handle both sync and async indexes
-      if self._is_async_index:
-        results = await self._index.query(text_query)
-      else:
-        results = await asyncio.to_thread(self._index.query, text_query)
-
-      formatted_results = [dict(r) for r in results] if results else []
-
-      return {
-          "status": "success",
-          "count": len(formatted_results),
-          "results": formatted_results,
-      }
-
-    except Exception as e:
-      return {"status": "error", "error": str(e)}
+    return await self._run_search(args, build_query_fn)

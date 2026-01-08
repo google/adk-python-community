@@ -28,7 +28,7 @@ from redisvl.index import SearchIndex
 from redisvl.query import VectorQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
-from .base_search_tool import BaseRedisSearchTool
+from .base_search_tool import VectorizedSearchTool
 
 # Type alias for sort specification
 SortSpec = Optional[
@@ -36,7 +36,7 @@ SortSpec = Optional[
 ]
 
 
-class RedisVectorSearchTool(BaseRedisSearchTool):
+class RedisVectorSearchTool(VectorizedSearchTool):
   """Vector similarity search tool using RedisVL.
 
   This tool performs K-nearest neighbor (KNN) vector similarity search

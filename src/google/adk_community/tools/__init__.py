@@ -20,6 +20,7 @@ optional dependencies are not installed.
 
 __all__ = [
     "BaseRedisSearchTool",
+    "VectorizedSearchTool",
     "RedisVectorSearchTool",
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",
@@ -29,6 +30,7 @@ __all__ = [
 # Redis tool names for lazy loading
 _REDIS_TOOLS = {
     "BaseRedisSearchTool",
+    "VectorizedSearchTool",
     "RedisVectorSearchTool",
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",
@@ -45,9 +47,11 @@ def __getattr__(name: str):
       from .redis import RedisRangeSearchTool
       from .redis import RedisTextSearchTool
       from .redis import RedisVectorSearchTool
+      from .redis import VectorizedSearchTool
 
       globals().update({
           "BaseRedisSearchTool": BaseRedisSearchTool,
+          "VectorizedSearchTool": VectorizedSearchTool,
           "RedisVectorSearchTool": RedisVectorSearchTool,
           "RedisHybridSearchTool": RedisHybridSearchTool,
           "RedisRangeSearchTool": RedisRangeSearchTool,

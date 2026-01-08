@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base class for Redis search tools using RedisVL."""
+"""Base classes for Redis search tools using RedisVL."""
 
 from __future__ import annotations
 
 from abc import abstractmethod
 import asyncio
 from typing import Any
+from typing import Callable
+from typing import Coroutine
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -33,15 +35,16 @@ from redisvl.utils.vectorize import BaseVectorizer
 
 
 class BaseRedisSearchTool(BaseTool):
-  """Base class for Redis search tools using RedisVL.
+  """Base class for ALL Redis search tools using RedisVL.
 
-  This class provides common functionality for all Redis search tools:
-  - Index and vectorizer management
-  - Common error handling
-  - Standard response format
+  This class provides common functionality shared by all Redis search tools:
+  - Index management (sync and async)
+  - Query execution with proper async handling
+  - Standard response formatting
+  - Error handling
 
-  Subclasses must implement `_build_query()` to create the appropriate
-  RedisVL query object for their search type.
+  Subclasses should use `_run_search` to execute queries with consistent
+  error handling and response formatting.
   """
 
   def __init__(
@@ -50,7 +53,6 @@ class BaseRedisSearchTool(BaseTool):
       name: str,
       description: str,
       index: Union[SearchIndex, AsyncSearchIndex],
-      vectorizer: Optional[BaseVectorizer] = None,
       return_fields: Optional[List[str]] = None,
   ):
     """Initialize the base Redis search tool.
@@ -59,12 +61,10 @@ class BaseRedisSearchTool(BaseTool):
         name: The name of the tool (exposed to LLM).
         description: The description of the tool (exposed to LLM).
         index: The RedisVL SearchIndex or AsyncSearchIndex to query.
-        vectorizer: Optional vectorizer for embedding queries.
         return_fields: Optional list of fields to return in results.
     """
     super().__init__(name=name, description=description)
     self._index = index
-    self._vectorizer = vectorizer
     self._return_fields = return_fields
     self._is_async_index = isinstance(index, AsyncSearchIndex)
 
@@ -89,6 +89,104 @@ class BaseRedisSearchTool(BaseTool):
         ),
     )
 
+  async def _execute_query(self, query: Any) -> List[Dict[str, Any]]:
+    """Execute a RedisVL query and return formatted results.
+
+    Args:
+        query: A RedisVL query object (VectorQuery, TextQuery, etc.)
+
+    Returns:
+        List of result dictionaries.
+    """
+    if self._is_async_index:
+      results = await self._index.query(query)
+    else:
+      # Run sync query in thread pool to avoid blocking
+      results = await asyncio.to_thread(self._index.query, query)
+
+    return [dict(r) for r in results] if results else []
+
+  async def _run_search(
+      self,
+      args: Dict[str, Any],
+      build_query_fn: Callable[[str, Dict[str, Any]], Coroutine[Any, Any, Any]],
+  ) -> Dict[str, Any]:
+    """Execute a search with consistent validation, execution, and formatting.
+
+    This is a template method that handles:
+    - Query text validation
+    - Query building (via the provided async function)
+    - Query execution
+    - Response formatting
+    - Error handling
+
+    Args:
+        args: Arguments from the LLM, must include 'query'.
+        build_query_fn: Async function that takes (query_text, args) and
+            returns a RedisVL query object.
+
+    Returns:
+        A dictionary with status, count, and results (or error).
+    """
+    query_text = args.get("query", "")
+
+    if not query_text:
+      return {"status": "error", "error": "Query text is required."}
+
+    try:
+      # Build the query using the provided function
+      redisvl_query = await build_query_fn(query_text, args)
+
+      # Execute and format results
+      results = await self._execute_query(redisvl_query)
+
+      return {
+          "status": "success",
+          "count": len(results),
+          "results": results,
+      }
+
+    except Exception as e:
+      return {"status": "error", "error": str(e)}
+
+
+class VectorizedSearchTool(BaseRedisSearchTool):
+  """Base class for Redis search tools that require vector embeddings.
+
+  This class extends BaseRedisSearchTool with:
+  - Required vectorizer for embedding queries
+  - Abstract _build_query method for subclasses to implement
+
+  Use this as the base class for vector-based search tools like
+  VectorSearchTool, HybridSearchTool, and RangeSearchTool.
+  """
+
+  def __init__(
+      self,
+      *,
+      name: str,
+      description: str,
+      index: Union[SearchIndex, AsyncSearchIndex],
+      vectorizer: BaseVectorizer,
+      return_fields: Optional[List[str]] = None,
+  ):
+    """Initialize the vectorized search tool.
+
+    Args:
+        name: The name of the tool (exposed to LLM).
+        description: The description of the tool (exposed to LLM).
+        index: The RedisVL SearchIndex or AsyncSearchIndex to query.
+        vectorizer: The vectorizer for embedding queries (required).
+        return_fields: Optional list of fields to return in results.
+    """
+    super().__init__(
+        name=name,
+        description=description,
+        index=index,
+        return_fields=return_fields,
+    )
+    self._vectorizer = vectorizer
+
   @abstractmethod
   def _build_query(
       self, query_text: str, embedding: List[float], **kwargs: Any
@@ -108,7 +206,7 @@ class BaseRedisSearchTool(BaseTool):
   async def run_async(
       self, *, args: Dict[str, Any], tool_context: ToolContext
   ) -> Dict[str, Any]:
-    """Execute the search query.
+    """Execute the vector-based search query.
 
     Args:
         args: Arguments from the LLM, must include 'query'.
@@ -117,39 +215,9 @@ class BaseRedisSearchTool(BaseTool):
     Returns:
         A dictionary with status, count, and results.
     """
-    query_text = args.get("query", "")
 
-    if not query_text:
-      return {"status": "error", "error": "Query text is required."}
-
-    try:
-      # Embed the query text
-      if self._vectorizer is None:
-        return {
-            "status": "error",
-            "error": "Vectorizer is required for this search type.",
-        }
-
+    async def build_query_fn(query_text: str, args: Dict[str, Any]) -> Any:
       embedding = await self._vectorizer.aembed(query_text)
+      return self._build_query(query_text, embedding, **args)
 
-      # Build the query (subclass-specific)
-      redisvl_query = self._build_query(query_text, embedding, **args)
-
-      # Execute the query - handle both sync and async indexes
-      if self._is_async_index:
-        results = await self._index.query(redisvl_query)
-      else:
-        # Run sync query in thread pool to avoid blocking
-        results = await asyncio.to_thread(self._index.query, redisvl_query)
-
-      # Format results
-      formatted_results = [dict(r) for r in results] if results else []
-
-      return {
-          "status": "success",
-          "count": len(formatted_results),
-          "results": formatted_results,
-      }
-
-    except Exception as e:
-      return {"status": "error", "error": str(e)}
+    return await self._run_search(args, build_query_fn)
