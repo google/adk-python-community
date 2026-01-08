@@ -31,9 +31,6 @@ from google.adk.plugins import ReflectAndRetryToolPlugin
 from google.adk.tools import AgentTool
 from google.adk.tools.google_search_tool import google_search
 from google.adk.tools.tool_context import ToolContext
-import time
-from google.genai import types
-from google.adk.events.event import Event
 
 
 # ============================================================================

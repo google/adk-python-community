@@ -1,8 +1,7 @@
 # AgentTool Resilience: Timeout, Retry, and Redirect Patterns
 
-This is a **community-contributed sample** that demonstrates how to handle failures, timeouts, and partial results from downstream agents in multi-agent workflows using ADK.
+This sample demonstrates how to handle failures, timeouts, and partial results from downstream agents in multi-agent workflows using ADK.
 
-**Note:** This sample uses only core ADK features (`google-adk`) and does not require the community package. It's included in the `adk-python-community` repository as a community-contributed example demonstrating resilience patterns that may be useful to other developers.
 
 ## Prerequisites
 
