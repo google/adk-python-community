@@ -62,7 +62,7 @@ class RedisVectorSearchTool(BaseRedisSearchTool):
       )
 
       # Use with an agent
-      agent = Agent(model="gemini-2.0-flash", tools=[tool])
+      agent = Agent(model="gemini-2.5-flash", tools=[tool])
       ```
   """
 

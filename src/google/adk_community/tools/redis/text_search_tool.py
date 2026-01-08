@@ -59,7 +59,7 @@ class RedisTextSearchTool(BaseTool):
           return_fields=["title", "content"],
       )
 
-      agent = Agent(model="gemini-2.0-flash", tools=[tool])
+      agent = Agent(model="gemini-2.5-flash", tools=[tool])
       ```
   """
 

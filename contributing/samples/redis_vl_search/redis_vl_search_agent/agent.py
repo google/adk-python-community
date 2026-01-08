@@ -135,7 +135,7 @@ def create_agent() -> Agent:
     tools = get_search_tools(index, vectorizer)
 
     return Agent(
-        model="gemini-2.0-flash-001",
+        model="gemini-2.5-flash",
         name="root_agent",
         instruction=INSTRUCTION,
         tools=tools,
