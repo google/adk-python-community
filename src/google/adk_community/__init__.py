@@ -15,4 +15,5 @@
 from . import memory
 from . import sessions
 from . import version
+
 __version__ = version.__version__

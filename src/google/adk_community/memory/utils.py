@@ -33,9 +33,8 @@ def extract_text_from_event(event) -> str:
   # Filter out thought parts and only extract text
   # This prevents metadata like thoughtSignature from being stored
   text_parts = [
-      part.text 
-      for part in event.content.parts 
+      part.text
+      for part in event.content.parts
       if part.text and not part.thought
   ]
   return ' '.join(text_parts)
-

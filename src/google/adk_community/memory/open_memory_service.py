@@ -19,27 +19,27 @@ import re
 from typing import Optional
 from typing import TYPE_CHECKING
 
-import httpx
-from google.genai import types
-from pydantic import BaseModel
-from pydantic import Field
-from typing_extensions import override
-
 from google.adk.memory import _utils
 from google.adk.memory.base_memory_service import BaseMemoryService
 from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
+from google.genai import types
+import httpx
+from pydantic import BaseModel
+from pydantic import Field
+from typing_extensions import override
 
 from .utils import extract_text_from_event
 
 if TYPE_CHECKING:
   from google.adk.sessions.session import Session
 
-logger = logging.getLogger('google_adk.' + __name__)
+logger = logging.getLogger("google_adk." + __name__)
+
 
 class OpenMemoryService(BaseMemoryService):
   """Memory service implementation using OpenMemory.
-  
+
   See https://openmemory.cavira.app/ for more information.
   """
 
@@ -55,7 +55,7 @@ class OpenMemoryService(BaseMemoryService):
         base_url: Base URL of the OpenMemory instance (default: http://localhost:3000).
         api_key: API key for authentication. **Required** - must be provided.
         config: OpenMemoryServiceConfig instance. If None, uses defaults.
-    
+
     Raises:
         ValueError: If api_key is not provided or is empty.
     """
@@ -64,7 +64,7 @@ class OpenMemoryService(BaseMemoryService):
           "api_key is required for OpenMemory. "
           "Provide an API key when initializing OpenMemoryService."
       )
-    self._base_url = base_url.rstrip('/')
+    self._base_url = base_url.rstrip("/")
     self._api_key = api_key
     self._config = config or OpenMemoryServiceConfig()
 
@@ -81,14 +81,12 @@ class OpenMemoryService(BaseMemoryService):
     else:
       return self._config.default_salience
 
-  def _prepare_memory_data(
-      self, event, content_text: str, session
-  ) -> dict:
+  def _prepare_memory_data(self, event, content_text: str, session) -> dict:
     """Prepare memory data structure for OpenMemory API."""
     timestamp_str = None
     if event.timestamp:
       timestamp_str = _utils.format_timestamp(event.timestamp)
-    
+
     # Embed author and timestamp in content for search retrieval
     # Format: [Author: user, Time: 2025-11-04T10:32:01] Content text
     enriched_content = content_text
@@ -97,11 +95,11 @@ class OpenMemoryService(BaseMemoryService):
       metadata_parts.append(f"Author: {event.author}")
     if timestamp_str:
       metadata_parts.append(f"Time: {timestamp_str}")
-    
+
     if metadata_parts:
       metadata_prefix = "[" + ", ".join(metadata_parts) + "] "
       enriched_content = metadata_prefix + content_text
-    
+
     metadata = {
         "app_name": session.app_name,
         "user_id": session.user_id,
@@ -110,13 +108,13 @@ class OpenMemoryService(BaseMemoryService):
         "invocation_id": event.invocation_id,
         "author": event.author,
         "timestamp": event.timestamp,
-        "source": "adk_session"
+        "source": "adk_session",
     }
-    
+
     memory_data = {
         "content": enriched_content,
         "metadata": metadata,
-        "salience": self._determine_salience(event.author)
+        "salience": self._determine_salience(event.author),
     }
 
     if self._config.enable_metadata_tags:
@@ -138,7 +136,7 @@ class OpenMemoryService(BaseMemoryService):
     async with httpx.AsyncClient(timeout=self._config.timeout) as http_client:
       headers = {
           "Content-Type": "application/json",
-          "Authorization": f"Bearer {self._api_key}"
+          "Authorization": f"Bearer {self._api_key}",
       }
 
       for event in session.events:
@@ -155,16 +153,14 @@ class OpenMemoryService(BaseMemoryService):
               "tags": memory_data.get("tags", []),
               "metadata": memory_data.get("metadata", {}),
               "salience": memory_data.get("salience", 0.5),
-              "user_id": session.user_id
+              "user_id": session.user_id,
           }
-          
+
           response = await http_client.post(
-              f"{self._base_url}/memory/add",
-              json=payload,
-              headers=headers
+              f"{self._base_url}/memory/add", json=payload, headers=headers
           )
           response.raise_for_status()
-          
+
           memories_added += 1
           logger.debug("Added memory for event %s", event.id)
         except httpx.HTTPStatusError as e:
@@ -176,24 +172,24 @@ class OpenMemoryService(BaseMemoryService):
           )
         except httpx.RequestError as e:
           logger.error(
-              "Failed to add memory for event %s due to request error: %s", event.id, e
+              "Failed to add memory for event %s due to request error: %s",
+              event.id,
+              e,
           )
         except Exception as e:
-          logger.error("Failed to add memory for event %s due to unexpected error: %s", event.id, e)
+          logger.error(
+              "Failed to add memory for event %s due to unexpected error: %s",
+              event.id,
+              e,
+          )
 
-    logger.info(
-        "Added %d memories from session %s", memories_added, session.id
-    )
+    logger.info("Added %d memories from session %s", memories_added, session.id)
 
   def _build_search_payload(
       self, app_name: str, user_id: str, query: str
   ) -> dict:
     """Build search payload for OpenMemory query API."""
-    payload = {
-        "query": query,
-        "k": self._config.search_top_k,
-        "filter": {}
-    }
+    payload = {"query": query, "k": self._config.search_top_k, "filter": {}}
 
     payload["filter"]["user_id"] = user_id
 
@@ -204,7 +200,7 @@ class OpenMemoryService(BaseMemoryService):
 
   def _convert_to_memory_entry(self, result: dict) -> Optional[MemoryEntry]:
     """Convert OpenMemory result to MemoryEntry.
-    
+
     Extracts author and timestamp from enriched content format:
     [Author: user, Time: 2025-11-04T10:32:01] Content text
     """
@@ -213,28 +209,24 @@ class OpenMemoryService(BaseMemoryService):
       author = None
       timestamp = None
       clean_content = raw_content
-      
+
       # Parse enriched content format to extract metadata
-      match = re.match(r'^\[([^\]]+)\]\s+(.*)', raw_content, re.DOTALL)
+      match = re.match(r"^\[([^\]]+)\]\s+(.*)", raw_content, re.DOTALL)
       if match:
         metadata_str = match.group(1)
         clean_content = match.group(2)
-        
-        author_match = re.search(r'Author:\s*([^,\]]+)', metadata_str)
+
+        author_match = re.search(r"Author:\s*([^,\]]+)", metadata_str)
         if author_match:
           author = author_match.group(1).strip()
-        
-        time_match = re.search(r'Time:\s*([^,\]]+)', metadata_str)
+
+        time_match = re.search(r"Time:\s*([^,\]]+)", metadata_str)
         if time_match:
           timestamp = time_match.group(1).strip()
-      
+
       content = types.Content(parts=[types.Part(text=clean_content)])
 
-      return MemoryEntry(
-          content=content,
-          author=author,
-          timestamp=timestamp
-      )
+      return MemoryEntry(content=content, author=author, timestamp=timestamp)
     except (KeyError, ValueError) as e:
       logger.debug("Failed to convert result to MemoryEntry: %s", e)
       return None
@@ -247,25 +239,27 @@ class OpenMemoryService(BaseMemoryService):
     try:
       search_payload = self._build_search_payload(app_name, user_id, query)
       memories = []
-      
+
       async with httpx.AsyncClient(timeout=self._config.timeout) as http_client:
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}"
+            "Authorization": f"Bearer {self._api_key}",
         }
-        
+
         logger.debug("Query payload: %s", search_payload)
-        
+
         response = await http_client.post(
             f"{self._base_url}/memory/query",
             json=search_payload,
-            headers=headers
+            headers=headers,
         )
         response.raise_for_status()
         result = response.json()
-        
-        logger.debug("Query returned %d matches", len(result.get("matches", [])))
-        
+
+        logger.debug(
+            "Query returned %d matches", len(result.get("matches", []))
+        )
+
         for match in result.get("matches", []):
           memory_entry = self._convert_to_memory_entry(match)
           if memory_entry:
