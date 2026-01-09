@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any
 from typing import List
 from typing import Optional
-from typing import Tuple
 from typing import Union
 
 from google.genai import types
@@ -29,11 +28,7 @@ from redisvl.query import VectorRangeQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
 from .base_search_tool import VectorizedSearchTool
-
-# Type alias for sort specification
-SortSpec = Optional[
-    Union[str, Tuple[str, str], List[Union[str, Tuple[str, str]]]]
-]
+from .config import RedisRangeQueryConfig
 
 
 class RedisRangeSearchTool(VectorizedSearchTool):
@@ -48,15 +43,22 @@ class RedisRangeSearchTool(VectorizedSearchTool):
       ```python
       from redisvl.index import SearchIndex
       from redisvl.utils.vectorize import HFTextVectorizer
-      from google.adk_community.tools.redis import RedisRangeSearchTool
+      from google.adk_community.tools.redis import (
+          RedisRangeSearchTool,
+          RedisRangeQueryConfig,
+      )
 
       index = SearchIndex.from_yaml("schema.yaml")
       vectorizer = HFTextVectorizer(model="redis/langcache-embed-v2")
 
+      # Using config object (recommended)
+      config = RedisRangeQueryConfig(
+          distance_threshold=0.3,  # Only return docs within 0.3 distance
+      )
       tool = RedisRangeSearchTool(
           index=index,
           vectorizer=vectorizer,
-          distance_threshold=0.3,  # Only return docs within 0.3 distance
+          config=config,
           return_fields=["title", "content"],
       )
 
@@ -69,18 +71,9 @@ class RedisRangeSearchTool(VectorizedSearchTool):
       *,
       index: Union[SearchIndex, AsyncSearchIndex],
       vectorizer: BaseVectorizer,
-      vector_field_name: str = "embedding",
-      distance_threshold: float = 0.2,
-      num_results: int = 10,
+      config: Optional[RedisRangeQueryConfig] = None,
       return_fields: Optional[List[str]] = None,
       filter_expression: Optional[Any] = None,
-      dtype: str = "float32",
-      return_score: bool = True,
-      dialect: int = 2,
-      sort_by: SortSpec = None,
-      in_order: bool = False,
-      epsilon: Optional[float] = None,
-      normalize_vector_distance: bool = False,
       name: str = "redis_range_search",
       description: str = "Find all documents within a similarity threshold.",
   ):
@@ -89,18 +82,11 @@ class RedisRangeSearchTool(VectorizedSearchTool):
     Args:
         index: The RedisVL SearchIndex or AsyncSearchIndex to query.
         vectorizer: The vectorizer for embedding queries.
-        vector_field_name: The name of the vector field in the index.
-        distance_threshold: Maximum distance for results (default: 0.2).
-        num_results: Maximum number of results to return (default: 10).
+        config: Configuration for query parameters. If None, uses defaults.
+            See RedisRangeQueryConfig for available options including
+            distance_threshold, vector_field_name, and epsilon.
         return_fields: Optional list of fields to return in results.
         filter_expression: Optional filter expression to narrow results.
-        dtype: The dtype of the vector (default: "float32").
-        return_score: Whether to return the vector distance (default: True).
-        dialect: The RediSearch query dialect (default: 2).
-        sort_by: Field(s) to order results by.
-        in_order: Require query terms in same order (default: False).
-        epsilon: Range search approximation factor for HNSW/SVS-VAMANA.
-        normalize_vector_distance: Convert distance to 0-1 similarity.
         name: The name of the tool (exposed to LLM).
         description: The description of the tool (exposed to LLM).
     """
@@ -111,17 +97,8 @@ class RedisRangeSearchTool(VectorizedSearchTool):
         vectorizer=vectorizer,
         return_fields=return_fields,
     )
-    self._vector_field_name = vector_field_name
-    self._distance_threshold = distance_threshold
-    self._num_results = num_results
+    self._config = config or RedisRangeQueryConfig()
     self._filter_expression = filter_expression
-    self._dtype = dtype
-    self._return_score = return_score
-    self._dialect = dialect
-    self._sort_by = sort_by
-    self._in_order = in_order
-    self._epsilon = epsilon
-    self._normalize_vector_distance = normalize_vector_distance
 
   def _get_declaration(self) -> types.FunctionDeclaration:
     """Get the function declaration for the LLM."""
@@ -139,7 +116,7 @@ class RedisRangeSearchTool(VectorizedSearchTool):
                     type=types.Type.NUMBER,
                     description=(
                         "Max distance threshold (default:"
-                        f" {self._distance_threshold})."
+                        f" {self._config.distance_threshold})."
                     ),
                 ),
             },
@@ -160,26 +137,17 @@ class RedisRangeSearchTool(VectorizedSearchTool):
     Returns:
         A VectorRangeQuery configured for range search.
     """
+    # Allow runtime override of distance_threshold
     distance_threshold = kwargs.get(
-        "distance_threshold", self._distance_threshold
+        "distance_threshold", self._config.distance_threshold
     )
 
-    query_kwargs: dict[str, Any] = {
-        "vector": embedding,
-        "vector_field_name": self._vector_field_name,
-        "distance_threshold": distance_threshold,
-        "num_results": self._num_results,
-        "return_fields": self._return_fields,
-        "filter_expression": self._filter_expression,
-        "dtype": self._dtype,
-        "return_score": self._return_score,
-        "dialect": self._dialect,
-        "sort_by": self._sort_by,
-        "in_order": self._in_order,
-        "normalize_vector_distance": self._normalize_vector_distance,
-    }
-
-    if self._epsilon is not None:
-      query_kwargs["epsilon"] = self._epsilon
+    # Get query kwargs from config
+    query_kwargs = self._config.to_query_kwargs(
+        vector=embedding,
+        filter_expression=self._filter_expression,
+    )
+    query_kwargs["return_fields"] = self._return_fields
+    query_kwargs["distance_threshold"] = distance_threshold
 
     return VectorRangeQuery(**query_kwargs)

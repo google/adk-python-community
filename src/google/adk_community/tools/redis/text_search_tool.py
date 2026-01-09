@@ -20,8 +20,6 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Set
-from typing import Tuple
 from typing import Union
 
 from google.adk.tools.tool_context import ToolContext
@@ -31,11 +29,7 @@ from redisvl.index import SearchIndex
 from redisvl.query import TextQuery
 
 from .base_search_tool import BaseRedisSearchTool
-
-# Type alias for sort specification
-SortSpec = Optional[
-    Union[str, Tuple[str, str], List[Union[str, Tuple[str, str]]]]
-]
+from .config import RedisTextQueryConfig
 
 
 class RedisTextSearchTool(BaseRedisSearchTool):
@@ -48,14 +42,22 @@ class RedisTextSearchTool(BaseRedisSearchTool):
   Example:
       ```python
       from redisvl.index import SearchIndex
-      from google.adk_community.tools.redis import RedisTextSearchTool
+      from google.adk_community.tools.redis import (
+          RedisTextSearchTool,
+          RedisTextQueryConfig,
+      )
 
       index = SearchIndex.from_yaml("schema.yaml")
 
-      tool = RedisTextSearchTool(
-          index=index,
+      # Using config object (recommended)
+      config = RedisTextQueryConfig(
           text_field_name="content",
           num_results=10,
+          text_scorer="BM25STD",
+      )
+      tool = RedisTextSearchTool(
+          index=index,
+          config=config,
           return_fields=["title", "content"],
       )
 
@@ -67,16 +69,9 @@ class RedisTextSearchTool(BaseRedisSearchTool):
       self,
       *,
       index: Union[SearchIndex, AsyncSearchIndex],
-      text_field_name: str = "content",
-      text_scorer: str = "BM25STD",
-      num_results: int = 10,
+      config: Optional[RedisTextQueryConfig] = None,
       return_fields: Optional[List[str]] = None,
       filter_expression: Optional[Any] = None,
-      return_score: bool = True,
-      dialect: int = 2,
-      sort_by: SortSpec = None,
-      in_order: bool = False,
-      stopwords: Optional[Union[str, Set[str]]] = "english",
       name: str = "redis_text_search",
       description: str = "Search for documents using keyword matching.",
   ):
@@ -84,16 +79,10 @@ class RedisTextSearchTool(BaseRedisSearchTool):
 
     Args:
         index: The RedisVL SearchIndex or AsyncSearchIndex to query.
-        text_field_name: The name of the text field to search.
-        text_scorer: The text scoring algorithm (default: "BM25STD").
-        num_results: Default number of results to return (default: 10).
+        config: Configuration for text query parameters. If not provided,
+            defaults will be used.
         return_fields: Optional list of fields to return in results.
         filter_expression: Optional filter expression to narrow results.
-        return_score: Whether to return the text score (default: True).
-        dialect: The RediSearch query dialect (default: 2).
-        sort_by: Field(s) to order results by.
-        in_order: Require query terms in same order (default: False).
-        stopwords: Stopwords to remove from query (default: "english").
         name: The name of the tool (exposed to LLM).
         description: The description of the tool (exposed to LLM).
     """
@@ -103,15 +92,8 @@ class RedisTextSearchTool(BaseRedisSearchTool):
         index=index,
         return_fields=return_fields,
     )
-    self._text_field_name = text_field_name
-    self._text_scorer = text_scorer
-    self._num_results = num_results
+    self._config = config or RedisTextQueryConfig()
     self._filter_expression = filter_expression
-    self._return_score = return_score
-    self._dialect = dialect
-    self._sort_by = sort_by
-    self._in_order = in_order
-    self._stopwords = stopwords
 
   def _get_declaration(self) -> types.FunctionDeclaration:
     """Get the function declaration for the LLM."""
@@ -129,7 +111,7 @@ class RedisTextSearchTool(BaseRedisSearchTool):
                     type=types.Type.INTEGER,
                     description=(
                         "Number of results to return (default:"
-                        f" {self._num_results})."
+                        f" {self._config.num_results})."
                     ),
                 ),
             },
@@ -153,19 +135,15 @@ class RedisTextSearchTool(BaseRedisSearchTool):
     async def build_query_fn(
         query_text: str, args: Dict[str, Any]
     ) -> TextQuery:
-      num_results = args.get("num_results", self._num_results)
-      return TextQuery(
+      # Get query kwargs from config
+      query_kwargs = self._config.to_query_kwargs(
           text=query_text,
-          text_field_name=self._text_field_name,
-          text_scorer=self._text_scorer,
-          filter_expression=self._filter_expression,
           return_fields=self._return_fields,
-          num_results=num_results,
-          return_score=self._return_score,
-          dialect=self._dialect,
-          sort_by=self._sort_by,
-          in_order=self._in_order,
-          stopwords=self._stopwords,
+          filter_expression=self._filter_expression,
       )
+      # Allow LLM to override num_results
+      if "num_results" in args:
+        query_kwargs["num_results"] = args["num_results"]
+      return TextQuery(**query_kwargs)
 
     return await self._run_search(args, build_query_fn)
