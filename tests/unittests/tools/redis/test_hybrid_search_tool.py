@@ -26,6 +26,7 @@ from redisvl.index import SearchIndex
 from redisvl.query import HybridQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
+from google.adk_community.tools.redis import RedisHybridQueryConfig
 from google.adk_community.tools.redis import RedisHybridSearchTool
 
 
@@ -53,11 +54,14 @@ def mock_index():
 @pytest.fixture
 def hybrid_search_tool(mock_index, mock_vectorizer):
   """Create RedisHybridSearchTool instance for testing."""
+  config = RedisHybridQueryConfig(
+      text_field_name="content",
+      num_results=5,
+  )
   return RedisHybridSearchTool(
       index=mock_index,
       vectorizer=mock_vectorizer,
-      text_field_name="content",
-      num_results=5,
+      config=config,
       return_fields=["title", "content"],
   )
 
@@ -66,28 +70,28 @@ class TestRedisHybridSearchToolInit:
   """Tests for RedisHybridSearchTool initialization."""
 
   def test_default_parameters(self, mock_index, mock_vectorizer):
-    """Test default parameter values."""
+    """Test default parameter values with default config."""
     tool = RedisHybridSearchTool(
         index=mock_index,
         vectorizer=mock_vectorizer,
     )
-    assert tool._text_field_name == "content"
-    assert tool._vector_field_name == "embedding"
-    assert tool._text_scorer == "BM25STD"
-    assert tool._combination_method is None
-    assert tool._linear_alpha == 0.3
-    assert tool._rrf_window == 20
-    assert tool._rrf_constant == 60
-    assert tool._num_results == 10
+    # Config defaults
+    assert tool._config.text_field_name == "content"
+    assert tool._config.vector_field_name == "embedding"
+    assert tool._config.text_scorer == "BM25STD"
+    assert tool._config.combination_method is None
+    assert tool._config.linear_alpha == 0.3
+    assert tool._config.rrf_window == 20
+    assert tool._config.rrf_constant == 60
+    assert tool._config.num_results == 10
+    assert tool._config.dtype == "float32"
+    assert tool._config.stopwords == "english"
+    # Tool-level defaults
     assert tool._filter_expression is None
-    assert tool._dtype == "float32"
-    assert tool._stopwords == "english"
 
-  def test_custom_parameters(self, mock_index, mock_vectorizer):
-    """Test custom parameter values."""
-    tool = RedisHybridSearchTool(
-        index=mock_index,
-        vectorizer=mock_vectorizer,
+  def test_custom_parameters_via_config(self, mock_index, mock_vectorizer):
+    """Test custom parameter values via config object."""
+    config = RedisHybridQueryConfig(
         text_field_name="description",
         vector_field_name="vec",
         text_scorer="TFIDF",
@@ -96,21 +100,26 @@ class TestRedisHybridSearchToolInit:
         rrf_window=30,
         rrf_constant=80,
         num_results=20,
-        return_fields=["title", "url"],
         dtype="float64",
         stopwords={"the", "a", "an"},
     )
-    assert tool._text_field_name == "description"
-    assert tool._vector_field_name == "vec"
-    assert tool._text_scorer == "TFIDF"
-    assert tool._combination_method == "LINEAR"
-    assert tool._linear_alpha == 0.7
-    assert tool._rrf_window == 30
-    assert tool._rrf_constant == 80
-    assert tool._num_results == 20
+    tool = RedisHybridSearchTool(
+        index=mock_index,
+        vectorizer=mock_vectorizer,
+        config=config,
+        return_fields=["title", "url"],
+    )
+    assert tool._config.text_field_name == "description"
+    assert tool._config.vector_field_name == "vec"
+    assert tool._config.text_scorer == "TFIDF"
+    assert tool._config.combination_method == "LINEAR"
+    assert tool._config.linear_alpha == 0.7
+    assert tool._config.rrf_window == 30
+    assert tool._config.rrf_constant == 80
+    assert tool._config.num_results == 20
     assert tool._return_fields == ["title", "url"]
-    assert tool._dtype == "float64"
-    assert tool._stopwords == {"the", "a", "an"}
+    assert tool._config.dtype == "float64"
+    assert tool._config.stopwords == {"the", "a", "an"}
 
   def test_custom_name_and_description(self, mock_index, mock_vectorizer):
     """Test custom tool name and description."""

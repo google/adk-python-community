@@ -27,6 +27,7 @@ from redisvl.index import SearchIndex
 from redisvl.query import VectorQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
+from google.adk_community.tools.redis import RedisVectorQueryConfig
 from google.adk_community.tools.redis import RedisVectorSearchTool
 
 
@@ -56,10 +57,11 @@ def mock_index():
 @pytest.fixture
 def vector_search_tool(mock_index, mock_vectorizer):
   """Create RedisVectorSearchTool instance for testing."""
+  config = RedisVectorQueryConfig(num_results=5)
   return RedisVectorSearchTool(
       index=mock_index,
       vectorizer=mock_vectorizer,
-      num_results=5,
+      config=config,
       return_fields=["title", "content"],
   )
 
@@ -68,36 +70,35 @@ class TestRedisVectorSearchToolInit:
   """Tests for RedisVectorSearchTool initialization."""
 
   def test_default_parameters(self, mock_index, mock_vectorizer):
-    """Test default parameter values."""
+    """Test default parameter values with default config."""
     tool = RedisVectorSearchTool(
         index=mock_index,
         vectorizer=mock_vectorizer,
     )
-    assert tool._vector_field_name == "embedding"
-    assert tool._num_results == 10
-    assert tool._dtype == "float32"
-    assert tool._return_score is True
-    assert tool._dialect == 2
-    assert tool._in_order is False
-    assert tool._normalize_vector_distance is False
+    # Config defaults
+    assert tool._config.vector_field_name == "embedding"
+    assert tool._config.num_results == 10
+    assert tool._config.dtype == "float32"
+    assert tool._config.return_score is True
+    assert tool._config.dialect == 2
+    assert tool._config.in_order is False
+    assert tool._config.normalize_vector_distance is False
+    assert tool._config.sort_by is None
+    assert tool._config.hybrid_policy is None
+    assert tool._config.batch_size is None
+    assert tool._config.ef_runtime is None
+    assert tool._config.epsilon is None
+    assert tool._config.search_window_size is None
+    assert tool._config.use_search_history is None
+    assert tool._config.search_buffer_capacity is None
+    # Tool-level defaults
     assert tool._filter_expression is None
-    assert tool._sort_by is None
-    assert tool._hybrid_policy is None
-    assert tool._batch_size is None
-    assert tool._ef_runtime is None
-    assert tool._epsilon is None
-    assert tool._search_window_size is None
-    assert tool._use_search_history is None
-    assert tool._search_buffer_capacity is None
 
-  def test_custom_parameters(self, mock_index, mock_vectorizer):
-    """Test custom parameter values."""
-    tool = RedisVectorSearchTool(
-        index=mock_index,
-        vectorizer=mock_vectorizer,
+  def test_custom_parameters_via_config(self, mock_index, mock_vectorizer):
+    """Test custom parameter values via config object."""
+    config = RedisVectorQueryConfig(
         vector_field_name="custom_embedding",
         num_results=20,
-        return_fields=["title", "content", "url"],
         dtype="float64",
         return_score=False,
         dialect=3,
@@ -111,21 +112,27 @@ class TestRedisVectorSearchToolInit:
         use_search_history="ON",
         search_buffer_capacity=1000,
     )
-    assert tool._vector_field_name == "custom_embedding"
-    assert tool._num_results == 20
+    tool = RedisVectorSearchTool(
+        index=mock_index,
+        vectorizer=mock_vectorizer,
+        config=config,
+        return_fields=["title", "content", "url"],
+    )
+    assert tool._config.vector_field_name == "custom_embedding"
+    assert tool._config.num_results == 20
     assert tool._return_fields == ["title", "content", "url"]
-    assert tool._dtype == "float64"
-    assert tool._return_score is False
-    assert tool._dialect == 3
-    assert tool._in_order is True
-    assert tool._normalize_vector_distance is True
-    assert tool._hybrid_policy == "BATCHES"
-    assert tool._batch_size == 100
-    assert tool._ef_runtime == 200
-    assert tool._epsilon == 0.01
-    assert tool._search_window_size == 50
-    assert tool._use_search_history == "ON"
-    assert tool._search_buffer_capacity == 1000
+    assert tool._config.dtype == "float64"
+    assert tool._config.return_score is False
+    assert tool._config.dialect == 3
+    assert tool._config.in_order is True
+    assert tool._config.normalize_vector_distance is True
+    assert tool._config.hybrid_policy == "BATCHES"
+    assert tool._config.batch_size == 100
+    assert tool._config.ef_runtime == 200
+    assert tool._config.epsilon == 0.01
+    assert tool._config.search_window_size == 50
+    assert tool._config.use_search_history == "ON"
+    assert tool._config.search_buffer_capacity == 1000
 
   def test_custom_name_and_description(self, mock_index, mock_vectorizer):
     """Test custom tool name and description."""
@@ -169,18 +176,21 @@ class TestRedisVectorSearchToolBuildQuery:
     # Use a string filter expression (valid type for VectorQuery)
     filter_str = "@category:{redis}"
 
-    tool = RedisVectorSearchTool(
-        index=mock_index,
-        vectorizer=mock_vectorizer,
+    config = RedisVectorQueryConfig(
         vector_field_name="vec",
         num_results=10,
-        return_fields=["title"],
-        filter_expression=filter_str,
         dtype="float16",
         return_score=False,
         dialect=3,
         in_order=True,
         normalize_vector_distance=True,
+    )
+    tool = RedisVectorSearchTool(
+        index=mock_index,
+        vectorizer=mock_vectorizer,
+        config=config,
+        return_fields=["title"],
+        filter_expression=filter_str,
     )
 
     embedding = [0.1] * 384
@@ -194,11 +204,9 @@ class TestRedisVectorSearchToolBuildQuery:
     assert query._dialect == 3
     assert query._in_order is True
 
-  def test_stores_optional_parameters(self, mock_index, mock_vectorizer):
-    """Test that optional parameters are stored correctly."""
-    tool = RedisVectorSearchTool(
-        index=mock_index,
-        vectorizer=mock_vectorizer,
+  def test_stores_optional_parameters_in_config(self, mock_index, mock_vectorizer):
+    """Test that optional parameters are stored correctly in config."""
+    config = RedisVectorQueryConfig(
         hybrid_policy="ADHOC_BF",
         batch_size=50,
         ef_runtime=100,
@@ -207,15 +215,20 @@ class TestRedisVectorSearchToolBuildQuery:
         use_search_history="AUTO",
         search_buffer_capacity=500,
     )
+    tool = RedisVectorSearchTool(
+        index=mock_index,
+        vectorizer=mock_vectorizer,
+        config=config,
+    )
 
-    # Verify parameters are stored on the tool
-    assert tool._hybrid_policy == "ADHOC_BF"
-    assert tool._batch_size == 50
-    assert tool._ef_runtime == 100
-    assert tool._epsilon == 0.05
-    assert tool._search_window_size == 25
-    assert tool._use_search_history == "AUTO"
-    assert tool._search_buffer_capacity == 500
+    # Verify parameters are stored in the config
+    assert tool._config.hybrid_policy == "ADHOC_BF"
+    assert tool._config.batch_size == 50
+    assert tool._config.ef_runtime == 100
+    assert tool._config.epsilon == 0.05
+    assert tool._config.search_window_size == 25
+    assert tool._config.use_search_history == "AUTO"
+    assert tool._config.search_buffer_capacity == 500
 
 
 class TestRedisVectorSearchToolDeclaration:

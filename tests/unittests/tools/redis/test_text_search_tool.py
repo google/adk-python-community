@@ -24,6 +24,7 @@ pytest.importorskip("redisvl")
 
 from redisvl.index import SearchIndex
 
+from google.adk_community.tools.redis import RedisTextQueryConfig
 from google.adk_community.tools.redis import RedisTextSearchTool
 
 
@@ -42,12 +43,15 @@ def mock_index():
 @pytest.fixture
 def text_search_tool(mock_index):
   """Create RedisTextSearchTool instance for testing."""
-  return RedisTextSearchTool(
-      index=mock_index,
+  config = RedisTextQueryConfig(
       text_field_name="content",
       num_results=5,
-      return_fields=["title", "content"],
       stopwords=None,  # Avoid nltk dependency in tests
+  )
+  return RedisTextSearchTool(
+      index=mock_index,
+      config=config,
+      return_fields=["title", "content"],
   )
 
 
@@ -55,40 +59,43 @@ class TestRedisTextSearchToolInit:
   """Tests for RedisTextSearchTool initialization."""
 
   def test_default_parameters(self, mock_index):
-    """Test default parameter values."""
+    """Test default parameter values via config."""
     tool = RedisTextSearchTool(index=mock_index)
-    assert tool._text_field_name == "content"
-    assert tool._text_scorer == "BM25STD"
-    assert tool._num_results == 10
-    assert tool._return_score is True
-    assert tool._dialect == 2
-    assert tool._in_order is False
-    assert tool._stopwords == "english"
+    assert tool._config.text_field_name == "content"
+    assert tool._config.text_scorer == "BM25STD"
+    assert tool._config.num_results == 10
+    assert tool._config.return_score is True
+    assert tool._config.dialect == 2
+    assert tool._config.in_order is False
+    assert tool._config.stopwords == "english"
     assert tool._filter_expression is None
-    assert tool._sort_by is None
+    assert tool._config.sort_by is None
     assert tool._return_fields is None
 
-  def test_custom_parameters(self, mock_index):
-    """Test custom parameter values."""
-    tool = RedisTextSearchTool(
-        index=mock_index,
+  def test_custom_parameters_via_config(self, mock_index):
+    """Test custom parameter values via config object."""
+    config = RedisTextQueryConfig(
         text_field_name="description",
         text_scorer="TFIDF",
         num_results=20,
-        return_fields=["title", "url"],
         return_score=False,
         dialect=3,
         in_order=True,
         stopwords={"the", "a", "an"},
     )
-    assert tool._text_field_name == "description"
-    assert tool._text_scorer == "TFIDF"
-    assert tool._num_results == 20
+    tool = RedisTextSearchTool(
+        index=mock_index,
+        config=config,
+        return_fields=["title", "url"],
+    )
+    assert tool._config.text_field_name == "description"
+    assert tool._config.text_scorer == "TFIDF"
+    assert tool._config.num_results == 20
     assert tool._return_fields == ["title", "url"]
-    assert tool._return_score is False
-    assert tool._dialect == 3
-    assert tool._in_order is True
-    assert tool._stopwords == {"the", "a", "an"}
+    assert tool._config.return_score is False
+    assert tool._config.dialect == 3
+    assert tool._config.in_order is True
+    assert tool._config.stopwords == {"the", "a", "an"}
 
   def test_custom_name_and_description(self, mock_index):
     """Test custom tool name and description."""

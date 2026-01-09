@@ -26,6 +26,7 @@ from redisvl.index import SearchIndex
 from redisvl.query import VectorRangeQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
+from google.adk_community.tools.redis import RedisRangeQueryConfig
 from google.adk_community.tools.redis import RedisRangeSearchTool
 
 
@@ -55,11 +56,14 @@ def mock_index():
 @pytest.fixture
 def range_search_tool(mock_index, mock_vectorizer):
   """Create RedisRangeSearchTool instance for testing."""
+  config = RedisRangeQueryConfig(
+      distance_threshold=0.3,
+      num_results=5,
+  )
   return RedisRangeSearchTool(
       index=mock_index,
       vectorizer=mock_vectorizer,
-      distance_threshold=0.3,
-      num_results=5,
+      config=config,
       return_fields=["title", "content"],
   )
 
@@ -68,32 +72,31 @@ class TestRedisRangeSearchToolInit:
   """Tests for RedisRangeSearchTool initialization."""
 
   def test_default_parameters(self, mock_index, mock_vectorizer):
-    """Test default parameter values."""
+    """Test default parameter values with default config."""
     tool = RedisRangeSearchTool(
         index=mock_index,
         vectorizer=mock_vectorizer,
     )
-    assert tool._vector_field_name == "embedding"
-    assert tool._distance_threshold == 0.2
-    assert tool._num_results == 10
-    assert tool._dtype == "float32"
-    assert tool._return_score is True
-    assert tool._dialect == 2
-    assert tool._in_order is False
-    assert tool._normalize_vector_distance is False
+    # Config defaults
+    assert tool._config.vector_field_name == "embedding"
+    assert tool._config.distance_threshold == 0.2
+    assert tool._config.num_results == 10
+    assert tool._config.dtype == "float32"
+    assert tool._config.return_score is True
+    assert tool._config.dialect == 2
+    assert tool._config.in_order is False
+    assert tool._config.normalize_vector_distance is False
+    assert tool._config.sort_by is None
+    assert tool._config.epsilon is None
+    # Tool-level defaults
     assert tool._filter_expression is None
-    assert tool._sort_by is None
-    assert tool._epsilon is None
 
-  def test_custom_parameters(self, mock_index, mock_vectorizer):
-    """Test custom parameter values."""
-    tool = RedisRangeSearchTool(
-        index=mock_index,
-        vectorizer=mock_vectorizer,
+  def test_custom_parameters_via_config(self, mock_index, mock_vectorizer):
+    """Test custom parameter values via config object."""
+    config = RedisRangeQueryConfig(
         vector_field_name="vec",
         distance_threshold=0.5,
         num_results=20,
-        return_fields=["title", "url"],
         dtype="float64",
         return_score=False,
         dialect=3,
@@ -101,16 +104,22 @@ class TestRedisRangeSearchToolInit:
         normalize_vector_distance=True,
         epsilon=0.01,
     )
-    assert tool._vector_field_name == "vec"
-    assert tool._distance_threshold == 0.5
-    assert tool._num_results == 20
+    tool = RedisRangeSearchTool(
+        index=mock_index,
+        vectorizer=mock_vectorizer,
+        config=config,
+        return_fields=["title", "url"],
+    )
+    assert tool._config.vector_field_name == "vec"
+    assert tool._config.distance_threshold == 0.5
+    assert tool._config.num_results == 20
     assert tool._return_fields == ["title", "url"]
-    assert tool._dtype == "float64"
-    assert tool._return_score is False
-    assert tool._dialect == 3
-    assert tool._in_order is True
-    assert tool._normalize_vector_distance is True
-    assert tool._epsilon == 0.01
+    assert tool._config.dtype == "float64"
+    assert tool._config.return_score is False
+    assert tool._config.dialect == 3
+    assert tool._config.in_order is True
+    assert tool._config.normalize_vector_distance is True
+    assert tool._config.epsilon == 0.01
 
   def test_custom_name_and_description(self, mock_index, mock_vectorizer):
     """Test custom tool name and description."""
