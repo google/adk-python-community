@@ -20,8 +20,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google.adk import Agent
 from google.adk_community.tools.redis import (
+    RedisRangeQueryConfig,
     RedisRangeSearchTool,
+    RedisTextQueryConfig,
     RedisTextSearchTool,
+    RedisVectorQueryConfig,
     RedisVectorSearchTool,
 )
 from redisvl.index import SearchIndex
@@ -90,23 +93,30 @@ def get_index(schema_path: Path, redis_url: str) -> SearchIndex:
 
 def get_search_tools(index: SearchIndex, vectorizer: HFTextVectorizer) -> list:
     """Create search tools for the agent."""
+    # Config objects group query-specific parameters
+    vector_config = RedisVectorQueryConfig(num_results=5)
+    text_config = RedisTextQueryConfig(
+        text_field_name="content",
+        num_results=5,
+        text_scorer="BM25STD",
+    )
+    range_config = RedisRangeQueryConfig(distance_threshold=0.5)
+
     return [
         RedisVectorSearchTool(
             name="semantic_search",
             description="Semantic similarity search for conceptual queries.",
             index=index,
             vectorizer=vectorizer,
-            num_results=5,
+            config=vector_config,
             return_fields=RETURN_FIELDS,
         ),
         RedisTextSearchTool(
             name="keyword_search",
             description="Keyword search for exact terms and phrases.",
             index=index,
-            text_field_name="content",
-            num_results=5,
+            config=text_config,
             return_fields=RETURN_FIELDS,
-            text_scorer="BM25STD",
         ),
         RedisRangeSearchTool(
             name="range_search",
@@ -119,7 +129,7 @@ def get_search_tools(index: SearchIndex, vectorizer: HFTextVectorizer) -> list:
             ),
             index=index,
             vectorizer=vectorizer,
-            distance_threshold=0.5,
+            config=range_config,
             return_fields=RETURN_FIELDS,
         ),
     ]

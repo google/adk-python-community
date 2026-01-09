@@ -155,11 +155,13 @@ You can add filter expressions to narrow search results:
 
 ```python
 from redisvl.query.filter import Tag
+from google.adk_community.tools.redis import RedisVectorSearchTool, RedisVectorQueryConfig
 
+config = RedisVectorQueryConfig(num_results=5)
 redis_search = RedisVectorSearchTool(
     index=index,
     vectorizer=vectorizer,
-    num_results=5,
+    config=config,
     return_fields=["title", "content", "url", "category"],
     filter_expression=Tag("category") == "redis",  # Only search Redis docs
 )
@@ -169,20 +171,20 @@ See [RedisVL Filter documentation](https://docs.redisvl.com/api/filter.html) for
 
 ### Advanced Query Options
 
-`RedisVectorSearchTool` exposes all VectorQuery parameters:
+`RedisVectorSearchTool` uses a `RedisVectorQueryConfig` object for query parameters:
 
 ```python
-redis_search = RedisVectorSearchTool(
-    index=index,
-    vectorizer=vectorizer,
+from google.adk_community.tools.redis import RedisVectorSearchTool, RedisVectorQueryConfig
+from redisvl.query.filter import Tag
+
+# Configure query parameters via config object
+config = RedisVectorQueryConfig(
     num_results=10,
-    return_fields=["title", "content"],
     # Query tuning
     dtype="float32",                    # Vector dtype
     return_score=True,                  # Include similarity score
     normalize_vector_distance=True,     # Convert to 0-1 similarity
     # Hybrid filtering
-    filter_expression=Tag("category") == "redis",
     hybrid_policy="BATCHES",            # or "ADHOC_BF"
     batch_size=100,                     # For BATCHES policy
     # HNSW tuning
@@ -192,6 +194,14 @@ redis_search = RedisVectorSearchTool(
     search_window_size=20,              # Search window size
     use_search_history="AUTO",          # "OFF", "ON", or "AUTO"
     search_buffer_capacity=30,          # 2-level compression tuning
+)
+
+redis_search = RedisVectorSearchTool(
+    index=index,
+    vectorizer=vectorizer,
+    config=config,
+    return_fields=["title", "content"],
+    filter_expression=Tag("category") == "redis",
 )
 ```
 
