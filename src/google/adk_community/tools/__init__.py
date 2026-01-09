@@ -25,6 +25,9 @@ __all__ = [
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",
     "RedisTextSearchTool",
+    "RedisVectorQueryConfig",
+    "RedisHybridQueryConfig",
+    "RedisRangeQueryConfig",
 ]
 
 # Redis tool names for lazy loading
@@ -35,6 +38,14 @@ _REDIS_TOOLS = {
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",
     "RedisTextSearchTool",
+}
+
+# Redis config names for lazy loading
+_REDIS_CONFIGS = {
+    "RedisVectorQueryConfig",
+    "RedisHybridQueryConfig",
+    "RedisRangeQueryConfig",
+    "RedisTextQueryConfig",
 }
 
 
@@ -63,4 +74,17 @@ def __getattr__(name: str):
           f"{name} requires redisvl. "
           "Install with: pip install google-adk-community[redis-vl]"
       ) from e
+  if name in _REDIS_CONFIGS:
+    from .redis import RedisHybridQueryConfig
+    from .redis import RedisRangeQueryConfig
+    from .redis import RedisTextQueryConfig
+    from .redis import RedisVectorQueryConfig
+
+    globals().update({
+        "RedisVectorQueryConfig": RedisVectorQueryConfig,
+        "RedisHybridQueryConfig": RedisHybridQueryConfig,
+        "RedisRangeQueryConfig": RedisRangeQueryConfig,
+        "RedisTextQueryConfig": RedisTextQueryConfig,
+    })
+    return globals()[name]
   raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

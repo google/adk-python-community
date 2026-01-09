@@ -21,19 +21,30 @@ This module provides tools for Redis-based search operations:
 - `RedisRangeSearchTool`: Distance threshold-based vector search
 - `RedisTextSearchTool`: Full-text BM25 keyword search
 
+Configuration classes for query parameters:
+
+- `RedisVectorQueryConfig`: Configuration for vector search queries
+- `RedisHybridQueryConfig`: Configuration for hybrid search queries
+- `RedisRangeQueryConfig`: Configuration for range search queries
+- `RedisTextQueryConfig`: Configuration for text search queries
+
 Example:
     ```python
     from redisvl.index import SearchIndex
     from redisvl.utils.vectorize import HFTextVectorizer
-    from google.adk_community.tools.redis import RedisVectorSearchTool
+    from google.adk_community.tools.redis import (
+        RedisVectorSearchTool,
+        RedisVectorQueryConfig,
+    )
 
     index = SearchIndex.from_yaml("schema.yaml")
     vectorizer = HFTextVectorizer(model="redis/langcache-embed-v2")
 
+    config = RedisVectorQueryConfig(num_results=5, ef_runtime=100)
     tool = RedisVectorSearchTool(
         index=index,
         vectorizer=vectorizer,
-        num_results=5,
+        config=config,
     )
     ```
 """
@@ -41,6 +52,10 @@ Example:
 try:
   from .base_search_tool import BaseRedisSearchTool
   from .base_search_tool import VectorizedSearchTool
+  from .config import RedisHybridQueryConfig
+  from .config import RedisRangeQueryConfig
+  from .config import RedisTextQueryConfig
+  from .config import RedisVectorQueryConfig
   from .hybrid_search_tool import RedisHybridSearchTool
   from .range_search_tool import RedisRangeSearchTool
   from .text_search_tool import RedisTextSearchTool
@@ -58,4 +73,8 @@ __all__ = [
     "RedisHybridSearchTool",
     "RedisRangeSearchTool",
     "RedisTextSearchTool",
+    "RedisVectorQueryConfig",
+    "RedisHybridQueryConfig",
+    "RedisRangeQueryConfig",
+    "RedisTextQueryConfig",
 ]
