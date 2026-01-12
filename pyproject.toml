@@ -45,7 +45,9 @@ test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
-
+redis-agent-memory = [
+    "agent-memory-client>=0.13.0",
+]
 
 [tool.pyink]
 # Format py files following Google style-guide
