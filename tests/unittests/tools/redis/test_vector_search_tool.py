@@ -204,7 +204,9 @@ class TestRedisVectorSearchToolBuildQuery:
     assert query._dialect == 3
     assert query._in_order is True
 
-  def test_stores_optional_parameters_in_config(self, mock_index, mock_vectorizer):
+  def test_stores_optional_parameters_in_config(
+      self, mock_index, mock_vectorizer
+  ):
     """Test that optional parameters are stored correctly in config."""
     config = RedisVectorQueryConfig(
         hybrid_policy="ADHOC_BF",

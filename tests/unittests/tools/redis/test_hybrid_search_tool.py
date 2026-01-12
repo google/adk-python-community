@@ -14,10 +14,10 @@
 
 """Tests for RedisHybridSearchTool."""
 
-import warnings
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
+import warnings
 
 import pytest
 
@@ -30,10 +30,8 @@ from redisvl.utils.vectorize import BaseVectorizer
 from google.adk_community.tools.redis import RedisAggregatedHybridQueryConfig
 from google.adk_community.tools.redis import RedisHybridQueryConfig
 from google.adk_community.tools.redis import RedisHybridSearchTool
-from google.adk_community.tools.redis.hybrid_search_tool import (
-    _get_redisvl_version,
-    _supports_native_hybrid,
-)
+from google.adk_community.tools.redis.hybrid_search_tool import _get_redisvl_version
+from google.adk_community.tools.redis.hybrid_search_tool import _supports_native_hybrid
 
 
 @pytest.fixture

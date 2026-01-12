@@ -34,7 +34,9 @@ from pydantic import ConfigDict
 from pydantic import Field
 
 # Type alias for sort specification
-SortSpec = Optional[Union[str, Tuple[str, str], List[Union[str, Tuple[str, str]]]]]
+SortSpec = Optional[
+    Union[str, Tuple[str, str], List[Union[str, Tuple[str, str]]]]
+]
 
 
 class RedisVectorQueryConfig(BaseModel):
@@ -466,4 +468,3 @@ class RedisAggregatedHybridQueryConfig(BaseModel):
         "text_weights": self.text_weights,
         "filter_expression": filter_expression,
     }
-

@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-import warnings
 from typing import Any
 from typing import List
 from typing import Optional
 from typing import Union
+import warnings
 
 from google.genai import types
 from packaging.version import parse
@@ -168,17 +168,17 @@ class RedisHybridSearchTool(VectorizedSearchTool):
 
     if self._use_native and not self._supports_native:
       raise ValueError(
-          "RedisHybridQueryConfig requires RedisVL >= 0.13.0 and Redis >= 8.4.0. "
-          f"Installed RedisVL version: {_get_redisvl_version()}. "
-          "Use RedisAggregatedHybridQueryConfig for older versions."
+          "RedisHybridQueryConfig requires RedisVL >= 0.13.0 and Redis >="
+          f" 8.4.0. Installed RedisVL version: {_get_redisvl_version()}. Use"
+          " RedisAggregatedHybridQueryConfig for older versions."
       )
 
     if not self._use_native and self._supports_native:
       warnings.warn(
-          "RedisAggregatedHybridQueryConfig is deprecated for RedisVL >= 0.13.0. "
-          "Consider using RedisHybridQueryConfig for native FT.HYBRID support "
-          "with better performance. RedisAggregatedHybridQueryConfig will "
-          "continue to work but uses client-side score combination.",
+          "RedisAggregatedHybridQueryConfig is deprecated for RedisVL >="
+          " 0.13.0. Consider using RedisHybridQueryConfig for native FT.HYBRID"
+          " support with better performance. RedisAggregatedHybridQueryConfig"
+          " will continue to work but uses client-side score combination.",
           DeprecationWarning,
           stacklevel=2,
       )
