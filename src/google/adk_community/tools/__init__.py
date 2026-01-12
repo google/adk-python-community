@@ -27,7 +27,9 @@ __all__ = [
     "RedisTextSearchTool",
     "RedisVectorQueryConfig",
     "RedisHybridQueryConfig",
+    "RedisAggregatedHybridQueryConfig",
     "RedisRangeQueryConfig",
+    "RedisTextQueryConfig",
 ]
 
 # Redis tool names for lazy loading
@@ -44,6 +46,7 @@ _REDIS_TOOLS = {
 _REDIS_CONFIGS = {
     "RedisVectorQueryConfig",
     "RedisHybridQueryConfig",
+    "RedisAggregatedHybridQueryConfig",
     "RedisRangeQueryConfig",
     "RedisTextQueryConfig",
 }
@@ -75,6 +78,7 @@ def __getattr__(name: str):
           "Install with: pip install google-adk-community[redis-vl]"
       ) from e
   if name in _REDIS_CONFIGS:
+    from .redis import RedisAggregatedHybridQueryConfig
     from .redis import RedisHybridQueryConfig
     from .redis import RedisRangeQueryConfig
     from .redis import RedisTextQueryConfig
@@ -83,6 +87,7 @@ def __getattr__(name: str):
     globals().update({
         "RedisVectorQueryConfig": RedisVectorQueryConfig,
         "RedisHybridQueryConfig": RedisHybridQueryConfig,
+        "RedisAggregatedHybridQueryConfig": RedisAggregatedHybridQueryConfig,
         "RedisRangeQueryConfig": RedisRangeQueryConfig,
         "RedisTextQueryConfig": RedisTextQueryConfig,
     })

@@ -16,59 +16,99 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 from typing import List
 from typing import Optional
 from typing import Union
 
 from google.genai import types
+from packaging.version import parse
 from redisvl.index import AsyncSearchIndex
 from redisvl.index import SearchIndex
-from redisvl.query import HybridQuery
 from redisvl.utils.vectorize import BaseVectorizer
 
 from .base_search_tool import VectorizedSearchTool
+from .config import RedisAggregatedHybridQueryConfig
 from .config import RedisHybridQueryConfig
+
+# Minimum RedisVL version required for native FT.HYBRID support
+_MIN_NATIVE_HYBRID_VERSION = "0.13.0"
+
+
+def _get_redisvl_version() -> str:
+  """Get the installed RedisVL version string.
+
+  Returns:
+      Version string (e.g., "0.13.0") or "0.0.0" if not available.
+  """
+  try:
+    import redisvl
+
+    return getattr(redisvl, "__version__", "0.0.0")
+  except ImportError:
+    return "0.0.0"
+
+
+def _supports_native_hybrid() -> bool:
+  """Check if the installed RedisVL version supports native HybridQuery.
+
+  Returns:
+      True if RedisVL >= 0.13.0, False otherwise.
+  """
+  try:
+    return parse(_get_redisvl_version()) >= parse(_MIN_NATIVE_HYBRID_VERSION)
+  except Exception:
+    return False
 
 
 class RedisHybridSearchTool(VectorizedSearchTool):
   """Hybrid search tool combining vector similarity and BM25 text search.
 
   This tool performs a hybrid search that combines semantic vector similarity
-  with keyword-based BM25 text matching using Redis's native FT.HYBRID command.
-  This is useful when you want to leverage both the semantic understanding of
-  embeddings and the precision of keyword matching.
+  with keyword-based BM25 text matching. It automatically detects the installed
+  RedisVL version and uses the appropriate implementation:
 
-  Requirements:
-      - Redis >= 8.4.0 (for native FT.HYBRID command support)
-      - redis-py >= 7.1.0
+  - **RedisVL >= 0.13.0**: Uses native FT.HYBRID command (server-side fusion)
+    with RedisHybridQueryConfig. Requires Redis >= 8.4.0.
+  - **RedisVL < 0.13.0**: Uses AggregateHybridQuery (client-side fusion)
+    with RedisAggregatedHybridQueryConfig. Works with any Redis version.
 
-  Example:
+  Example (native mode - RedisVL >= 0.13.0):
       ```python
-      from redisvl.index import SearchIndex
-      from redisvl.utils.vectorize import HFTextVectorizer
       from google.adk_community.tools.redis import (
           RedisHybridSearchTool,
           RedisHybridQueryConfig,
       )
 
-      index = SearchIndex.from_yaml("schema.yaml")
-      vectorizer = HFTextVectorizer(model="redis/langcache-embed-v2")
-
-      # Using config object (recommended)
       config = RedisHybridQueryConfig(
           text_field_name="content",
+          combination_method="LINEAR",
           linear_alpha=0.7,  # 70% text, 30% vector
-          num_results=10,
       )
       tool = RedisHybridSearchTool(
           index=index,
           vectorizer=vectorizer,
           config=config,
-          return_fields=["title", "content"],
+      )
+      ```
+
+  Example (aggregate mode - older versions):
+      ```python
+      from google.adk_community.tools.redis import (
+          RedisHybridSearchTool,
+          RedisAggregatedHybridQueryConfig,
       )
 
-      agent = Agent(model="gemini-2.5-flash", tools=[tool])
+      config = RedisAggregatedHybridQueryConfig(
+          text_field_name="content",
+          alpha=0.7,  # 70% text, 30% vector
+      )
+      tool = RedisHybridSearchTool(
+          index=index,
+          vectorizer=vectorizer,
+          config=config,
+      )
       ```
   """
 
@@ -77,7 +117,9 @@ class RedisHybridSearchTool(VectorizedSearchTool):
       *,
       index: Union[SearchIndex, AsyncSearchIndex],
       vectorizer: BaseVectorizer,
-      config: Optional[RedisHybridQueryConfig] = None,
+      config: Optional[
+          Union[RedisHybridQueryConfig, RedisAggregatedHybridQueryConfig]
+      ] = None,
       return_fields: Optional[List[str]] = None,
       filter_expression: Optional[Any] = None,
       name: str = "redis_hybrid_search",
@@ -88,13 +130,21 @@ class RedisHybridSearchTool(VectorizedSearchTool):
     Args:
         index: The RedisVL SearchIndex or AsyncSearchIndex to query.
         vectorizer: The vectorizer for embedding queries.
-        config: Configuration for query parameters. If None, uses defaults.
-            See RedisHybridQueryConfig for available options including
-            text_field_name, vector_field_name, linear_alpha, and more.
+        config: Configuration for query parameters. Can be either:
+            - RedisHybridQueryConfig: For native FT.HYBRID (RedisVL >= 0.13.0)
+            - RedisAggregatedHybridQueryConfig: For client-side hybrid (older)
+            If None, auto-detects based on installed RedisVL version.
         return_fields: Optional list of fields to return in results.
         filter_expression: Optional filter expression to narrow results.
         name: The name of the tool (exposed to LLM).
         description: The description of the tool (exposed to LLM).
+
+    Raises:
+        ValueError: If RedisHybridQueryConfig is used with RedisVL < 0.13.0.
+
+    Warns:
+        DeprecationWarning: If RedisAggregatedHybridQueryConfig is used when
+            native hybrid is available (RedisVL >= 0.13.0).
     """
     super().__init__(
         name=name,
@@ -103,7 +153,37 @@ class RedisHybridSearchTool(VectorizedSearchTool):
         vectorizer=vectorizer,
         return_fields=return_fields,
     )
-    self._config = config or RedisHybridQueryConfig()
+
+    self._supports_native = _supports_native_hybrid()
+
+    # Auto-detect config if not provided
+    if config is None:
+      if self._supports_native:
+        config = RedisHybridQueryConfig()
+      else:
+        config = RedisAggregatedHybridQueryConfig()
+
+    # Validate config compatibility with installed version
+    self._use_native = isinstance(config, RedisHybridQueryConfig)
+
+    if self._use_native and not self._supports_native:
+      raise ValueError(
+          "RedisHybridQueryConfig requires RedisVL >= 0.13.0 and Redis >= 8.4.0. "
+          f"Installed RedisVL version: {_get_redisvl_version()}. "
+          "Use RedisAggregatedHybridQueryConfig for older versions."
+      )
+
+    if not self._use_native and self._supports_native:
+      warnings.warn(
+          "RedisAggregatedHybridQueryConfig is deprecated for RedisVL >= 0.13.0. "
+          "Consider using RedisHybridQueryConfig for native FT.HYBRID support "
+          "with better performance. RedisAggregatedHybridQueryConfig will "
+          "continue to work but uses client-side score combination.",
+          DeprecationWarning,
+          stacklevel=2,
+      )
+
+    self._config = config
     self._filter_expression = filter_expression
 
   def _get_declaration(self) -> types.FunctionDeclaration:
@@ -132,8 +212,8 @@ class RedisHybridSearchTool(VectorizedSearchTool):
 
   def _build_query(
       self, query_text: str, embedding: List[float], **kwargs: Any
-  ) -> HybridQuery:
-    """Build a HybridQuery for combined vector + text search.
+  ) -> Any:
+    """Build a query for combined vector + text search.
 
     Args:
         query_text: The original query text for BM25 matching.
@@ -141,7 +221,7 @@ class RedisHybridSearchTool(VectorizedSearchTool):
         **kwargs: Additional parameters (e.g., num_results).
 
     Returns:
-        A HybridQuery configured for hybrid search.
+        A HybridQuery or AggregateHybridQuery configured for hybrid search.
     """
     # Allow runtime override of num_results
     num_results = kwargs.get("num_results", self._config.num_results)
@@ -155,4 +235,11 @@ class RedisHybridSearchTool(VectorizedSearchTool):
     )
     query_kwargs["num_results"] = num_results
 
-    return HybridQuery(**query_kwargs)
+    if self._use_native:
+      from redisvl.query import HybridQuery
+
+      return HybridQuery(**query_kwargs)
+    else:
+      from redisvl.query import AggregateHybridQuery
+
+      return AggregateHybridQuery(**query_kwargs)

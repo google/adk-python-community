@@ -24,7 +24,8 @@ This module provides tools for Redis-based search operations:
 Configuration classes for query parameters:
 
 - `RedisVectorQueryConfig`: Configuration for vector search queries
-- `RedisHybridQueryConfig`: Configuration for hybrid search queries
+- `RedisHybridQueryConfig`: Configuration for native hybrid search (RedisVL >= 0.13.0)
+- `RedisAggregatedHybridQueryConfig`: Configuration for client-side hybrid (older versions)
 - `RedisRangeQueryConfig`: Configuration for range search queries
 - `RedisTextQueryConfig`: Configuration for text search queries
 
@@ -52,6 +53,7 @@ Example:
 try:
   from .base_search_tool import BaseRedisSearchTool
   from .base_search_tool import VectorizedSearchTool
+  from .config import RedisAggregatedHybridQueryConfig
   from .config import RedisHybridQueryConfig
   from .config import RedisRangeQueryConfig
   from .config import RedisTextQueryConfig
@@ -75,6 +77,7 @@ __all__ = [
     "RedisTextSearchTool",
     "RedisVectorQueryConfig",
     "RedisHybridQueryConfig",
+    "RedisAggregatedHybridQueryConfig",
     "RedisRangeQueryConfig",
     "RedisTextQueryConfig",
 ]
