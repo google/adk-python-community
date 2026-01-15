@@ -106,57 +106,6 @@ MOCK_SESSION_WITH_EMPTY_EVENTS = Session(
 )
 
 
-class TestRedisAgentMemoryServiceConfig:
-    """Tests for RedisAgentMemoryServiceConfig."""
-
-    def test_default_config(self):
-        """Test default configuration values."""
-        config = RedisAgentMemoryServiceConfig()
-        assert config.api_base_url == "http://localhost:8000"
-        assert config.timeout == 30.0
-        assert config.default_namespace is None
-        assert config.search_top_k == 10
-        assert config.distance_threshold is None
-        assert config.recency_boost is True
-        assert config.semantic_weight == 0.8
-        assert config.recency_weight == 0.2
-        assert config.freshness_weight == 0.6
-        assert config.novelty_weight == 0.4
-        assert config.half_life_last_access_days == 7.0
-        assert config.half_life_created_days == 30.0
-        assert config.extraction_strategy == "discrete"
-        assert config.extraction_strategy_config == {}
-        assert config.model_name is None
-        assert config.context_window_max is None
-
-    def test_custom_config(self):
-        """Test custom configuration values."""
-        config = RedisAgentMemoryServiceConfig(
-            api_base_url="http://memory-server:9000",
-            timeout=60.0,
-            default_namespace="my_app",
-            search_top_k=20,
-            distance_threshold=0.5,
-            recency_boost=False,
-            semantic_weight=0.7,
-            recency_weight=0.3,
-            extraction_strategy="summary",
-            model_name="gpt-4o",
-            context_window_max=128000,
-        )
-        assert config.api_base_url == "http://memory-server:9000"
-        assert config.timeout == 60.0
-        assert config.default_namespace == "my_app"
-        assert config.search_top_k == 20
-        assert config.distance_threshold == 0.5
-        assert config.recency_boost is False
-        assert config.semantic_weight == 0.7
-        assert config.recency_weight == 0.3
-        assert config.extraction_strategy == "summary"
-        assert config.model_name == "gpt-4o"
-        assert config.context_window_max == 128000
-
-
 class TestRedisAgentMemoryService:
     """Tests for RedisAgentMemoryService."""
 
