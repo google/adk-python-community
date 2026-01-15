@@ -47,7 +47,7 @@ test = [
     "pytest-asyncio>=1.2.0",
 ]
 redis-agent-memory = [
-    "agent-memory-client>=0.13.0",
+    "agent-memory-client>=0.13.0; python_version >= '3.10'",
 ]
 
 [tool.pyink]
