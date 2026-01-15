@@ -5,7 +5,7 @@ memory backend for ADK agents using the community package.
 
 ## Prerequisites
 
-- Python 3.9+ (Python 3.11+ recommended)
+- Python 3.10+ (Python 3.11+ recommended)
 - Docker (for running Redis Stack)
 - Redis Agent Memory Server running
 - ADK and ADK Community installed
