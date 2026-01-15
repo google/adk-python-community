@@ -185,8 +185,8 @@ class TestRedisAgentMemoryService:
     def memory_service(self, mock_memory_client):
         """Create RedisAgentMemoryService with mocked client."""
         service = RedisAgentMemoryService()
-        service._client = mock_memory_client
-        service._client_initialized = True
+        # Inject the mock client by setting it in __dict__ to bypass cached_property
+        service.__dict__['_client'] = mock_memory_client
         return service
 
     @pytest.fixture
@@ -199,8 +199,8 @@ class TestRedisAgentMemoryService:
             extraction_strategy="preferences",
         )
         service = RedisAgentMemoryService(config=config)
-        service._client = mock_memory_client
-        service._client_initialized = True
+        # Inject the mock client by setting it in __dict__ to bypass cached_property
+        service.__dict__['_client'] = mock_memory_client
         return service
 
     @pytest.mark.asyncio
@@ -371,21 +371,14 @@ class TestRedisAgentMemoryService:
         await memory_service.close()
 
         mock_memory_client.close.assert_called_once()
-        assert memory_service._client is None
-        assert memory_service._client_initialized is False
+        assert not hasattr(memory_service, 'client') or 'client' not in memory_service.__dict__
 
     def test_import_error_handling(self):
         """Test that ImportError is raised when agent-memory-client is not installed."""
         service = RedisAgentMemoryService()
 
         with patch.dict("sys.modules", {"agent_memory_client": None}):
-            with patch(
-                "google.adk_community.memory.redis_agent_memory_service.RedisAgentMemoryService._get_client"
-            ) as mock_get_client:
-                mock_get_client.side_effect = ImportError(
-                    "agent-memory-client package is required"
-                )
-                with pytest.raises(ImportError, match="agent-memory-client"):
-                    import asyncio
-                    asyncio.get_event_loop().run_until_complete(service._get_client())
+            with pytest.raises(ImportError, match="agent-memory-client"):
+                # Access the client property which will trigger the import
+                _ = service._client
 

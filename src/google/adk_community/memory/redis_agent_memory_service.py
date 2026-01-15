@@ -22,15 +22,16 @@ topic/entity extraction, and recency-boosted search.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Literal, Optional
 
 from google.adk.memory.base_memory_service import BaseMemoryService, SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
 from google.genai import types
+from pydantic import BaseModel, Field
 from typing_extensions import override
 
-from .utils import extract_text_from_event
+from google.adk_community.memory.utils import extract_text_from_event
 
 if TYPE_CHECKING:
     from google.adk.sessions.session import Session
@@ -38,8 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("google_adk." + __name__)
 
 
-@dataclass
-class RedisAgentMemoryServiceConfig:
+class RedisAgentMemoryServiceConfig(BaseModel):
     """Configuration for Redis Agent Memory Service.
 
     Attributes:
@@ -61,22 +61,22 @@ class RedisAgentMemoryServiceConfig:
         context_window_max: Maximum context window tokens (overrides model default).
     """
 
-    api_base_url: str = "http://localhost:8000"
-    timeout: float = 30.0
+    api_base_url: str = Field(default="http://localhost:8000")
+    timeout: float = Field(default=30.0, gt=0.0)
     default_namespace: Optional[str] = None
-    search_top_k: int = 10
-    distance_threshold: Optional[float] = None
+    search_top_k: int = Field(default=10, ge=1)
+    distance_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     recency_boost: bool = True
-    semantic_weight: float = 0.8
-    recency_weight: float = 0.2
-    freshness_weight: float = 0.6
-    novelty_weight: float = 0.4
-    half_life_last_access_days: float = 7.0
-    half_life_created_days: float = 30.0
-    extraction_strategy: Literal["discrete", "summary", "preferences", "custom"] = "discrete"
-    extraction_strategy_config: dict = field(default_factory=dict)
+    semantic_weight: float = Field(default=0.8, ge=0.0, le=1.0)
+    recency_weight: float = Field(default=0.2, ge=0.0, le=1.0)
+    freshness_weight: float = Field(default=0.6, ge=0.0, le=1.0)
+    novelty_weight: float = Field(default=0.4, ge=0.0, le=1.0)
+    half_life_last_access_days: float = Field(default=7.0, gt=0.0)
+    half_life_created_days: float = Field(default=30.0, gt=0.0)
+    extraction_strategy: Literal["discrete", "summary", "preferences", "custom"] = Field(default="discrete")
+    extraction_strategy_config: dict = Field(default_factory=dict)
     model_name: Optional[str] = None
-    context_window_max: Optional[int] = None
+    context_window_max: Optional[int] = Field(default=None, ge=1)
 
 
 class RedisAgentMemoryService(BaseMemoryService):
@@ -124,30 +124,26 @@ class RedisAgentMemoryService(BaseMemoryService):
             ImportError: If agent-memory-client package is not installed.
         """
         self._config = config or RedisAgentMemoryServiceConfig()
-        self._client = None
-        self._client_initialized = False
 
-    async def _get_client(self):
+    @cached_property
+    def _client(self):
         """Lazily initialize and return the MemoryAPIClient."""
-        if not self._client_initialized:
-            try:
-                from agent_memory_client import MemoryAPIClient, MemoryClientConfig
-            except ImportError as e:
-                raise ImportError(
-                    "agent-memory-client package is required for RedisAgentMemoryService. "
-                    "Install it with: pip install agent-memory-client"
-                ) from e
+        try:
+            from agent_memory_client import MemoryAPIClient, MemoryClientConfig
+        except ImportError as e:
+            raise ImportError(
+                "agent-memory-client package is required for RedisAgentMemoryService. "
+                "Install it with: pip install agent-memory-client"
+            ) from e
 
-            client_config = MemoryClientConfig(
-                base_url=self._config.api_base_url,
-                timeout=self._config.timeout,
-                default_namespace=self._config.default_namespace,
-                default_model_name=self._config.model_name,
-                default_context_window_max=self._config.context_window_max,
-            )
-            self._client = MemoryAPIClient(client_config)
-            self._client_initialized = True
-        return self._client
+        client_config = MemoryClientConfig(
+            base_url=self._config.api_base_url,
+            timeout=self._config.timeout,
+            default_namespace=self._config.default_namespace,
+            default_model_name=self._config.model_name,
+            default_context_window_max=self._config.context_window_max,
+        )
+        return MemoryAPIClient(client_config)
 
     def _build_working_memory(self, session: "Session"):
         """Convert ADK Session to WorkingMemory for the Agent Memory Server."""
@@ -193,14 +189,13 @@ class RedisAgentMemoryService(BaseMemoryService):
             session: The ADK Session containing events to store.
         """
         try:
-            client = await self._get_client()
             working_memory = self._build_working_memory(session)
 
             if not working_memory.messages:
                 logger.debug("No messages to store for session %s", session.id)
                 return
 
-            response = await client.put_working_memory(
+            response = await self._client.put_working_memory(
                 session_id=session.id,
                 memory=working_memory,
                 user_id=session.user_id,
@@ -253,12 +248,11 @@ class RedisAgentMemoryService(BaseMemoryService):
             SearchMemoryResponse containing matching MemoryEntry objects.
         """
         try:
-            client = await self._get_client()
             recency_config = self._build_recency_config() if self._config.recency_boost else None
 
             namespace = self._config.default_namespace or app_name
 
-            results = await client.search_long_term_memory(
+            results = await self._client.search_long_term_memory(
                 text=query,
                 namespace={"eq": namespace},
                 user_id={"eq": user_id},
@@ -288,8 +282,7 @@ class RedisAgentMemoryService(BaseMemoryService):
 
     async def close(self):
         """Close the memory service and cleanup resources."""
-        if self._client is not None:
+        if "_client" in self.__dict__:  # Check for initialized client without triggering cached_property
             await self._client.close()
-            self._client = None
-            self._client_initialized = False
-
+            # Clear the cached property
+            del self._client
