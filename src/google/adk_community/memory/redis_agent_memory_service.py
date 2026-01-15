@@ -21,268 +21,277 @@ topic/entity extraction, and recency-boosted search.
 
 from __future__ import annotations
 
-import logging
 from functools import cached_property
-from typing import TYPE_CHECKING, Literal, Optional
+import logging
+from typing import Literal
+from typing import Optional
+from typing import TYPE_CHECKING
 
-from google.adk.memory.base_memory_service import BaseMemoryService, SearchMemoryResponse
+from google.adk.memory.base_memory_service import BaseMemoryService
+from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from pydantic import Field
 from typing_extensions import override
 
 from google.adk_community.memory.utils import extract_text_from_event
 
 if TYPE_CHECKING:
-    from google.adk.sessions.session import Session
+  from google.adk.sessions.session import Session
 
 logger = logging.getLogger("google_adk." + __name__)
 
 
 class RedisAgentMemoryServiceConfig(BaseModel):
-    """Configuration for Redis Agent Memory Service.
+  """Configuration for Redis Agent Memory Service.
 
-    Attributes:
-        api_base_url: Base URL of the Agent Memory Server.
-        timeout: HTTP request timeout in seconds.
-        default_namespace: Default namespace for memory operations.
-        search_top_k: Maximum number of memories to retrieve per search.
-        distance_threshold: Maximum distance threshold for search results (0.0-1.0).
-        recency_boost: Enable recency-aware re-ranking of search results.
-        semantic_weight: Weight for semantic similarity in recency boosting (0.0-1.0).
-        recency_weight: Weight for recency score in recency boosting (0.0-1.0).
-        freshness_weight: Weight for freshness component within recency score.
-        novelty_weight: Weight for novelty component within recency score.
-        half_life_last_access_days: Half-life in days for last_accessed decay.
-        half_life_created_days: Half-life in days for created_at decay.
-        extraction_strategy: Memory extraction strategy (discrete, summary, preferences, custom).
-        extraction_strategy_config: Additional configuration for the extraction strategy.
-        model_name: Model name for context window management and summarization.
-        context_window_max: Maximum context window tokens (overrides model default).
-    """
+  Attributes:
+      api_base_url: Base URL of the Agent Memory Server.
+      timeout: HTTP request timeout in seconds.
+      default_namespace: Default namespace for memory operations.
+      search_top_k: Maximum number of memories to retrieve per search.
+      distance_threshold: Maximum distance threshold for search results (0.0-1.0).
+      recency_boost: Enable recency-aware re-ranking of search results.
+      semantic_weight: Weight for semantic similarity in recency boosting (0.0-1.0).
+      recency_weight: Weight for recency score in recency boosting (0.0-1.0).
+      freshness_weight: Weight for freshness component within recency score.
+      novelty_weight: Weight for novelty component within recency score.
+      half_life_last_access_days: Half-life in days for last_accessed decay.
+      half_life_created_days: Half-life in days for created_at decay.
+      extraction_strategy: Memory extraction strategy (discrete, summary, preferences, custom).
+      extraction_strategy_config: Additional configuration for the extraction strategy.
+      model_name: Model name for context window management and summarization.
+      context_window_max: Maximum context window tokens (overrides model default).
+  """
 
-    api_base_url: str = Field(default="http://localhost:8000")
-    timeout: float = Field(default=30.0, gt=0.0)
-    default_namespace: Optional[str] = None
-    search_top_k: int = Field(default=10, ge=1)
-    distance_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    recency_boost: bool = True
-    semantic_weight: float = Field(default=0.8, ge=0.0, le=1.0)
-    recency_weight: float = Field(default=0.2, ge=0.0, le=1.0)
-    freshness_weight: float = Field(default=0.6, ge=0.0, le=1.0)
-    novelty_weight: float = Field(default=0.4, ge=0.0, le=1.0)
-    half_life_last_access_days: float = Field(default=7.0, gt=0.0)
-    half_life_created_days: float = Field(default=30.0, gt=0.0)
-    extraction_strategy: Literal["discrete", "summary", "preferences", "custom"] = Field(default="discrete")
-    extraction_strategy_config: dict = Field(default_factory=dict)
-    model_name: Optional[str] = None
-    context_window_max: Optional[int] = Field(default=None, ge=1)
+  api_base_url: str = Field(default="http://localhost:8000")
+  timeout: float = Field(default=30.0, gt=0.0)
+  default_namespace: Optional[str] = None
+  search_top_k: int = Field(default=10, ge=1)
+  distance_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+  recency_boost: bool = True
+  semantic_weight: float = Field(default=0.8, ge=0.0, le=1.0)
+  recency_weight: float = Field(default=0.2, ge=0.0, le=1.0)
+  freshness_weight: float = Field(default=0.6, ge=0.0, le=1.0)
+  novelty_weight: float = Field(default=0.4, ge=0.0, le=1.0)
+  half_life_last_access_days: float = Field(default=7.0, gt=0.0)
+  half_life_created_days: float = Field(default=30.0, gt=0.0)
+  extraction_strategy: Literal[
+      "discrete", "summary", "preferences", "custom"
+  ] = "discrete"
+  extraction_strategy_config: dict = Field(default_factory=dict)
+  model_name: Optional[str] = None
+  context_window_max: Optional[int] = Field(default=None, ge=1)
 
 
 class RedisAgentMemoryService(BaseMemoryService):
-    """Memory service implementation using Redis Agent Memory Server.
+  """Memory service implementation using Redis Agent Memory Server.
 
-    This service provides production-grade memory capabilities including:
-    - Two-tier memory architecture (working memory + long-term memory)
-    - Automatic memory extraction (semantic facts, episodic events, preferences)
-    - Topic and entity extraction
-    - Auto-summarization when context window is exceeded
-    - Recency-boosted semantic search
-    - Deduplication and memory compaction
+  This service provides production-grade memory capabilities including:
+  - Two-tier memory architecture (working memory + long-term memory)
+  - Automatic memory extraction (semantic facts, episodic events, preferences)
+  - Topic and entity extraction
+  - Auto-summarization when context window is exceeded
+  - Recency-boosted semantic search
+  - Deduplication and memory compaction
 
-    Requires the `agent-memory-client` package to be installed.
+  Requires the `agent-memory-client` package to be installed.
 
-    Example:
-        ```python
-        from google.adk_community.memory import (
-            RedisAgentMemoryService,
-            RedisAgentMemoryServiceConfig,
-        )
+  Example:
+      ```python
+      from google.adk_community.memory import (
+          RedisAgentMemoryService,
+          RedisAgentMemoryServiceConfig,
+      )
 
-        config = RedisAgentMemoryServiceConfig(
-            api_base_url="http://localhost:8000",
-            default_namespace="my_app",
-            recency_boost=True,
-        )
-        memory_service = RedisAgentMemoryService(config=config)
+      config = RedisAgentMemoryServiceConfig(
+          api_base_url="http://localhost:8000",
+          default_namespace="my_app",
+          recency_boost=True,
+      )
+      memory_service = RedisAgentMemoryService(config=config)
 
-        # Use with ADK agent
-        agent = Agent(
-            name="my_agent",
-            memory_service=memory_service,
-        )
-        ```
+      # Use with ADK agent
+      agent = Agent(
+          name="my_agent",
+          memory_service=memory_service,
+      )
+      ```
+  """
+
+  def __init__(self, config: Optional[RedisAgentMemoryServiceConfig] = None):
+    """Initialize the Redis Agent Memory Service.
+
+    Args:
+        config: Configuration for the service. If None, uses defaults.
+
+    Raises:
+        ImportError: If agent-memory-client package is not installed.
     """
+    self._config = config or RedisAgentMemoryServiceConfig()
 
-    def __init__(self, config: Optional[RedisAgentMemoryServiceConfig] = None):
-        """Initialize the Redis Agent Memory Service.
+  @cached_property
+  def _client(self):
+    """Lazily initialize and return the MemoryAPIClient."""
+    try:
+      from agent_memory_client import MemoryAPIClient
+      from agent_memory_client import MemoryClientConfig
+    except ImportError as e:
+      raise ImportError(
+          "agent-memory-client package is required for RedisAgentMemoryService."
+          " Install it with: pip install agent-memory-client"
+      ) from e
 
-        Args:
-            config: Configuration for the service. If None, uses defaults.
+    client_config = MemoryClientConfig(
+        base_url=self._config.api_base_url,
+        timeout=self._config.timeout,
+        default_namespace=self._config.default_namespace,
+        default_model_name=self._config.model_name,
+        default_context_window_max=self._config.context_window_max,
+    )
+    return MemoryAPIClient(client_config)
 
-        Raises:
-            ImportError: If agent-memory-client package is not installed.
-        """
-        self._config = config or RedisAgentMemoryServiceConfig()
+  def _build_working_memory(self, session: "Session"):
+    """Convert ADK Session to WorkingMemory for the Agent Memory Server."""
+    from agent_memory_client.models import MemoryMessage
+    from agent_memory_client.models import MemoryStrategyConfig
+    from agent_memory_client.models import WorkingMemory
 
-    @cached_property
-    def _client(self):
-        """Lazily initialize and return the MemoryAPIClient."""
-        try:
-            from agent_memory_client import MemoryAPIClient, MemoryClientConfig
-        except ImportError as e:
-            raise ImportError(
-                "agent-memory-client package is required for RedisAgentMemoryService. "
-                "Install it with: pip install agent-memory-client"
-            ) from e
+    messages = []
+    for event in session.events:
+      text = extract_text_from_event(event)
+      if not text:
+        continue
+      role = "user" if event.author == "user" else "assistant"
+      messages.append(MemoryMessage(role=role, content=text))
 
-        client_config = MemoryClientConfig(
-            base_url=self._config.api_base_url,
-            timeout=self._config.timeout,
-            default_namespace=self._config.default_namespace,
-            default_model_name=self._config.model_name,
-            default_context_window_max=self._config.context_window_max,
-        )
-        return MemoryAPIClient(client_config)
+    strategy_config = MemoryStrategyConfig(
+        strategy=self._config.extraction_strategy,
+        config=self._config.extraction_strategy_config,
+    )
 
-    def _build_working_memory(self, session: "Session"):
-        """Convert ADK Session to WorkingMemory for the Agent Memory Server."""
-        from agent_memory_client.models import (
-            MemoryMessage,
-            MemoryStrategyConfig,
-            WorkingMemory,
-        )
+    return WorkingMemory(
+        session_id=session.id,
+        namespace=self._config.default_namespace or session.app_name,
+        user_id=session.user_id,
+        messages=messages,
+        long_term_memory_strategy=strategy_config,
+    )
 
-        messages = []
-        for event in session.events:
-            text = extract_text_from_event(event)
-            if not text:
-                continue
-            role = "user" if event.author == "user" else "assistant"
-            messages.append(MemoryMessage(role=role, content=text))
+  @override
+  async def add_session_to_memory(self, session: "Session"):
+    """Add a session's events to the Agent Memory Server.
 
-        strategy_config = MemoryStrategyConfig(
-            strategy=self._config.extraction_strategy,
-            config=self._config.extraction_strategy_config,
-        )
+    Converts ADK Session events to WorkingMemory messages and stores them
+    in the Agent Memory Server. The server will automatically:
+    - Extract semantic and episodic memories based on the configured strategy
+    - Perform topic and entity extraction
+    - Summarize context when the token limit is exceeded
+    - Promote memories to long-term storage via background tasks
 
-        return WorkingMemory(
-            session_id=session.id,
-            namespace=self._config.default_namespace or session.app_name,
-            user_id=session.user_id,
-            messages=messages,
-            long_term_memory_strategy=strategy_config,
-        )
+    Args:
+        session: The ADK Session containing events to store.
+    """
+    try:
+      working_memory = self._build_working_memory(session)
 
-    @override
-    async def add_session_to_memory(self, session: "Session"):
-        """Add a session's events to the Agent Memory Server.
+      if not working_memory.messages:
+        logger.debug("No messages to store for session %s", session.id)
+        return
 
-        Converts ADK Session events to WorkingMemory messages and stores them
-        in the Agent Memory Server. The server will automatically:
-        - Extract semantic and episodic memories based on the configured strategy
-        - Perform topic and entity extraction
-        - Summarize context when the token limit is exceeded
-        - Promote memories to long-term storage via background tasks
+      response = await self._client.put_working_memory(
+          session_id=session.id,
+          memory=working_memory,
+          user_id=session.user_id,
+      )
 
-        Args:
-            session: The ADK Session containing events to store.
-        """
-        try:
-            working_memory = self._build_working_memory(session)
+      logger.info(
+          "Stored %d messages for session %s (context: %.1f%% used)",
+          len(working_memory.messages),
+          session.id,
+          response.context_percentage_total_used or 0,
+      )
 
-            if not working_memory.messages:
-                logger.debug("No messages to store for session %s", session.id)
-                return
+    except Exception as e:
+      logger.error(
+          "Failed to add session %s to memory: %s",
+          session.id,
+          e,
+      )
 
-            response = await self._client.put_working_memory(
-                session_id=session.id,
-                memory=working_memory,
-                user_id=session.user_id,
-            )
+  def _build_recency_config(self):
+    """Build RecencyConfig from service configuration."""
+    from agent_memory_client.models import RecencyConfig
 
-            logger.info(
-                "Stored %d messages for session %s (context: %.1f%% used)",
-                len(working_memory.messages),
-                session.id,
-                response.context_percentage_total_used or 0,
-            )
+    return RecencyConfig(
+        recency_boost=self._config.recency_boost,
+        semantic_weight=self._config.semantic_weight,
+        recency_weight=self._config.recency_weight,
+        freshness_weight=self._config.freshness_weight,
+        novelty_weight=self._config.novelty_weight,
+        half_life_last_access_days=self._config.half_life_last_access_days,
+        half_life_created_days=self._config.half_life_created_days,
+    )
 
-        except Exception as e:
-            logger.error(
-                "Failed to add session %s to memory: %s",
-                session.id,
-                e,
-            )
+  @override
+  async def search_memory(
+      self, *, app_name: str, user_id: str, query: str
+  ) -> SearchMemoryResponse:
+    """Search for memories using the Agent Memory Server.
 
-    def _build_recency_config(self):
-        """Build RecencyConfig from service configuration."""
-        from agent_memory_client.models import RecencyConfig
+    Performs semantic search against long-term memory with optional
+    recency boosting. Results are filtered by namespace (derived from
+    app_name) and user_id.
 
-        return RecencyConfig(
-            recency_boost=self._config.recency_boost,
-            semantic_weight=self._config.semantic_weight,
-            recency_weight=self._config.recency_weight,
-            freshness_weight=self._config.freshness_weight,
-            novelty_weight=self._config.novelty_weight,
-            half_life_last_access_days=self._config.half_life_last_access_days,
-            half_life_created_days=self._config.half_life_created_days,
-        )
+    Args:
+        app_name: The application name (used as namespace if not configured).
+        user_id: The user ID to filter memories.
+        query: The search query for semantic matching.
 
-    @override
-    async def search_memory(
-        self, *, app_name: str, user_id: str, query: str
-    ) -> SearchMemoryResponse:
-        """Search for memories using the Agent Memory Server.
+    Returns:
+        SearchMemoryResponse containing matching MemoryEntry objects.
+    """
+    try:
+      recency_config = (
+          self._build_recency_config() if self._config.recency_boost else None
+      )
 
-        Performs semantic search against long-term memory with optional
-        recency boosting. Results are filtered by namespace (derived from
-        app_name) and user_id.
+      namespace = self._config.default_namespace or app_name
 
-        Args:
-            app_name: The application name (used as namespace if not configured).
-            user_id: The user ID to filter memories.
-            query: The search query for semantic matching.
+      results = await self._client.search_long_term_memory(
+          text=query,
+          namespace={"eq": namespace},
+          user_id={"eq": user_id},
+          distance_threshold=self._config.distance_threshold,
+          recency=recency_config,
+          limit=self._config.search_top_k,
+      )
 
-        Returns:
-            SearchMemoryResponse containing matching MemoryEntry objects.
-        """
-        try:
-            recency_config = self._build_recency_config() if self._config.recency_boost else None
+      memories = []
+      for record in results.memories:
+        content = types.Content(parts=[types.Part(text=record.text)])
+        memory_entry = MemoryEntry(content=content)
+        memories.append(memory_entry)
 
-            namespace = self._config.default_namespace or app_name
+      logger.info(
+          "Found %d memories for query '%s' (namespace=%s, user=%s)",
+          len(memories),
+          query[:50],
+          namespace,
+          user_id,
+      )
+      return SearchMemoryResponse(memories=memories)
 
-            results = await self._client.search_long_term_memory(
-                text=query,
-                namespace={"eq": namespace},
-                user_id={"eq": user_id},
-                distance_threshold=self._config.distance_threshold,
-                recency=recency_config,
-                limit=self._config.search_top_k,
-            )
+    except Exception as e:
+      logger.error("Failed to search memories: %s", e)
+      return SearchMemoryResponse(memories=[])
 
-            memories = []
-            for record in results.memories:
-                content = types.Content(parts=[types.Part(text=record.text)])
-                memory_entry = MemoryEntry(content=content)
-                memories.append(memory_entry)
-
-            logger.info(
-                "Found %d memories for query '%s' (namespace=%s, user=%s)",
-                len(memories),
-                query[:50],
-                namespace,
-                user_id,
-            )
-            return SearchMemoryResponse(memories=memories)
-
-        except Exception as e:
-            logger.error("Failed to search memories: %s", e)
-            return SearchMemoryResponse(memories=[])
-
-    async def close(self):
-        """Close the memory service and cleanup resources."""
-        if "_client" in self.__dict__:  # Check for initialized client without triggering cached_property
-            await self._client.close()
-            # Clear the cached property
-            del self._client
+  async def close(self):
+    """Close the memory service and cleanup resources."""
+    if (
+        "_client" in self.__dict__
+    ):  # Check for initialized client without triggering cached_property
+      await self._client.close()
+      # Clear the cached property
+      del self._client
