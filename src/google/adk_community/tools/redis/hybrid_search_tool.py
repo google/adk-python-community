@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from typing import List
 from typing import Optional
@@ -34,6 +35,10 @@ from .config import RedisHybridQueryConfig
 
 # Minimum RedisVL version required for native FT.HYBRID support
 _MIN_NATIVE_HYBRID_VERSION = "0.13.0"
+# Minimum Redis server version required for native FT.HYBRID support
+_MIN_REDIS_SERVER_VERSION = "8.4.0"
+
+logger = logging.getLogger(__name__)
 
 
 def _get_redisvl_version() -> str:
@@ -45,21 +50,111 @@ def _get_redisvl_version() -> str:
   try:
     import redisvl
 
-    return getattr(redisvl, "__version__", "0.0.0")
+    version = getattr(redisvl, "__version__", None)
+    if version is None:
+      logger.debug("redisvl.__version__ not found, assuming 0.0.0")
+      return "0.0.0"
+    return version
   except ImportError:
+    # This shouldn't normally happen due to module-level guard in __init__.py
+    logger.debug("redisvl not importable, assuming version 0.0.0")
     return "0.0.0"
 
 
-def _supports_native_hybrid() -> bool:
-  """Check if the installed RedisVL version supports native HybridQuery.
+def _get_redis_server_version(
+    index: Union[SearchIndex, AsyncSearchIndex],
+) -> str:
+  """Get the Redis server version from the index's client.
+
+  Args:
+      index: The RedisVL SearchIndex or AsyncSearchIndex.
 
   Returns:
-      True if RedisVL >= 0.13.0, False otherwise.
+      Version string (e.g., "8.4.0") or "0.0.0" if not available.
   """
   try:
-    return parse(_get_redisvl_version()) >= parse(_MIN_NATIVE_HYBRID_VERSION)
-  except Exception:
+    # For sync index, use _redis_client to trigger lazy connection if needed
+    if isinstance(index, SearchIndex):
+      client = index._redis_client
+    else:
+      # For async index, we can only use the public property
+      # which may be None if not yet connected
+      client = index.client
+
+    if client is None:
+      logger.warning(
+          "Redis client not available. For AsyncSearchIndex, ensure the "
+          "index has been used (e.g., await index.create()) before "
+          "creating RedisHybridSearchTool, or native hybrid support "
+          "detection will be skipped."
+      )
+      return "0.0.0"
+
+    info = client.info("server")
+    return info.get("redis_version", "0.0.0")
+  except Exception as e:
+    logger.warning(
+        "Could not determine Redis server version: %s. "
+        "Native hybrid search may not be available.",
+        e,
+    )
+    return "0.0.0"
+
+
+def _supports_native_hybrid(
+    index: Union[SearchIndex, AsyncSearchIndex],
+) -> bool:
+  """Check if native HybridQuery is supported.
+
+  Native hybrid search requires both:
+  - RedisVL >= 0.13.0
+  - Redis server >= 8.4.0
+
+  Args:
+      index: The RedisVL SearchIndex or AsyncSearchIndex to check.
+
+  Returns:
+      True if both version requirements are met, False otherwise.
+  """
+  # Check redisvl version
+  redisvl_version = _get_redisvl_version()
+  try:
+    if parse(redisvl_version) < parse(_MIN_NATIVE_HYBRID_VERSION):
+      logger.debug(
+          "Native hybrid not supported: RedisVL %s < %s",
+          redisvl_version,
+          _MIN_NATIVE_HYBRID_VERSION,
+      )
+      return False
+  except Exception as e:
+    logger.warning(
+        "Could not parse redisvl version '%s': %s. "
+        "Native hybrid search will be disabled.",
+        redisvl_version,
+        e,
+    )
     return False
+
+  # Check Redis server version
+  redis_version = _get_redis_server_version(index)
+  try:
+    if parse(redis_version) < parse(_MIN_REDIS_SERVER_VERSION):
+      logger.debug(
+          "Native hybrid not supported: Redis server %s < %s",
+          redis_version,
+          _MIN_REDIS_SERVER_VERSION,
+      )
+      return False
+  except Exception as e:
+    logger.warning(
+        "Could not parse Redis server version '%s': %s. "
+        "Native hybrid search will be disabled.",
+        redis_version,
+        e,
+    )
+    return False
+
+  return True
 
 
 class RedisHybridSearchTool(VectorizedSearchTool):
@@ -154,7 +249,7 @@ class RedisHybridSearchTool(VectorizedSearchTool):
         return_fields=return_fields,
     )
 
-    self._supports_native = _supports_native_hybrid()
+    self._supports_native = _supports_native_hybrid(index)
 
     # Auto-detect config if not provided
     if config is None:
@@ -168,9 +263,10 @@ class RedisHybridSearchTool(VectorizedSearchTool):
 
     if self._use_native and not self._supports_native:
       raise ValueError(
-          "RedisHybridQueryConfig requires RedisVL >= 0.13.0 and Redis >="
-          f" 8.4.0. Installed RedisVL version: {_get_redisvl_version()}. Use"
-          " RedisAggregatedHybridQueryConfig for older versions."
+          "RedisHybridQueryConfig requires RedisVL >= 0.13.0 and Redis >= "
+          f"8.4.0. Installed RedisVL version: {_get_redisvl_version()}, "
+          f"Redis server version: {_get_redis_server_version(index)}. "
+          "Use RedisAggregatedHybridQueryConfig for older versions."
       )
 
     if not self._use_native and self._supports_native:

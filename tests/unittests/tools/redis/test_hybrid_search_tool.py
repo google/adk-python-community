@@ -30,6 +30,7 @@ from redisvl.utils.vectorize import BaseVectorizer
 from google.adk_community.tools.redis import RedisAggregatedHybridQueryConfig
 from google.adk_community.tools.redis import RedisHybridQueryConfig
 from google.adk_community.tools.redis import RedisHybridSearchTool
+from google.adk_community.tools.redis.hybrid_search_tool import _get_redis_server_version
 from google.adk_community.tools.redis.hybrid_search_tool import _get_redisvl_version
 from google.adk_community.tools.redis.hybrid_search_tool import _supports_native_hybrid
 
@@ -44,14 +45,24 @@ def mock_vectorizer():
 
 
 @pytest.fixture
-def mock_index():
-  """Mock RedisVL SearchIndex."""
+def mock_redis_client():
+  """Mock Redis client with info method."""
+  client = MagicMock()
+  client.info = MagicMock(return_value={"redis_version": "8.4.0"})
+  return client
+
+
+@pytest.fixture
+def mock_index(mock_redis_client):
+  """Mock RedisVL SearchIndex with Redis client."""
   index = MagicMock(spec=SearchIndex)
   index.query = MagicMock(
       return_value=[
           {"title": "Test Doc", "content": "Test content", "score": 0.9}
       ]
   )
+  # Mock _redis_client property for sync index
+  type(index)._redis_client = property(lambda self: mock_redis_client)
   return index
 
 
@@ -76,10 +87,71 @@ class TestVersionDetection:
     # Should be a valid version string like "0.13.0" or "0.0.0"
     assert len(version.split(".")) >= 2
 
-  def test_supports_native_hybrid(self):
-    """Test native hybrid support detection."""
-    result = _supports_native_hybrid()
-    assert isinstance(result, bool)
+  def test_get_redis_server_version(self, mock_index):
+    """Test Redis server version retrieval."""
+    version = _get_redis_server_version(mock_index)
+    assert version == "8.4.0"
+
+  def test_get_redis_server_version_client_none(self):
+    """Test Redis server version when client is None."""
+    index = MagicMock(spec=SearchIndex)
+    type(index)._redis_client = property(lambda self: None)
+    version = _get_redis_server_version(index)
+    assert version == "0.0.0"
+
+  def test_get_redis_server_version_exception(self, mock_index):
+    """Test Redis server version when info() raises exception."""
+    mock_index._redis_client.info.side_effect = Exception("Connection error")
+    version = _get_redis_server_version(mock_index)
+    assert version == "0.0.0"
+
+  def test_supports_native_hybrid_both_versions_ok(self, mock_index):
+    """Test native hybrid support when both versions meet requirements."""
+    with patch(
+        "google.adk_community.tools.redis.hybrid_search_tool._get_redisvl_version",
+        return_value="0.13.0",
+    ):
+      result = _supports_native_hybrid(mock_index)
+      assert result is True
+
+  def test_supports_native_hybrid_redisvl_too_old(self, mock_index):
+    """Test native hybrid not supported when redisvl version is too old."""
+    with patch(
+        "google.adk_community.tools.redis.hybrid_search_tool._get_redisvl_version",
+        return_value="0.12.0",
+    ):
+      result = _supports_native_hybrid(mock_index)
+      assert result is False
+
+  def test_supports_native_hybrid_redis_server_too_old(self):
+    """Test native hybrid not supported when Redis server version is too old."""
+    # Create index with old Redis server version
+    mock_client = MagicMock()
+    mock_client.info = MagicMock(return_value={"redis_version": "7.2.0"})
+    index = MagicMock(spec=SearchIndex)
+    type(index)._redis_client = property(lambda self: mock_client)
+
+    with patch(
+        "google.adk_community.tools.redis.hybrid_search_tool._get_redisvl_version",
+        return_value="0.13.0",
+    ):
+      result = _supports_native_hybrid(index)
+      assert result is False
+
+  def test_supports_native_hybrid_both_versions_too_old(self):
+    """Test native hybrid not supported when both versions are too old."""
+    # Create index with old Redis server version
+    mock_client = MagicMock()
+    mock_client.info = MagicMock(return_value={"redis_version": "7.2.0"})
+    index = MagicMock(spec=SearchIndex)
+    type(index)._redis_client = property(lambda self: mock_client)
+
+    with patch(
+        "google.adk_community.tools.redis.hybrid_search_tool._get_redisvl_version",
+        return_value="0.12.0",
+    ):
+      result = _supports_native_hybrid(index)
+      assert result is False
 
 
 class TestRedisHybridQueryConfig:
