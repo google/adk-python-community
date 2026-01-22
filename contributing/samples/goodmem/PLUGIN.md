@@ -85,10 +85,13 @@ app = App(
 )
 ```
 
-To run this app, save the file as `agent.py` into a folder `goodmem_plugin_demo_agent/` and run the following commands from the parent directory of `goodmem_plugin_demo_agent/`:
+To run this app, save the file as `agent.py` into a folder `goodmem_plugin_demo/` -- already exists in this repository -- and run the following commands from the parent directory of `goodmem_plugin_demo/`:
 ```bash
-uv run adk run goodmem_plugin_demo_agent # command line  
-uv run adk run web goodmem_plugin_demo_agent --port 9000 # web interface
+$ ls  
+# You should expect to see the following files/dirs:
+# goodmem_plugin_demo  PLUGIN.md  README.md
+uv run adk run goodmem_plugin_demo # command line  
+uv run adk run web . # web interface
 ```
 
 Change `uv run` to `python` if you are not using uv.
