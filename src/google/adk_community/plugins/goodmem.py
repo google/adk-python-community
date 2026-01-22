@@ -31,11 +31,12 @@ class GoodmemClient:
   """Client for interacting with the Goodmem API.
 
   Attributes:
-    GOODMEM_BASE_URL: The base URL for the Goodmem API.
-    GOODMEM_API_KEY: The API key for authentication.
+    _base_url: The base URL for the Goodmem API.
+    _api_key: The API key for authentication.
+    _headers: HTTP headers for API requests.
   """
 
-  def __init__(self, base_url: str, api_key: str):
+  def __init__(self, base_url: str, api_key: str) -> None:
     """Initializes the Goodmem client.
 
     Args:
@@ -43,10 +44,10 @@ class GoodmemClient:
         (e.g., "https://api.goodmem.ai/v1").
       api_key: The API key for authentication.
     """
-    self.GOODMEM_BASE_URL = base_url
-    self.GOODMEM_API_KEY = api_key
+    self._base_url = base_url
+    self._api_key = api_key
     self._headers = {
-        "x-api-key": self.GOODMEM_API_KEY,
+        "x-api-key": self._api_key,
         "Content-Type": "application/json"
     }
 
@@ -63,7 +64,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/spaces"
+    url = f"{self._base_url}/spaces"
     payload = {
         "name": space_name,
         "spaceEmbedders": [
@@ -81,7 +82,7 @@ class GoodmemClient:
             }
         }
     }
-    response = requests.post(url, json=payload, headers=self._headers)
+    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -106,15 +107,15 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/memories"
-    payload = {
+    url = f"{self._base_url}/memories"
+    payload: Dict[str, Any] = {
         "spaceId": space_id,
         "originalContent": content,
         "contentType": content_type
     }
     if metadata:
       payload["metadata"] = metadata
-    response = requests.post(url, json=payload, headers=self._headers)
+    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -139,15 +140,15 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/memories"
-    payload = {
+    url = f"{self._base_url}/memories"
+    payload: Dict[str, Any] = {
         "spaceId": space_id,
         "originalContentB64": content_b64,
         "contentType": content_type
     }
     if metadata:
       payload["metadata"] = metadata
-    response = requests.post(url, json=payload, headers=self._headers)
+    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -170,7 +171,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/memories:retrieve"
+    url = f"{self._base_url}/memories:retrieve"
     headers = self._headers.copy()
     headers["Accept"] = "application/x-ndjson"
 
@@ -180,7 +181,7 @@ class GoodmemClient:
         "requestedSize": request_size
     }
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(url, json=payload, headers=headers, timeout=30)
     response.raise_for_status()
 
     chunks = []
@@ -199,8 +200,8 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/spaces"
-    response = requests.get(url, headers=self._headers)
+    url = f"{self._base_url}/spaces"
+    response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json().get("spaces", [])
 
@@ -213,8 +214,8 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/embedders"
-    response = requests.get(url, headers=self._headers)
+    url = f"{self._base_url}/embedders"
+    response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json().get("embedders", [])
 
@@ -230,8 +231,8 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self.GOODMEM_BASE_URL}/memories/{memory_id}"
-    response = requests.get(url, headers=self._headers)
+    url = f"{self._base_url}/memories/{memory_id}"
+    response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -258,7 +259,7 @@ class GoodmemChatPlugin(BasePlugin):
       embedder_id: Optional[str] = None,
       top_k: int = 5,
       debug: bool = False,
-  ):
+  ) -> None:
     """Initializes the Goodmem Chat Plugin.
 
     Args:
@@ -315,8 +316,8 @@ class GoodmemChatPlugin(BasePlugin):
         "EMBEDDER_ID is not set and no embedders available in Goodmem."
     )
 
-    self.top_k = top_k
-    self.space_id = None
+    self.top_k: int = top_k
+    self.space_id: Optional[str] = None
     self._user_space_cache: Dict[str, str] = {}
 
   def _ensure_chat_space(self, user_id: str) -> None:
@@ -347,8 +348,10 @@ class GoodmemChatPlugin(BasePlugin):
 
       for space in spaces:
         if space.get("name") == space_name:
-          self.space_id = space.get("spaceId")
-          self._user_space_cache[user_id] = self.space_id
+          space_id = space.get("spaceId")
+          if space_id:
+            self.space_id = space_id
+            self._user_space_cache[user_id] = space_id
           if self.debug:
             print(f"[DEBUG] Found existing {space_name} space: "
                   f"{self.space_id}")
@@ -356,9 +359,12 @@ class GoodmemChatPlugin(BasePlugin):
 
       if self.debug:
         print(f"[DEBUG] {space_name} space not found, creating new one...")
+      assert self.embedder_id is not None
       response = self.goodmem_client.create_space(space_name, self.embedder_id)
-      self.space_id = response.get("spaceId")
-      self._user_space_cache[user_id] = self.space_id
+      space_id = response.get("spaceId")
+      if space_id:
+        self.space_id = space_id
+        self._user_space_cache[user_id] = space_id
       if self.debug:
         print(f"[DEBUG] Created new chat space: {self.space_id}")
 
@@ -424,7 +430,7 @@ class GoodmemChatPlugin(BasePlugin):
           print("[DEBUG] No parts found in user_message")
         return None
 
-      base_metadata = {
+      base_metadata: Dict[str, Any] = {
           "session_id": (
               invocation_context.session.id
               if hasattr(invocation_context, "session")
@@ -588,7 +594,7 @@ class GoodmemChatPlugin(BasePlugin):
           print("[DEBUG] No chunks retrieved")
           return None
 
-      def get_chunk_data(item: Dict) -> Optional[Dict]:
+      def get_chunk_data(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
           return item["retrievedItem"]["chunk"]["chunk"]
         except Exception as e:
@@ -597,10 +603,12 @@ class GoodmemChatPlugin(BasePlugin):
           return None
 
       chunks_cleaned = [get_chunk_data(item) for item in chunks]
+      chunks_cleaned = [c for c in chunks_cleaned if c is not None]
 
-      unique_memory_ids = set(
-          chunk_data.get("memoryId") for chunk_data in chunks_cleaned
+      unique_memory_ids_raw: set[Optional[Any]] = set(
+          chunk_data.get("memoryId") if chunk_data else None for chunk_data in chunks_cleaned
       )
+      unique_memory_ids: set[str] = {mid for mid in unique_memory_ids_raw if mid is not None and isinstance(mid, str)}
       if self.debug:
         print(f"[DEBUG] Found {len(unique_memory_ids)} unique memory IDs "
               f"from {len(chunks)} results")
@@ -609,27 +617,35 @@ class GoodmemChatPlugin(BasePlugin):
       for memory_id in unique_memory_ids:
         try:
           full_memory = self.goodmem_client.get_memory_by_id(memory_id)
-          memory_metadata_cache[memory_id] = full_memory.get("metadata", {})
+          if full_memory:
+            memory_metadata_cache[memory_id] = full_memory.get("metadata", {})
         except Exception as e:
           if self.debug:
             print(f"[DEBUG] Failed to fetch metadata for memory "
                   f"{memory_id}: {e}")
           memory_metadata_cache[memory_id] = {}
 
-      formatted_records = []
+      formatted_records: List[str] = []
       for chunk_data in chunks_cleaned:
+        if not chunk_data:
+          continue
         chunk_text = chunk_data.get("chunkText", "")
         if not chunk_text:
           if self.debug:
             print(f"[DEBUG] No chunk content found for chunk {chunk_data}")
           continue
 
-        memory_id = chunk_data.get("memoryId", "")
+        chunk_memory_id_raw = chunk_data.get("memoryId")
+        if not chunk_memory_id_raw or not isinstance(chunk_memory_id_raw, str):
+          continue
+        chunk_memory_id: str = chunk_memory_id_raw
         timestamp_ms = chunk_data.get("updatedAt", 0)
-        metadata = memory_metadata_cache.get(memory_id, {})
+        if not isinstance(timestamp_ms, int):
+          timestamp_ms = 0
+        metadata = memory_metadata_cache.get(chunk_memory_id, {})
 
         formatted = self._format_chunk_context(
-            chunk_text, memory_id, timestamp_ms, metadata
+            chunk_text, chunk_memory_id, timestamp_ms, metadata
         )
         formatted_records.append(formatted)
 
@@ -716,7 +732,7 @@ class GoodmemChatPlugin(BasePlugin):
       return None
 
     try:
-      response_content = ""
+      response_content: str = ""
 
       if hasattr(llm_response, "content") and llm_response.content:
         if self.debug:
@@ -756,7 +772,7 @@ class GoodmemChatPlugin(BasePlugin):
           print("[DEBUG] No response_content extracted, returning None")
         return None
 
-      metadata = {
+      metadata: Dict[str, Any] = {
           "session_id": (
               callback_context.session.id
               if hasattr(callback_context, "session")
