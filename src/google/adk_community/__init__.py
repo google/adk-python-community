@@ -12,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""ADK Community package.
+
+This package provides community-contributed extensions for the Google ADK,
+including memory services, session services, and plugins.
+"""
+
 from . import memory
 from . import plugins
 from . import sessions
 from . import version
+
 __version__ = version.__version__

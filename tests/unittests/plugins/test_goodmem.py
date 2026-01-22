@@ -15,10 +15,12 @@
 import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
 
-from google.adk_community.plugins.goodmem import GoodmemClient, GoodmemChatPlugin
+import pytest
 from google.genai import types
+
+from google.adk_community.plugins.goodmem import GoodmemClient
+from google.adk_community.plugins.goodmem import GoodmemChatPlugin
 
 
 # Mock constants
@@ -34,6 +36,7 @@ MOCK_MEMORY_ID = "test-memory-id"
 
 class TestGoodmemClient:
   """Tests for GoodmemClient."""
+
 
   @pytest.fixture
   def mock_requests(self):
@@ -206,6 +209,7 @@ class TestGoodmemClient:
 
 class TestGoodmemChatPlugin:
   """Tests for GoodmemChatPlugin."""
+
 
   @pytest.fixture
   def mock_goodmem_client(self):

@@ -17,5 +17,5 @@
 from .goodmem import GoodmemChatPlugin
 
 __all__ = [
-    "GoodmemChatPlugin"
+    "GoodmemChatPlugin",
 ]
