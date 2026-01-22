@@ -62,7 +62,7 @@ Then just declare the plugin in a ADK app:
 import os
 from google.adk.agents import LlmAgent
 from google.adk.apps import App
-from .goodmem_chat_plugin import GoodmemChatPlugin
+from google.adk_community.plugins.goodmem import GoodmemChatPlugin
 
 root_agent = LlmAgent(
     model='gemini-2.5-flash',
@@ -115,4 +115,26 @@ Member Functions:
   - `get_memory_by_id(memory_id)` - Gets a memory by its ID
 
 Technical notes:
-1. Chunking strategy is hard coded in the function `create_space`. 
+1. Chunking strategy is hard coded in the function `create_space`.
+
+## Installing the Plugin Before Official Release
+
+If you want to use this plugin before it's merged into the official `google-adk-community` package, you can install it in editable mode from the repository:
+
+```bash
+# Clone the repository (or navigate to your local clone)
+cd adk-python-community
+
+# Install the package in editable mode
+pip install -e .
+
+# Or if using uv:
+uv pip install -e .
+```
+
+This will install `google-adk-community` in editable/development mode, which means:
+- Changes to the source code are immediately available without reinstalling
+- The `google.adk_community.plugins.goodmem` import will work
+- You can test and develop with the latest code
+
+After installation, you can use the plugin in your agent code as shown in the Usage section above. Once the plugin is merged into the official release, you can simply install it normally with `pip install google-adk-community`. 
