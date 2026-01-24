@@ -15,7 +15,9 @@
 """Community plugins for ADK."""
 
 from .goodmem import GoodmemChatPlugin
+from .goodmem_client import GoodmemClient
 
 __all__ = [
     "GoodmemChatPlugin",
+    "GoodmemClient",
 ]
