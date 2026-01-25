@@ -96,29 +96,28 @@ uv run adk run web . # web interface
 
 Change `uv run` to `python` if you are not using uv.
 
+## File structure
 
-## `GoodmemClient` class in `goodmem_chat_plugin.py`
-
-The Goodmem Chat Plugin talks to Goodmem using the `GoodmemClient` class defined in `goodmem_chat_plugin.py`.
-
-Properties:
-  - `GOODMEM_BASE_URL` - The base URL for the Goodmem API (should include v1 suffix, e.g. "https://api.goodmem.ai/v1")
-  - `GOODMEM_API_KEY` - The API key for authentication
-  - `EMBEDDER_ID` (optional, if not provided, will fetch the first embedder from API. If no embedders are available, will raise an error.)
-  - `top_k` (optional, number of top-k most relevant entries to retrieve (default: 5))
-  - `debug` (optional, set to True to enable debug mode)
-
-Member Functions:
-  - `create_space(space_name, embedder_id)` - Creates a new Goodmem space with the specified embedder
-  - `insert_memory(space_id, content, content_type="text/plain", metadata=None)` - Inserts a text memory into a space. Optional metadata dict can include session_id, user_id, role, filename, etc.
-  - `insert_memory_binary(space_id, content_b64, content_type, metadata=None)` - Inserts a binary memory (base64 encoded) into a space
-  - `retrieve_memories(query, space_ids, request_size=5)` - Searches for memories matching a query across specified spaces. Returns list of matching chunks.
-  - `get_spaces()` - Gets all spaces
-  - `list_embedders()` - Gets all embedders
-  - `get_memory_by_id(memory_id)` - Gets a memory by its ID
-
-Technical notes:
-1. Chunking strategy is hard coded in the function `create_space`.
+.
+├── src/google/adk_community/
+│   ├── __init__.py                      (modified: added plugins import)
+│   └── plugins/
+│       ├── __init__.py                   (modified: updated imports to use goodmem submodule)
+│       └── goodmem/
+│           ├── __init__.py               (new: module exports)
+│           ├── goodmem_client.py         (new: 274 lines, HTTP client for Goodmem API)
+│           └── goodmem.py                (new: 593 lines, plugin implementation)
+│
+├── tests/unittests/
+│   └── plugins/
+│       ├── __init__.py                   (new: test module)
+│       └── test_goodmem.py               (new: 31 unit tests, 712 lines)
+│
+└── contributing/samples/goodmem/
+    ├── README.md                         (new: overview of Goodmem integrations)
+    ├── PLUGIN.md                         (new: detailed plugin documentation)
+    └── goodmem_plugin_demo/
+        └── agent.py                      (new: sample agent with plugin)
 
 ## Installing the Plugin Before Official Release
 

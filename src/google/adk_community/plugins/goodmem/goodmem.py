@@ -133,7 +133,7 @@ class GoodmemChatPlugin(BasePlugin):
     try:
       if self.debug:
         print(f"[DEBUG] Checking if {space_name} space exists...")
-      spaces = self.goodmem_client.get_spaces()
+      spaces = self.goodmem_client.list_spaces()
 
       for space in spaces:
         if space.get("name") == space_name:

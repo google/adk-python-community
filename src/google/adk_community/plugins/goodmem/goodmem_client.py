@@ -16,6 +16,7 @@
 
 import json
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -34,7 +35,7 @@ class GoodmemClient:
 
     Args:
       base_url: The base URL for the Goodmem API, should include v1 suffix
-        (e.g., "https://api.goodmem.ai/v1").
+        (e.g., "https://api.goodmem.ai/").
       api_key: The API key for authentication.
     """
     self._base_url = base_url
@@ -57,7 +58,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/spaces"
+    url = f"{self._base_url}/v1/spaces"
     payload = {
         "name": space_name,
         "spaceEmbedders": [
@@ -100,7 +101,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/memories"
+    url = f"{self._base_url}/v1/memories"
     payload: Dict[str, Any] = {
         "spaceId": space_id,
         "originalContent": content,
@@ -133,7 +134,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/memories"
+    url = f"{self._base_url}/v1/memories"
     payload: Dict[str, Any] = {
         "spaceId": space_id,
         "originalContentB64": content_b64,
@@ -164,7 +165,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/memories:retrieve"
+    url = f"{self._base_url}/v1/memories:retrieve"
     headers = self._headers.copy()
     headers["Accept"] = "application/x-ndjson"
 
@@ -184,22 +185,42 @@ class GoodmemClient:
         chunks.append(tmp_dict)
     return chunks
 
-  def get_spaces(self) -> List[Dict[str, Any]]:
-    """Gets all spaces.
+  def list_spaces(self) -> List[Dict[str, Any]]:
+    """Lists all spaces using pagination.
 
     Returns:
-      List of spaces.
+      List of all spaces.
 
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/spaces"
-    response = requests.get(url, headers=self._headers, timeout=30)
-    response.raise_for_status()
-    return response.json().get("spaces", [])
+    url = f"{self._base_url}/v1/spaces"
+    all_spaces = []
+    next_token = None
+    max_results = 1000
+
+    while True:
+      # Build query parameters
+      params = {"max_results": max_results}
+      if next_token:
+        params["next_token"] = next_token
+
+      response = requests.get(url, headers=self._headers, params=params, timeout=30)
+      response.raise_for_status()
+
+      data = response.json()
+      spaces = data.get("spaces", [])
+      all_spaces.extend(spaces)
+
+      # Check for next page
+      next_token = data.get("nextToken")
+      if not next_token:
+        break
+
+    return all_spaces
 
   def list_embedders(self) -> List[Dict[str, Any]]:
-    """Gets all embedders.
+    """Lists all embedders.
 
     Returns:
       List of embedders.
@@ -207,7 +228,7 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/embedders"
+    url = f"{self._base_url}/v1/embedders"
     response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json().get("embedders", [])
@@ -224,7 +245,9 @@ class GoodmemClient:
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
-    url = f"{self._base_url}/memories/{memory_id}"
+    # URL-encode the memory_id to handle special characters
+    encoded_memory_id = quote(memory_id, safe='')
+    url = f"{self._base_url}/v1/memories/{encoded_memory_id}"
     response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()
     return response.json()

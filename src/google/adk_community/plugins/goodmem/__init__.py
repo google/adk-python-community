@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community plugins for ADK."""
+"""Goodmem plugin module for ADK."""
 
-from .goodmem.goodmem import GoodmemChatPlugin
+from .goodmem import GoodmemChatPlugin
 
 __all__ = [
     "GoodmemChatPlugin",

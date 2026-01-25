@@ -19,12 +19,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from google.genai import types
 
-from google.adk_community.plugins.goodmem import GoodmemClient
-from google.adk_community.plugins.goodmem import GoodmemChatPlugin
+from google.adk_community.plugins.goodmem.goodmem_client import GoodmemClient
+from google.adk_community.plugins.goodmem.goodmem import GoodmemChatPlugin
 
 
 # Mock constants
-MOCK_BASE_URL = "https://api.goodmem.ai/v1"
+MOCK_BASE_URL = "https://api.goodmem.ai"
 MOCK_API_KEY = "test-api-key"
 MOCK_EMBEDDER_ID = "test-embedder-id"
 MOCK_SPACE_ID = "test-space-id"
@@ -41,7 +41,7 @@ class TestGoodmemClient:
   @pytest.fixture
   def mock_requests(self) -> MagicMock:
     """Mock requests library for testing."""
-    with patch('google.adk_community.plugins.goodmem.requests') as mock_req:
+    with patch('google.adk_community.plugins.goodmem.goodmem_client.requests') as mock_req:
       yield mock_req
 
   @pytest.fixture
@@ -68,7 +68,7 @@ class TestGoodmemClient:
     assert result["spaceId"] == MOCK_SPACE_ID
     mock_requests.post.assert_called_once()
     call_args = mock_requests.post.call_args
-    assert call_args.args[0] == f"{MOCK_BASE_URL}/spaces"
+    assert call_args.args[0] == f"{MOCK_BASE_URL}/v1/spaces"
     assert call_args.kwargs["json"]["name"] == MOCK_SPACE_NAME
     assert call_args.kwargs["json"]["spaceEmbedders"][0]["embedderId"] == MOCK_EMBEDDER_ID
 
@@ -91,7 +91,7 @@ class TestGoodmemClient:
     assert result["memoryId"] == MOCK_MEMORY_ID
     mock_requests.post.assert_called_once()
     call_args = mock_requests.post.call_args
-    assert call_args.args[0] == f"{MOCK_BASE_URL}/memories"
+    assert call_args.args[0] == f"{MOCK_BASE_URL}/v1/memories"
     assert call_args.kwargs["json"]["spaceId"] == MOCK_SPACE_ID
     assert call_args.kwargs["json"]["originalContent"] == content
     assert call_args.kwargs["json"]["metadata"] == metadata
@@ -145,7 +145,7 @@ class TestGoodmemClient:
     assert call_args.kwargs["json"]["message"] == query
     assert call_args.kwargs["json"]["requestedSize"] == 5
 
-  def test_get_spaces(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_list_spaces(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
     """Test getting all spaces."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -157,13 +157,15 @@ class TestGoodmemClient:
     mock_response.raise_for_status = MagicMock()
     mock_requests.get.return_value = mock_response
 
-    result = goodmem_client.get_spaces()
+    result = goodmem_client.list_spaces()
 
     assert len(result) == 2
     assert result[0]["name"] == "Space 1"
     mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/spaces",
-        headers=goodmem_client._headers
+        f"{MOCK_BASE_URL}/v1/spaces",
+        headers=goodmem_client._headers,
+        params={"max_results": 1000},
+        timeout=30
     )
 
   def test_list_embedders(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
@@ -183,8 +185,9 @@ class TestGoodmemClient:
     assert len(result) == 2
     assert result[0]["embedderId"] == "emb1"
     mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/embedders",
-        headers=goodmem_client._headers
+        f"{MOCK_BASE_URL}/v1/embedders",
+        headers=goodmem_client._headers,
+        timeout=30
     )
 
   def test_get_memory_by_id(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
@@ -201,9 +204,12 @@ class TestGoodmemClient:
 
     assert result["memoryId"] == MOCK_MEMORY_ID
     assert result["metadata"]["user_id"] == MOCK_USER_ID
+    from urllib.parse import quote
+    encoded_memory_id = quote(MOCK_MEMORY_ID, safe='')
     mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/memories/{MOCK_MEMORY_ID}",
-        headers=goodmem_client._headers
+        f"{MOCK_BASE_URL}/v1/memories/{encoded_memory_id}",
+        headers=goodmem_client._headers,
+        timeout=30
     )
 
 
@@ -214,7 +220,7 @@ class TestGoodmemChatPlugin:
   @pytest.fixture
   def mock_goodmem_client(self) -> MagicMock:
     """Mock GoodmemClient for testing."""
-    with patch('google.adk_community.plugins.goodmem.GoodmemClient') as mock_client_class:
+    with patch('google.adk_community.plugins.goodmem.goodmem.GoodmemClient') as mock_client_class:
       mock_client = MagicMock()
       
       # Mock list_embedders
@@ -222,8 +228,8 @@ class TestGoodmemChatPlugin:
           {"embedderId": MOCK_EMBEDDER_ID, "name": "Test Embedder"}
       ]
       
-      # Mock get_spaces
-      mock_client.get_spaces.return_value = []
+      # Mock list_spaces
+      mock_client.list_spaces.return_value = []
       
       # Mock create_space
       mock_client.create_space.return_value = {"spaceId": MOCK_SPACE_ID}
@@ -318,7 +324,7 @@ class TestGoodmemChatPlugin:
   @pytest.mark.asyncio
   async def test_ensure_chat_space_creates_new_space(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test _ensure_chat_space creates a new space when it doesn't exist."""
-    mock_goodmem_client.get_spaces.return_value = []
+    mock_goodmem_client.list_spaces.return_value = []
     
     chat_plugin._ensure_chat_space(MOCK_USER_ID)
     
@@ -331,7 +337,7 @@ class TestGoodmemChatPlugin:
   @pytest.mark.asyncio
   async def test_ensure_chat_space_uses_existing_space(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test _ensure_chat_space uses existing space when found."""
-    mock_goodmem_client.get_spaces.return_value = [
+    mock_goodmem_client.list_spaces.return_value = [
         {"spaceId": "existing-space-id", "name": MOCK_SPACE_NAME}
     ]
     
@@ -348,7 +354,7 @@ class TestGoodmemChatPlugin:
     
     chat_plugin._ensure_chat_space(MOCK_USER_ID)
     
-    mock_goodmem_client.get_spaces.assert_not_called()
+    mock_goodmem_client.list_spaces.assert_not_called()
     mock_goodmem_client.create_space.assert_not_called()
     assert chat_plugin.space_id == "cached-space-id"
 
