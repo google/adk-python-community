@@ -34,8 +34,8 @@ class GoodmemClient:
     """Initializes the Goodmem client.
 
     Args:
-      base_url: The base URL for the Goodmem API, should include v1 suffix
-        (e.g., "https://api.goodmem.ai/").
+      base_url: The base URL for the Goodmem API, without the /v1 suffix
+        (e.g., "https://api.goodmem.ai").
       api_key: The API key for authentication.
     """
     self._base_url = base_url
@@ -64,13 +64,13 @@ class GoodmemClient:
         "spaceEmbedders": [
             {
                 "embedderId": embedder_id,
-                "defaultRetrievalWeight": "1.0"
+                "defaultRetrievalWeight": 1.0
             }
         ],
         "defaultChunkingConfig": {
             "recursive": {
-                "chunkSize": "512",
-                "chunkOverlap": "64",
+                "chunkSize": 512,
+                "chunkOverlap": 64,
                 "keepStrategy": "KEEP_END",
                 "lengthMeasurement": "CHARACTER_COUNT"
             }

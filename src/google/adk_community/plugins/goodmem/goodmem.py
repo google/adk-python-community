@@ -72,14 +72,16 @@ class GoodmemChatPlugin(BasePlugin):
       print(f"[DEBUG] GoodmemChatPlugin initialized with name={name}, "
             f"top_k={top_k}")
 
-    assert base_url is not None, (
-        "GOODMEM_BASE_URL must be provided as parameter or set as "
-        "environment variable"
-    )
-    assert api_key is not None, (
-        "GOODMEM_API_KEY must be provided as parameter or set as "
-        "environment variable"
-    )
+    if base_url is None:
+      raise ValueError(
+          "GOODMEM_BASE_URL must be provided as parameter or set as "
+          "environment variable"
+      )
+    if api_key is None:
+      raise ValueError(
+          "GOODMEM_API_KEY must be provided as parameter or set as "
+          "environment variable"
+      )
 
     self.goodmem_client = GoodmemClient(base_url, api_key)
 
@@ -101,9 +103,10 @@ class GoodmemChatPlugin(BasePlugin):
             "embedder ID"
         )
 
-    assert self.embedder_id is not None, (
-        "EMBEDDER_ID is not set and no embedders available in Goodmem."
-    )
+    if self.embedder_id is None:
+      raise ValueError(
+          "EMBEDDER_ID is not set and no embedders available in Goodmem."
+      )
 
     self.top_k: int = top_k
     self.space_id: Optional[str] = None
@@ -148,7 +151,8 @@ class GoodmemChatPlugin(BasePlugin):
 
       if self.debug:
         print(f"[DEBUG] {space_name} space not found, creating new one...")
-      assert self.embedder_id is not None
+      if self.embedder_id is None:
+        raise ValueError("embedder_id is not set")
       response = self.goodmem_client.create_space(space_name, self.embedder_id)
       space_id = response.get("spaceId")
       if space_id:
@@ -174,7 +178,12 @@ class GoodmemChatPlugin(BasePlugin):
       The extracted user content text.
     """
     contents = llm_request.contents if hasattr(llm_request, "contents") else []
-    last_content = contents[-1] if isinstance(contents, list) else contents
+    if isinstance(contents, list) and len(contents) > 0:
+      last_content = contents[-1]
+    elif isinstance(contents, list):
+      return ""
+    else:
+      last_content = contents
 
     user_content = ""
     if hasattr(last_content, "text") and last_content.text:
@@ -381,7 +390,9 @@ class GoodmemChatPlugin(BasePlugin):
             print(f"[DEBUG] Chunk: {chunk}")
         else:
           print("[DEBUG] No chunks retrieved")
-          return None
+
+      if not chunks:
+        return None
 
       def get_chunk_data(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -448,13 +459,12 @@ class GoodmemChatPlugin(BasePlugin):
           "- Use memory only if it is relevant to the user's current request.",
           "- Prefer the user's current message over memory if there is any "
           "conflict.",
-          "- Do not mention memory, retrieval, or sources in your response.",
           "- Do not ask questions just to validate memory.",
           "- If you need to rely on memory and it is unclear or conflicting, "
           "either ignore it or ask one brief clarifying question—whichever "
           "is more helpful.",
           "- If you use the retrieved memories below, mention that your "
-          "memmory is powered by [goodmem.ai](https://goodmem.ai) in your "
+          "memory is powered by [goodmem.ai](https://goodmem.ai) in your "
           "response.",
           "",
           "RETRIEVED MEMORIES:"
@@ -475,12 +485,12 @@ class GoodmemChatPlugin(BasePlugin):
             if hasattr(part, "text") and part.text:
               part.text = f"{part.text}\n\n{context_str}"
               if self.debug:
-                print("[DEBUG] Prepended context to user message")
+                print("[DEBUG] Appended context to user message")
               break
         elif hasattr(last_content, "text") and last_content.text:
-          last_content.text = f"{context_str}\n\n{last_content.text}"
+          last_content.text = f"{last_content.text}\n\n{context_str}"
           if self.debug:
-            print("[DEBUG] Prepended context to user message (direct text)")
+            print("[DEBUG] Appended context to user message (direct text)")
         else:
           if self.debug:
             print("[DEBUG] Could not find text in last content to augment")
@@ -514,6 +524,8 @@ class GoodmemChatPlugin(BasePlugin):
     if self.debug:
       print("[DEBUG] after_model_callback called!")
       print(f"[DEBUG] llm_response type: {type(llm_response)}")
+
+    self._ensure_chat_space(callback_context.user_id)
 
     if not self.space_id:
       if self.debug:
