@@ -95,7 +95,7 @@ adk run web . # web interface
 
 ## File structure
 
-.
+```
 ├── src/google/adk_community/
 │   ├── __init__.py                      (modified: added plugins import)
 │   └── plugins/
@@ -115,6 +115,7 @@ adk run web . # web interface
     ├── PLUGIN.md                         (new: detailed plugin documentation)
     └── goodmem_plugin_demo/
         └── agent.py                      (new: sample agent with plugin)
+```
 
 ## Installing the Plugin Before Official Release
 

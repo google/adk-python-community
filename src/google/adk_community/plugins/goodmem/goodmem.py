@@ -490,9 +490,6 @@ class GoodmemChatPlugin(BasePlugin):
           "- If you need to rely on memory and it is unclear or conflicting, "
           "either ignore it or ask one brief clarifying question—whichever "
           "is more helpful.",
-          "- If you use the retrieved memories below, mention that your "
-          "memory is powered by [goodmem.ai](https://goodmem.ai) in your "
-          "response.",
           "",
           "RETRIEVED MEMORIES:"
       ]
