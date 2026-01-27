@@ -42,7 +42,6 @@ class GoodmemChatPlugin(BasePlugin):
     goodmem_client: The Goodmem API client.
     embedder_id: The embedder ID used for the space.
     top_k: Number of relevant entries to retrieve.
-    space_id: The current space ID.
   """
 
   def __init__(
@@ -66,7 +65,7 @@ class GoodmemChatPlugin(BasePlugin):
       debug: Whether to enable debug mode.
 
     Raises:
-      AssertionError: If base_url or api_key is None.
+      ValueError: If base_url or api_key is None.
       ValueError: If no embedders are available or embedder_id is invalid.
     """
     super().__init__(name=name)

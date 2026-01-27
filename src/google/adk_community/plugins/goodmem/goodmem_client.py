@@ -123,6 +123,8 @@ class GoodmemClient:
   ) -> Dict[str, Any]:
     """Inserts a binary memory into a Goodmem space using multipart upload.
 
+    Note: This method currently prints debug information to stdout.
+
     Args:
       space_id: The ID of the space to insert into.
       content_bytes: The raw binary content as bytes.
