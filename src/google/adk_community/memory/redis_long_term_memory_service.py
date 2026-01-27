@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Redis Agent Memory Service for ADK.
+"""Redis Long-Term Memory Service for ADK.
 
 This module provides integration with the Redis Agent Memory Server,
 offering production-grade long-term memory with automatic summarization,
 topic/entity extraction, and recency-boosted search.
+
+Note: The classes were renamed from RedisAgentMemoryService to
+RedisLongTermMemoryService to better reflect their purpose of managing
+long-term memory via the Agent Memory Server.
 """
 
 from __future__ import annotations
@@ -43,8 +47,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("google_adk." + __name__)
 
 
-class RedisAgentMemoryServiceConfig(BaseModel):
-  """Configuration for Redis Agent Memory Service.
+class RedisLongTermMemoryServiceConfig(BaseModel):
+  """Configuration for Redis Long-Term Memory Service.
 
   Attributes:
       api_base_url: Base URL of the Agent Memory Server.
@@ -85,8 +89,8 @@ class RedisAgentMemoryServiceConfig(BaseModel):
   context_window_max: Optional[int] = Field(default=None, ge=1)
 
 
-class RedisAgentMemoryService(BaseMemoryService):
-  """Memory service implementation using Redis Agent Memory Server.
+class RedisLongTermMemoryService(BaseMemoryService):
+  """Long-term memory service implementation using Redis Agent Memory Server.
 
   This service provides production-grade memory capabilities including:
   - Two-tier memory architecture (working memory + long-term memory)
@@ -95,22 +99,22 @@ class RedisAgentMemoryService(BaseMemoryService):
   - Auto-summarization when context window is exceeded
   - Recency-boosted semantic search
   - Deduplication and memory compaction
-
+  - https://github.com/redis/agent-memory-server
   Requires the `agent-memory-client` package to be installed.
 
   Example:
       ```python
       from google.adk_community.memory import (
-          RedisAgentMemoryService,
-          RedisAgentMemoryServiceConfig,
+          RedisLongTermMemoryService,
+          RedisLongTermMemoryServiceConfig,
       )
 
-      config = RedisAgentMemoryServiceConfig(
+      config = RedisLongTermMemoryServiceConfig(
           api_base_url="http://localhost:8000",
           default_namespace="my_app",
           recency_boost=True,
       )
-      memory_service = RedisAgentMemoryService(config=config)
+      memory_service = RedisLongTermMemoryService(config=config)
 
       # Use with ADK agent
       agent = Agent(
@@ -120,8 +124,8 @@ class RedisAgentMemoryService(BaseMemoryService):
       ```
   """
 
-  def __init__(self, config: Optional[RedisAgentMemoryServiceConfig] = None):
-    """Initialize the Redis Agent Memory Service.
+  def __init__(self, config: Optional[RedisLongTermMemoryServiceConfig] = None):
+    """Initialize the Redis Long-Term Memory Service.
 
     Args:
         config: Configuration for the service. If None, uses defaults.
@@ -129,7 +133,7 @@ class RedisAgentMemoryService(BaseMemoryService):
     Raises:
         ImportError: If agent-memory-client package is not installed.
     """
-    self._config = config or RedisAgentMemoryServiceConfig()
+    self._config = config or RedisLongTermMemoryServiceConfig()
 
   @cached_property
   def _client(self):
@@ -139,8 +143,9 @@ class RedisAgentMemoryService(BaseMemoryService):
       from agent_memory_client import MemoryClientConfig
     except ImportError as e:
       raise ImportError(
-          "agent-memory-client package is required for RedisAgentMemoryService."
-          " Install it with: pip install agent-memory-client"
+          "agent-memory-client package is required for"
+          " RedisLongTermMemoryService. Install it with: pip install"
+          " agent-memory-client"
       ) from e
 
     client_config = MemoryClientConfig(
