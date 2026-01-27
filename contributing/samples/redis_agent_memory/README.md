@@ -107,7 +107,7 @@ Open http://localhost:8080 in your browser.
 **Session 1** - Share information:
 ```
 User: Hi, I'm Nitin. I'm a Machine Learning Engineer working on ML projects.
-User: I love coffee, especially Berliner Früstuck Coffee from Berliner Kaffeerösterei. 
+User: I love coffee, especially Berliner Frühstück Coffee from Berliner Kaffeerösterei. 
 User: My favorite programming language is Python.
 ```
 
