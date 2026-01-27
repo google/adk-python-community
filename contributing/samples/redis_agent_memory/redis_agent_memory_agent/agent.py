@@ -12,36 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sample agent demonstrating Redis Agent Memory Service integration."""
+"""Agent with full Redis memory: Working Memory + Long-Term Memory.
+
+This agent demonstrates the complete two-tier memory architecture:
+- Working Memory: Automatic session summarization when context grows large
+- Long-Term Memory: Persistent facts extracted and searchable across sessions
+"""
 
 from datetime import datetime
 
 from google.adk import Agent
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.tools import load_memory, preload_memory
+from google.adk.tools import load_memory
+from google.adk.tools import preload_memory
 
 
-def update_current_time(callback_context: CallbackContext):
-    """Update the current time in the agent's state."""
-    callback_context.state["_time"] = datetime.now().isoformat()
+def before_agent(callback_context: CallbackContext):
+  """Update state before agent runs."""
+  callback_context.state["_time"] = datetime.now().isoformat()
+
+
+async def after_agent(callback_context: CallbackContext):
+  """Store session to long-term memory after agent completes."""
+  # This triggers memory extraction to long-term memory
+  await callback_context.add_session_to_memory()
 
 
 root_agent = Agent(
     model="gemini-2.5-flash",
     name="redis_agent_memory_agent",
-    description="Agent with long-term memory powered by Redis Agent Memory Server.",
-    before_agent_callback=update_current_time,
-    instruction=(
-        "You are a helpful assistant with long-term memory capabilities.\n"
-        "You can remember information from past conversations with the user.\n\n"
-        "When the user asks about something you discussed before, use the load_memory "
-        "tool to search for relevant information from past conversations.\n"
-        "If the first search doesn't find relevant information, try different search "
-        "terms or keywords related to the question.\n\n"
-        "When the user shares personal information (name, preferences, interests), "
-        "acknowledge it - this information will be automatically saved to memory.\n\n"
-        "Current time: {_time}"
+    description=(
+        "Agent with full two-tier Redis memory: working memory for sessions,"
+        " long-term memory for persistence."
     ),
+    before_agent_callback=before_agent,
+    after_agent_callback=after_agent,
+    instruction="""You are a helpful assistant with a powerful two-tier memory system.
+
+## Your Memory Capabilities
+
+1. **Working Memory** (automatic): Your current conversation is automatically managed.
+   When the conversation gets long, older messages are summarized to keep context efficient.
+
+2. **Long-Term Memory** (persistent): Important facts and preferences are automatically
+   extracted and stored. You can search this memory across sessions.
+
+## How to Use Memory
+
+- Use `load_memory` to search for information from past conversations
+- When users share personal info (name, preferences, facts), acknowledge it - 
+  it will be automatically saved to long-term memory
+- If a search doesn't find results, try different keywords
+
+## Conversation Guidelines
+
+- Be conversational and remember details the user shares
+- Reference past interactions when relevant
+- Ask clarifying questions to learn more about the user
+
+Current time: {_time}""",
     tools=[preload_memory, load_memory],
 )
-
