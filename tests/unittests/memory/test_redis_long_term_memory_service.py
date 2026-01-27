@@ -22,8 +22,8 @@ from google.adk.sessions.session import Session
 from google.genai import types
 import pytest
 
-from google.adk_community.memory.redis_agent_memory_service import RedisAgentMemoryService
-from google.adk_community.memory.redis_agent_memory_service import RedisAgentMemoryServiceConfig
+from google.adk_community.memory.redis_long_term_memory_service import RedisLongTermMemoryService
+from google.adk_community.memory.redis_long_term_memory_service import RedisLongTermMemoryServiceConfig
 
 
 # Create mock classes for agent_memory_client.models
@@ -122,8 +122,8 @@ MOCK_SESSION_WITH_EMPTY_EVENTS = Session(
 )
 
 
-class TestRedisAgentMemoryService:
-  """Tests for RedisAgentMemoryService."""
+class TestRedisLongTermMemoryService:
+  """Tests for RedisLongTermMemoryService."""
 
   @pytest.fixture(autouse=True)
   def mock_agent_memory_models(self):
@@ -148,22 +148,22 @@ class TestRedisAgentMemoryService:
 
   @pytest.fixture
   def memory_service(self, mock_memory_client):
-    """Create RedisAgentMemoryService with mocked client."""
-    service = RedisAgentMemoryService()
+    """Create RedisLongTermMemoryService with mocked client."""
+    service = RedisLongTermMemoryService()
     # Inject the mock client by setting it in __dict__ to bypass cached_property
     service.__dict__["_client"] = mock_memory_client
     return service
 
   @pytest.fixture
   def memory_service_with_config(self, mock_memory_client):
-    """Create RedisAgentMemoryService with custom config."""
-    config = RedisAgentMemoryServiceConfig(
+    """Create RedisLongTermMemoryService with custom config."""
+    config = RedisLongTermMemoryServiceConfig(
         default_namespace="custom_namespace",
         search_top_k=5,
         recency_boost=True,
         extraction_strategy="preferences",
     )
-    service = RedisAgentMemoryService(config=config)
+    service = RedisLongTermMemoryService(config=config)
     # Inject the mock client by setting it in __dict__ to bypass cached_property
     service.__dict__["_client"] = mock_memory_client
     return service
@@ -292,8 +292,8 @@ class TestRedisAgentMemoryService:
   @pytest.mark.asyncio
   async def test_search_memory_without_recency_boost(self, mock_memory_client):
     """Test that recency config is None when disabled."""
-    config = RedisAgentMemoryServiceConfig(recency_boost=False)
-    service = RedisAgentMemoryService(config=config)
+    config = RedisLongTermMemoryServiceConfig(recency_boost=False)
+    service = RedisLongTermMemoryService(config=config)
     service._client = mock_memory_client
     service._client_initialized = True
 
@@ -352,7 +352,7 @@ class TestRedisAgentMemoryService:
 
   def test_import_error_handling(self):
     """Test that ImportError is raised when agent-memory-client is not installed."""
-    service = RedisAgentMemoryService()
+    service = RedisLongTermMemoryService()
 
     with patch.dict("sys.modules", {"agent_memory_client": None}):
       with pytest.raises(ImportError, match="agent-memory-client"):
