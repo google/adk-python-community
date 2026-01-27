@@ -38,7 +38,8 @@ class GoodmemClient:
         (e.g., "https://api.goodmem.ai").
       api_key: The API key for authentication.
     """
-    self._base_url = base_url
+    # Remove trailing slash if present to avoid double slashes in URLs
+    self._base_url = base_url.rstrip('/')
     self._api_key = api_key
     self._headers = {
         "x-api-key": self._api_key,
@@ -116,15 +117,15 @@ class GoodmemClient:
   def insert_memory_binary(
       self,
       space_id: str,
-      content_b64: str,
+      content_bytes: bytes,
       content_type: str,
       metadata: Optional[Dict[str, Any]] = None,
   ) -> Dict[str, Any]:
-    """Inserts a binary memory (base64 encoded) into a Goodmem space.
+    """Inserts a binary memory into a Goodmem space using multipart upload.
 
     Args:
       space_id: The ID of the space to insert into.
-      content_b64: The base64-encoded content.
+      content_bytes: The raw binary content as bytes.
       content_type: The MIME type (e.g., application/pdf, image/png).
       metadata: Optional metadata dict (e.g., session_id, user_id, filename).
 
@@ -135,16 +136,43 @@ class GoodmemClient:
       requests.exceptions.RequestException: If the API request fails.
     """
     url = f"{self._base_url}/v1/memories"
-    payload: Dict[str, Any] = {
+
+    print(f"[DEBUG] insert_memory_binary called:")
+    print(f"  - space_id: {space_id}")
+    print(f"  - content_type: {content_type}")
+    print(f"  - content_bytes length: {len(content_bytes)} bytes")
+    if metadata:
+      print(f"  - metadata:\n{json.dumps(metadata, indent=2)}")
+
+    # Build the JSON request metadata
+    request_data: Dict[str, Any] = {
         "spaceId": space_id,
-        "originalContentB64": content_b64,
         "contentType": content_type
     }
     if metadata:
-      payload["metadata"] = metadata
-    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
+      request_data["metadata"] = metadata
+
+    print(f"[DEBUG] request_data:\n{json.dumps(request_data, indent=2)}")
+
+    # Multipart form data: 'request' as form field, 'file' as file upload
+    data = {
+        'request': json.dumps(request_data)
+    }
+    files = {
+        'file': ('upload', content_bytes, content_type)
+    }
+
+    # Use only API key header; requests will set Content-Type for multipart
+    headers = {"x-api-key": self._api_key}
+
+    print(f"[DEBUG] Making POST request to {url}")
+    response = requests.post(url, data=data, files=files, headers=headers, timeout=120)
+    print(f"[DEBUG] Response status: {response.status_code}")
+
     response.raise_for_status()
-    return response.json()
+    result = response.json()
+    print(f"[DEBUG] Response:\n{json.dumps(result, indent=2)}")
+    return result
 
   def retrieve_memories(
       self,

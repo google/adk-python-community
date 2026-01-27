@@ -21,7 +21,6 @@ The Goodmem Chat Plugin automatically does the following:
     Usage rules:
     - Use memory only if it is relevant to the user’s current request.
     - Prefer the user’s current message over memory if there is any conflict.
-    - Do not mention memory, retrieval, or sources in your response.
     - Do not ask questions just to validate memory.
     - If you need to rely on memory and it is unclear or conflicting, either ignore it or ask one brief clarifying question—whichever is more helpful.
 
@@ -90,11 +89,9 @@ To run this app, save the file as `agent.py` into a folder `goodmem_plugin_demo/
 $ ls  
 # You should expect to see the following files/dirs:
 # goodmem_plugin_demo  PLUGIN.md  README.md
-uv run adk run goodmem_plugin_demo # command line  
-uv run adk run web . # web interface
+adk run goodmem_plugin_demo # command line  
+adk run web . # web interface
 ```
-
-Change `uv run` to `python` if you are not using uv.
 
 ## File structure
 
@@ -105,13 +102,13 @@ Change `uv run` to `python` if you are not using uv.
 │       ├── __init__.py                   (modified: updated imports to use goodmem submodule)
 │       └── goodmem/
 │           ├── __init__.py               (new: module exports)
-│           ├── goodmem_client.py         (new: 274 lines, HTTP client for Goodmem API)
-│           └── goodmem.py                (new: 593 lines, plugin implementation)
+│           ├── goodmem_client.py         (new: 281 lines, HTTP client for Goodmem API)
+│           └── goodmem.py                (new: 631 lines, plugin implementation)
 │
 ├── tests/unittests/
 │   └── plugins/
 │       ├── __init__.py                   (new: test module)
-│       └── test_goodmem.py               (new: 31 unit tests, 712 lines)
+│       └── test_goodmem.py               (new: 34 unit tests, 997 lines)
 │
 └── contributing/samples/goodmem/
     ├── README.md                         (new: overview of Goodmem integrations)
@@ -129,9 +126,6 @@ cd adk-python-community
 
 # Install the package in editable mode
 pip install -e .
-
-# Or if using uv:
-uv pip install -e .
 ```
 
 This will install `google-adk-community` in editable/development mode, which means:
@@ -140,3 +134,11 @@ This will install `google-adk-community` in editable/development mode, which mea
 - You can test and develop with the latest code
 
 After installation, you can use the plugin in your agent code as shown in the Usage section above. Once the plugin is merged into the official release, you can simply install it normally with `pip install google-adk-community`. 
+
+
+## Known limitations
+1. Backend enforces max 10,000 characters on query message. But the plugin doesn't validate this and will silently pass the rejection from Goodmem. 
+2. Backend has a binary file size limit of 1GB. But the plugin doesn't validate this and will silently pass the rejection from Goodmem. 
+3. Backend enforces max 50 metadata keys. But the plugin doesn't validate this and will silently pass the rejection from Goodmem. 
+4. No rate limit handling. Backend returns HTTP 429 with Retry-After header. The plugin will silently ignore it. 
+5. The plugin does not check whether ingesting the memory is finished -- ingestion takes a while. It will silently ignore if it eventually fails. 

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -97,7 +96,7 @@ class TestGoodmemClient:
     assert call_args.kwargs["json"]["metadata"] == metadata
 
   def test_insert_memory_binary(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
-    """Test inserting a binary memory."""
+    """Test inserting a binary memory using multipart upload."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
         "memoryId": MOCK_MEMORY_ID,
@@ -107,19 +106,33 @@ class TestGoodmemClient:
     mock_requests.post.return_value = mock_response
 
     file_bytes = b"test file content"
-    content_b64 = base64.b64encode(file_bytes).decode('utf-8')
     metadata = {"filename": "test.pdf", "user_id": MOCK_USER_ID}
 
     result = goodmem_client.insert_memory_binary(
-        MOCK_SPACE_ID, content_b64, "application/pdf", metadata
+        MOCK_SPACE_ID, file_bytes, "application/pdf", metadata
     )
 
     assert result["memoryId"] == MOCK_MEMORY_ID
     mock_requests.post.assert_called_once()
     call_args = mock_requests.post.call_args
-    assert call_args.kwargs["json"]["originalContentB64"] == content_b64
-    assert call_args.kwargs["json"]["contentType"] == "application/pdf"
-    assert call_args.kwargs["json"]["metadata"] == metadata
+
+    # Verify multipart form data was used
+    assert "data" in call_args.kwargs
+    assert "files" in call_args.kwargs
+    data = call_args.kwargs["data"]
+    files = call_args.kwargs["files"]
+
+    # Check request metadata (in data parameter)
+    assert "request" in data
+    request_json = json.loads(data["request"])
+    assert request_json["spaceId"] == MOCK_SPACE_ID
+    assert request_json["contentType"] == "application/pdf"
+    assert request_json["metadata"] == metadata
+
+    # Check file content (in files parameter)
+    assert "file" in files
+    assert files["file"][1] == file_bytes
+    assert files["file"][2] == "application/pdf"
 
   def test_retrieve_memories(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
     """Test retrieving memories."""
@@ -323,61 +336,82 @@ class TestGoodmemChatPlugin:
 
   @pytest.mark.asyncio
   async def test_ensure_chat_space_creates_new_space(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
-    """Test _ensure_chat_space creates a new space when it doesn't exist."""
+    """Test _get_space_id creates a new space when it doesn't exist."""
     mock_goodmem_client.list_spaces.return_value = []
-    
-    chat_plugin._ensure_chat_space(MOCK_USER_ID)
-    
+
+    # Create mock context with session state
+    mock_context = MagicMock()
+    mock_context.user_id = MOCK_USER_ID
+    mock_context.state = {}
+
+    space_id = chat_plugin._get_space_id(mock_context)
+
     mock_goodmem_client.create_space.assert_called_once_with(
         MOCK_SPACE_NAME, MOCK_EMBEDDER_ID
     )
-    assert chat_plugin.space_id == MOCK_SPACE_ID
-    assert chat_plugin._user_space_cache[MOCK_USER_ID] == MOCK_SPACE_ID
+    assert space_id == MOCK_SPACE_ID
+    assert mock_context.state['_goodmem_space_id'] == MOCK_SPACE_ID
 
   @pytest.mark.asyncio
   async def test_ensure_chat_space_uses_existing_space(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
-    """Test _ensure_chat_space uses existing space when found."""
+    """Test _get_space_id uses existing space when found."""
     mock_goodmem_client.list_spaces.return_value = [
         {"spaceId": "existing-space-id", "name": MOCK_SPACE_NAME}
     ]
-    
-    chat_plugin._ensure_chat_space(MOCK_USER_ID)
-    
+
+    # Create mock context with session state
+    mock_context = MagicMock()
+    mock_context.user_id = MOCK_USER_ID
+    mock_context.state = {}
+
+    space_id = chat_plugin._get_space_id(mock_context)
+
     mock_goodmem_client.create_space.assert_not_called()
-    assert chat_plugin.space_id == "existing-space-id"
-    assert chat_plugin._user_space_cache[MOCK_USER_ID] == "existing-space-id"
+    assert space_id == "existing-space-id"
+    assert mock_context.state['_goodmem_space_id'] == "existing-space-id"
 
   @pytest.mark.asyncio
   async def test_ensure_chat_space_uses_cache(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
-    """Test _ensure_chat_space uses cached space_id."""
-    chat_plugin._user_space_cache[MOCK_USER_ID] = "cached-space-id"
-    
-    chat_plugin._ensure_chat_space(MOCK_USER_ID)
-    
+    """Test _get_space_id uses session state cache."""
+    # Create mock context with cached space_id in session state
+    mock_context = MagicMock()
+    mock_context.user_id = MOCK_USER_ID
+    mock_context.state = {'_goodmem_space_id': 'cached-space-id'}
+
+    space_id = chat_plugin._get_space_id(mock_context)
+
     mock_goodmem_client.list_spaces.assert_not_called()
     mock_goodmem_client.create_space.assert_not_called()
-    assert chat_plugin.space_id == "cached-space-id"
+    assert space_id == "cached-space-id"
 
   @pytest.mark.asyncio
   async def test_on_user_message_logs_text(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test on_user_message_callback logs text messages."""
-    # Create mock invocation context
-    mock_context = MagicMock()
+    # Create mock invocation context with session state
+    # Use a real dict object, not a MagicMock, for state
+    state_dict = {'_goodmem_space_id': MOCK_SPACE_ID}
+
+    # Create a simple object for session with real dict state
+    class MockSession:
+      id = MOCK_SESSION_ID
+      state = state_dict
+
+    # Use spec_set to prevent MagicMock from having a 'state' attribute
+    mock_context = MagicMock(spec=['user_id', 'session'])
     mock_context.user_id = MOCK_USER_ID
-    mock_context.session = MagicMock()
-    mock_context.session.id = MOCK_SESSION_ID
-    
+    mock_context.session = MockSession()
+
     # Create user message with text
     user_message = types.Content(
         role="user",
         parts=[types.Part(text="Hello, how are you?")]
     )
-    
+
     await chat_plugin.on_user_message_callback(
         invocation_context=mock_context,
         user_message=user_message
     )
-    
+
     # Verify memory was inserted
     mock_goodmem_client.insert_memory.assert_called_once()
     call_args = mock_goodmem_client.insert_memory.call_args
@@ -395,11 +429,19 @@ class TestGoodmemChatPlugin:
   @pytest.mark.asyncio
   async def test_on_user_message_logs_file_attachment(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test on_user_message_callback logs file attachments."""
-    mock_context = MagicMock()
+    # Use a real dict object, not a MagicMock, for state
+    state_dict = {'_goodmem_space_id': MOCK_SPACE_ID}
+
+    # Create a simple object for session with real dict state
+    class MockSession:
+      id = MOCK_SESSION_ID
+      state = state_dict
+
+    # Use spec_set to prevent MagicMock from having a 'state' attribute
+    mock_context = MagicMock(spec=['user_id', 'session'])
     mock_context.user_id = MOCK_USER_ID
-    mock_context.session = MagicMock()
-    mock_context.session.id = MOCK_SESSION_ID
-    
+    mock_context.session = MockSession()
+
     # Create user message with file attachment
     file_data = b"test file content"
     blob = types.Blob(data=file_data, mime_type="application/pdf")
@@ -408,12 +450,12 @@ class TestGoodmemChatPlugin:
         role="user",
         parts=[types.Part(inline_data=blob)]
     )
-    
+
     await chat_plugin.on_user_message_callback(
         invocation_context=mock_context,
         user_message=user_message
     )
-    
+
     # Verify binary memory was inserted
     mock_goodmem_client.insert_memory_binary.assert_called_once()
     call_args = mock_goodmem_client.insert_memory_binary.call_args
@@ -562,44 +604,43 @@ class TestGoodmemChatPlugin:
     """Test before_model_callback error handling."""
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
-    
+    mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
+
     mock_goodmem_client.retrieve_memories.side_effect = Exception("API Error")
-    
+
     mock_request = MagicMock()
     mock_content = MagicMock()
     mock_content.parts = [types.Part(text="Test")]
     mock_request.contents = [mock_content]
-    
+
     # Should not raise exception
     result = await chat_plugin.before_model_callback(
         callback_context=mock_context,
         llm_request=mock_request
     )
-    
+
     assert result is None
 
   @pytest.mark.asyncio
   async def test_after_model_callback_logs_response(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test after_model_callback logs LLM response."""
-    # First ensure space is created
-    chat_plugin._ensure_chat_space(MOCK_USER_ID)
-    
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
     mock_context.session = MagicMock()
     mock_context.session.id = MOCK_SESSION_ID
-    
+    mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
+
     # Create LLM response
     mock_response = MagicMock()
     mock_content = MagicMock()
     mock_content.text = "This is the LLM response"
     mock_response.content = mock_content
-    
+
     result = await chat_plugin.after_model_callback(
         callback_context=mock_context,
         llm_response=mock_response
     )
-    
+
     # Verify memory was inserted
     mock_goodmem_client.insert_memory.assert_called()
     call_args = mock_goodmem_client.insert_memory.call_args
@@ -615,15 +656,14 @@ class TestGoodmemChatPlugin:
 
   @pytest.mark.asyncio
   async def test_after_model_callback_no_space_id(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
-    """Test after_model_callback when no space_id is initially set."""
-    chat_plugin.space_id = None
-
+    """Test after_model_callback when no space_id is cached in session state."""
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
     mock_context.session = MagicMock()
     mock_context.session.id = MOCK_SESSION_ID
+    mock_context.state = {}  # Empty session state, no cached space_id
 
-    # Mock existing space so _ensure_chat_space will find it
+    # Mock existing space so _get_space_id will find it
     mock_goodmem_client.list_spaces.return_value = [
         {"name": MOCK_SPACE_NAME, "spaceId": MOCK_SPACE_ID}
     ]
@@ -645,26 +685,25 @@ class TestGoodmemChatPlugin:
   @pytest.mark.asyncio
   async def test_after_model_callback_error_handling(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test after_model_callback error handling."""
-    chat_plugin._ensure_chat_space(MOCK_USER_ID)
-    
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
     mock_context.session = MagicMock()
     mock_context.session.id = MOCK_SESSION_ID
-    
+    mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
+
     mock_goodmem_client.insert_memory.side_effect = Exception("API Error")
-    
+
     mock_response = MagicMock()
     mock_content = MagicMock()
     mock_content.text = "Response text"
     mock_response.content = mock_content
-    
+
     # Should not raise exception
     result = await chat_plugin.after_model_callback(
         callback_context=mock_context,
         llm_response=mock_response
     )
-    
+
     assert result is None
 
   @pytest.mark.asyncio
@@ -682,11 +721,14 @@ class TestGoodmemChatPlugin:
   @pytest.mark.asyncio
   async def test_full_conversation_flow(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test full conversation flow with user message, retrieval, and response logging."""
+    shared_state = {}  # Shared state dict for both invocation and callback contexts
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
     mock_context.session = MagicMock()
     mock_context.session.id = MOCK_SESSION_ID
-    
+    mock_context.session.state = shared_state  # For invocation_context access
+    mock_context.state = shared_state  # For callback_context access
+
     # 1. User sends a message
     user_message = types.Content(
         role="user",
@@ -766,12 +808,14 @@ class TestGoodmemChatPlugin:
     alice_context.user_id = "alice"
     alice_context.session = MagicMock()
     alice_context.session.id = "session_alice"
+    alice_context.state = {}  # Separate session state for Alice
 
     # Context for User Bob
     bob_context = MagicMock()
     bob_context.user_id = "bob"
     bob_context.session = MagicMock()
     bob_context.session.id = "session_bob"
+    bob_context.state = {}  # Separate session state for Bob
 
     # Alice's response
     alice_response = MagicMock()
@@ -833,6 +877,7 @@ class TestGoodmemChatPlugin:
 
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
+    mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
 
     mock_request = MagicMock()
     mock_request.contents = [
@@ -892,13 +937,15 @@ class TestGoodmemChatPlugin:
         await asyncio.sleep(0.01)  # Simulate network delay
         return []
 
-    mock_goodmem_client.retrieve_memories = slow_retrieve
+    # Use AsyncMock to properly handle the async function
+    mock_goodmem_client.retrieve_memories = AsyncMock(side_effect=slow_retrieve)
 
     # Alice's context and response
     alice_context = MagicMock()
     alice_context.user_id = "alice"
     alice_context.session = MagicMock()
     alice_context.session.id = "session_alice"
+    alice_context.state = {}  # Separate session state for Alice
 
     alice_response = MagicMock()
     alice_response.content = MagicMock()
@@ -909,6 +956,7 @@ class TestGoodmemChatPlugin:
     bob_context.user_id = "bob"
     bob_context.session = MagicMock()
     bob_context.session.id = "session_bob"
+    bob_context.state = {}  # Separate session state for Bob
 
     bob_response = MagicMock()
     bob_response.content = MagicMock()

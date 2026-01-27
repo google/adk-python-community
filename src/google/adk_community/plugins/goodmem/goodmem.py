@@ -18,11 +18,16 @@ This module provides a plugin that integrates with Goodmem.ai for storing
 and retrieving conversation memories to augment LLM prompts with context.
 """
 
-import base64
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import BasePlugin
+from google.genai import types
+
 from .goodmem_client import GoodmemClient
 
 
@@ -109,31 +114,49 @@ class GoodmemChatPlugin(BasePlugin):
       )
 
     self.top_k: int = top_k
-    self.space_id: Optional[str] = None
-    self._user_space_cache: Dict[str, str] = {}
 
-  def _ensure_chat_space(self, user_id: str) -> None:
-    """Creates or retrieves the chat space for a user.
+  def _get_space_id(
+      self, context: InvocationContext | CallbackContext
+  ) -> Optional[str]:
+    """Gets or creates the chat space for the current user.
 
-    Each user gets a separate memory space named adk_chat_{user_id}.
+    Uses session state for caching, which persists across invocations
+    within the same session. This eliminates shared instance state and prevents
+    race conditions.
 
     Args:
-      user_id: The user ID from the callback context.
-    """
-    if user_id in self._user_space_cache:
-      self.space_id = self._user_space_cache[user_id]
-      if self.debug:
-        print(f"[DEBUG] Using cached space_id for user {user_id}: "
-              f"{self.space_id}")
-      return
+      context: Either invocation_context or callback_context. Both provide
+        access to user_id and session state.
 
+    Returns:
+      The space ID for the user, or None if an error occurred.
+    """
+    # Get session state (works for both context types)
+    if hasattr(context, 'state'):
+      # callback_context has .state property
+      state = context.state
+    else:
+      # invocation_context needs .session.state
+      state = context.session.state
+
+    # Check session-persisted cache first
+    cached_space_id = state.get('_goodmem_space_id')
+    if cached_space_id:
+      if self.debug:
+        print(f"[DEBUG] Using cached space_id from session state: "
+              f"{cached_space_id}")
+      return cached_space_id
+
+    # Get user_id from context
+    user_id = context.user_id
     space_name = f"adk_chat_{user_id}"
 
     if self.debug:
-      print(f"[DEBUG] _ensure_chat_space called for user {user_id}, "
+      print(f"[DEBUG] _get_space_id called for user {user_id}, "
             f"space_name={space_name}")
 
     try:
+      # Search for existing space
       if self.debug:
         print(f"[DEBUG] Checking if {space_name} space exists...")
       spaces = self.goodmem_client.list_spaces()
@@ -142,33 +165,38 @@ class GoodmemChatPlugin(BasePlugin):
         if space.get("name") == space_name:
           space_id = space.get("spaceId")
           if space_id:
-            self.space_id = space_id
-            self._user_space_cache[user_id] = space_id
-          if self.debug:
-            print(f"[DEBUG] Found existing {space_name} space: "
-                  f"{self.space_id}")
-          return
+            # Cache in session state for future callbacks
+            state['_goodmem_space_id'] = space_id
+            if self.debug:
+              print(f"[DEBUG] Found existing {space_name} space: {space_id}")
+            return space_id
 
+      # Space doesn't exist, create it
       if self.debug:
         print(f"[DEBUG] {space_name} space not found, creating new one...")
       if self.embedder_id is None:
         raise ValueError("embedder_id is not set")
+
       response = self.goodmem_client.create_space(space_name, self.embedder_id)
       space_id = response.get("spaceId")
+
       if space_id:
-        self.space_id = space_id
-        self._user_space_cache[user_id] = space_id
-      if self.debug:
-        print(f"[DEBUG] Created new chat space: {self.space_id}")
+        # Cache in session state for future callbacks
+        state['_goodmem_space_id'] = space_id
+        if self.debug:
+          print(f"[DEBUG] Created new chat space: {space_id}")
+        return space_id
+
+      return None
 
     except Exception as e:
       if self.debug:
-        print(f"[DEBUG] Error in _ensure_chat_space: {e}")
+        print(f"[DEBUG] Error in _get_space_id: {e}")
         import traceback
         traceback.print_exc()
-      self.space_id = None
+      return None
 
-  def _extract_user_content(self, llm_request: Any) -> str:
+  def _extract_user_content(self, llm_request: LlmRequest) -> str:
     """Extracts user message text from LLM request.
 
     Args:
@@ -198,8 +226,8 @@ class GoodmemChatPlugin(BasePlugin):
     return user_content
 
   async def on_user_message_callback(
-      self, *, invocation_context: Any, user_message: Any
-  ) -> Optional[Any]:
+      self, *, invocation_context: InvocationContext, user_message: types.Content
+  ) -> Optional[types.Content]:
     """Logs user message and file attachments to Goodmem.
 
     This callback is called when a user message is received, before any model
@@ -215,9 +243,9 @@ class GoodmemChatPlugin(BasePlugin):
     if self.debug:
       print("[DEBUG] on_user_message called!")
 
-    self._ensure_chat_space(invocation_context.user_id)
+    space_id = self._get_space_id(invocation_context)
 
-    if not self.space_id:
+    if not space_id:
       if self.debug:
         print("[DEBUG] No space_id, skipping user message logging")
       return None
@@ -244,7 +272,7 @@ class GoodmemChatPlugin(BasePlugin):
         if hasattr(part, "text") and part.text:
           content_with_prefix = f"User: {part.text}"
           self.goodmem_client.insert_memory(
-              self.space_id, content_with_prefix, "text/plain",
+              space_id, content_with_prefix, "text/plain",
               metadata=base_metadata
           )
           if self.debug:
@@ -260,10 +288,9 @@ class GoodmemChatPlugin(BasePlugin):
             print(f"[DEBUG] File attachment: {display_name}, "
                   f"mime={mime_type}, size={len(file_bytes)} bytes")
 
-          content_b64 = base64.b64encode(file_bytes).decode("utf-8")
           file_metadata = {**base_metadata, "filename": display_name}
           self.goodmem_client.insert_memory_binary(
-              self.space_id, content_b64, mime_type, metadata=file_metadata
+              space_id, file_bytes, mime_type, metadata=file_metadata
           )
 
           if self.debug:
@@ -296,7 +323,7 @@ class GoodmemChatPlugin(BasePlugin):
       ISO 8601 formatted timestamp string.
     """
     try:
-      dt = datetime.utcfromtimestamp(timestamp_ms / 1000)
+      dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
       return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
       return str(timestamp_ms)
@@ -344,8 +371,8 @@ class GoodmemChatPlugin(BasePlugin):
     return "\n".join(lines)
 
   async def before_model_callback(
-      self, *, callback_context: Any, llm_request: Any
-  ) -> Optional[Any]:
+      self, *, callback_context: CallbackContext, llm_request: LlmRequest
+  ) -> Optional[LlmResponse]:
     """Retrieves relevant chat history and augments the LLM request.
 
     This callback is called before the model is called. It retrieves top-k
@@ -361,9 +388,9 @@ class GoodmemChatPlugin(BasePlugin):
     if self.debug:
       print("[DEBUG] before_model_callback called!")
 
-    self._ensure_chat_space(callback_context.user_id)
+    space_id = self._get_space_id(callback_context)
 
-    if not self.space_id:
+    if not space_id:
       if self.debug:
         print("[DEBUG] No space_id, returning None")
       return None
@@ -380,7 +407,7 @@ class GoodmemChatPlugin(BasePlugin):
         print(f"[DEBUG] Retrieving top-{self.top_k} relevant chunks for "
               f"user content: {user_content}")
       chunks = self.goodmem_client.retrieve_memories(
-          user_content, [self.space_id], request_size=self.top_k
+          user_content, [space_id], request_size=self.top_k
       )
 
       if self.debug:
@@ -508,8 +535,8 @@ class GoodmemChatPlugin(BasePlugin):
       return None
 
   async def after_model_callback(
-      self, *, callback_context: Any, llm_response: Any
-  ) -> Optional[Any]:
+      self, *, callback_context: CallbackContext, llm_response: LlmResponse
+  ) -> Optional[LlmResponse]:
     """Logs the LLM response to Goodmem.
 
     This callback is called after the model generates a response.
@@ -525,9 +552,9 @@ class GoodmemChatPlugin(BasePlugin):
       print("[DEBUG] after_model_callback called!")
       print(f"[DEBUG] llm_response type: {type(llm_response)}")
 
-    self._ensure_chat_space(callback_context.user_id)
+    space_id = self._get_space_id(callback_context)
 
-    if not self.space_id:
+    if not space_id:
       if self.debug:
         print("[DEBUG] No space_id in after_model_callback, returning None")
       return None
@@ -589,7 +616,7 @@ class GoodmemChatPlugin(BasePlugin):
         print(f"[DEBUG] Inserting to Goodmem: {response_content[:100]}")
       content_with_prefix = f"LLM: {response_content}"
       self.goodmem_client.insert_memory(
-          self.space_id, content_with_prefix, "text/plain", metadata=metadata
+          space_id, content_with_prefix, "text/plain", metadata=metadata
       )
       if self.debug:
         print("[DEBUG] Successfully inserted LLM response to Goodmem")

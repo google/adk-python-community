@@ -39,7 +39,7 @@ goodmem_chat_plugin = GoodmemChatPlugin(
 )
 
 app = App(
-    name="goodmem_plugin_demo_agent",
+    name="goodmem_plugin_demo",
     root_agent=root_agent,
     plugins=[goodmem_chat_plugin],
 )
