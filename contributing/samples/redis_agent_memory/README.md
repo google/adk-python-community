@@ -8,23 +8,44 @@ This sample demonstrates the **complete two-tier memory architecture** using Red
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         ADK Agent                               │
-├─────────────────────────────────────────────────────────────────┤
-│  RedisWorkingMemorySessionService  │ RedisLongTermMemoryService │
-│  (Tier 1: Working Memory)          │ (Tier 2: Long-Term Memory) │
-├─────────────────────────────────────────────────────────────────┤
-│                    Redis Agent Memory Server                    │
-├─────────────────────────────────────────────────────────────────┤
-│                         Redis Stack                             │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                          ADK Agent                             │
+├──────────────────────────────┬─────────────────────────────────┤
+│     TIER 1: Working Memory   │    TIER 2: Long-Term Memory     │
+├──────────────────────────────┼─────────────────────────────────┤
+│ • Current session messages   │ • Extracted facts & preferences │
+│ • Auto-summarization         │ • Semantic vector search        │
+│ • Context window management  │ • Cross-session persistence     │
+│ • TTL support                │ • Recency-boosted retrieval     │
+├──────────────────────────────┴─────────────────────────────────┤
+│                    Agent Memory Server API                     │
+├────────────────────────────────────────────────────────────────┤
+│                         Redis Stack                            │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## Example Flow
+
+```
+User Message
+     │
+     ▼
+┌─────────────┐    store     ┌──────────────────────┐
+│  ADK Agent  │─────────────▶│   Working Memory     │
+└─────────────┘              │  (current session)   │
+     │                       └──────────┬───────────┘
+     │                                  │ extract
+     │ search                           ▼
+     │                       ┌──────────────────────┐
+     └──────────────────────▶│   Long-Term Memory   │
+                             │  (all sessions)      │
+                             └──────────────────────┘
 ```
 
 ## Prerequisites
 
 - Python 3.10+
-- Docker (for Redis Stack)
-- Redis Agent Memory Server running
+- Docker (for Redis Stack and Agent Memory Server)
 
 ## Setup
 
@@ -34,24 +55,33 @@ This sample demonstrates the **complete two-tier memory architecture** using Red
 pip install "google-adk-community[redis-agent-memory]"
 ```
 
+> **Important**: The server is NOT installed via pip - it's a separate service that must be running. The pip package only installs the client to communicate with it.
+
 ### 2. Start Redis Stack
 
 ```bash
 docker run -d --name redis-stack -p 6379:6379 redis/redis-stack:latest
 ```
 
-### 3. Start Redis Agent Memory Server
+### 3. Start Agent Memory Server
 
 ```bash
-git clone https://github.com/redis-developer/agent-memory-server.git
-cd agent-memory-server
-cp .env.example .env
-# Edit .env: set OPENAI_API_KEY for embeddings
-pip install -e .
-uvicorn agent_memory_server.main:app --port 8000
+docker run -d --name agent-memory-server -p 8000:8000 \
+  -e REDIS_URL=redis://host.docker.internal:6379 \
+  -e OPENAI_API_KEY=your-openai-key \
+  redislabs/agent-memory-server:latest \
+  agent-memory api --host 0.0.0.0 --port 8000 --task-backend=asyncio
 ```
 
-### 4. Configure Environment
+> **Note**: The memory server requires an OpenAI API key for embeddings by default. See the [Agent Memory Server docs](https://redis.github.io/agent-memory-server/) for alternative embedding providers.
+
+### 4. Verify Setup
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 5. Configure Environment
 
 Create `.env` in this directory:
 
