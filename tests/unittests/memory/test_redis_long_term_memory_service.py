@@ -294,8 +294,8 @@ class TestRedisLongTermMemoryService:
     """Test that recency config is None when disabled."""
     config = RedisLongTermMemoryServiceConfig(recency_boost=False)
     service = RedisLongTermMemoryService(config=config)
-    service._client = mock_memory_client
-    service._client_initialized = True
+    # Inject the mock client by setting it in __dict__ to bypass cached_property
+    service.__dict__["_client"] = mock_memory_client
 
     mock_results = MagicMock()
     mock_results.memories = []

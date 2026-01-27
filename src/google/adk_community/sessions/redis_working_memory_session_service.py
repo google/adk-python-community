@@ -432,6 +432,9 @@ class RedisWorkingMemorySessionService(BaseSessionService):
 
   async def close(self):
     """Close the session service and cleanup resources."""
-    if "_client" in self.__dict__:
+    if (
+        "_client" in self.__dict__
+    ):  # Check for initialized client without triggering cached_property
       await self._client.close()
-      del self.__dict__["_client"]
+      # Clear the cached property
+      del self._client
