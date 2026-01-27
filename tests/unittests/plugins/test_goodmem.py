@@ -177,7 +177,7 @@ class TestGoodmemClient:
     mock_requests.get.assert_called_once_with(
         f"{MOCK_BASE_URL}/v1/spaces",
         headers=goodmem_client._headers,
-        params={"max_results": 1000},
+        params={"maxResults": 1000},
         timeout=30
     )
 

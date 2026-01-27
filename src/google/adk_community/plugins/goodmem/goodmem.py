@@ -71,7 +71,6 @@ class GoodmemChatPlugin(BasePlugin):
     super().__init__(name=name)
 
     self.debug = debug
-
     if self.debug:
       print(f"[DEBUG] GoodmemChatPlugin initialized with name={name}, "
             f"top_k={top_k}")
@@ -87,7 +86,7 @@ class GoodmemChatPlugin(BasePlugin):
           "environment variable"
       )
 
-    self.goodmem_client = GoodmemClient(base_url, api_key)
+    self.goodmem_client = GoodmemClient(base_url, api_key, debug=self.debug)
 
     embedders = self.goodmem_client.list_embedders()
     if not embedders:
@@ -130,31 +129,31 @@ class GoodmemChatPlugin(BasePlugin):
     Returns:
       The space ID for the user, or None if an error occurred.
     """
-    # Get session state (works for both context types)
-    if hasattr(context, 'state'):
-      # callback_context has .state property
-      state = context.state
-    else:
-      # invocation_context needs .session.state
-      state = context.session.state
-
-    # Check session-persisted cache first
-    cached_space_id = state.get('_goodmem_space_id')
-    if cached_space_id:
-      if self.debug:
-        print(f"[DEBUG] Using cached space_id from session state: "
-              f"{cached_space_id}")
-      return cached_space_id
-
-    # Get user_id from context
-    user_id = context.user_id
-    space_name = f"adk_chat_{user_id}"
-
-    if self.debug:
-      print(f"[DEBUG] _get_space_id called for user {user_id}, "
-            f"space_name={space_name}")
-
     try:
+      # Get session state (works for both context types)
+      if hasattr(context, 'state'):
+        # callback_context has .state property
+        state = context.state
+      else:
+        # invocation_context needs .session.state
+        state = context.session.state
+
+      # Check session-persisted cache first
+      cached_space_id = state.get('_goodmem_space_id')
+      if cached_space_id:
+        if self.debug:
+          print(f"[DEBUG] Using cached space_id from session state: "
+                f"{cached_space_id}")
+        return cached_space_id
+
+      # Get user_id from context
+      user_id = context.user_id
+      space_name = f"adk_chat_{user_id}"
+
+      if self.debug:
+        print(f"[DEBUG] _get_space_id called for user {user_id}, "
+              f"space_name={space_name}")
+
       # Search for existing space
       if self.debug:
         print(f"[DEBUG] Checking if {space_name} space exists...")
@@ -424,8 +423,9 @@ class GoodmemChatPlugin(BasePlugin):
         try:
           return item["retrievedItem"]["chunk"]["chunk"]
         except Exception as e:
-          print(f"[DEBUG] Error extracting chunk data: {e}")
-          print(f"[DEBUG] Item structure: {item}")
+          if self.debug:
+            print(f"[DEBUG] Error extracting chunk data: {e}")
+            print(f"[DEBUG] Item structure: {item}")
           return None
 
       chunks_cleaned = [get_chunk_data(item) for item in chunks]
@@ -573,7 +573,7 @@ class GoodmemChatPlugin(BasePlugin):
           if self.debug:
             print(f"[DEBUG] Content has parts: {len(content.parts)}")
           for part in content.parts:
-            if hasattr(part, "text"):
+            if hasattr(part, "text") and isinstance(part.text, str):
               response_content += part.text
           if self.debug:
             print(f"[DEBUG] Got response from parts: "

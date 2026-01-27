@@ -30,7 +30,7 @@ class GoodmemClient:
     _headers: HTTP headers for API requests.
   """
 
-  def __init__(self, base_url: str, api_key: str) -> None:
+  def __init__(self, base_url: str, api_key: str, debug: bool = False) -> None:
     """Initializes the Goodmem client.
 
     Args:
@@ -45,6 +45,13 @@ class GoodmemClient:
         "x-api-key": self._api_key,
         "Content-Type": "application/json"
     }
+    self._debug = debug
+
+  def _safe_json_dumps(self, value: Any) -> str:
+    try:
+      return json.dumps(value, indent=2)
+    except (TypeError, ValueError):
+      return "<non-serializable>"
 
   def create_space(self, space_name: str, embedder_id: str) -> Dict[str, Any]:
     """Creates a new Goodmem space.
@@ -123,7 +130,7 @@ class GoodmemClient:
   ) -> Dict[str, Any]:
     """Inserts a binary memory into a Goodmem space using multipart upload.
 
-    Note: This method currently prints debug information to stdout.
+    If debug is enabled, this method prints debug information to stdout.
 
     Args:
       space_id: The ID of the space to insert into.
@@ -139,12 +146,13 @@ class GoodmemClient:
     """
     url = f"{self._base_url}/v1/memories"
 
-    print(f"[DEBUG] insert_memory_binary called:")
-    print(f"  - space_id: {space_id}")
-    print(f"  - content_type: {content_type}")
-    print(f"  - content_bytes length: {len(content_bytes)} bytes")
-    if metadata:
-      print(f"  - metadata:\n{json.dumps(metadata, indent=2)}")
+    if self._debug:
+      print("[DEBUG] insert_memory_binary called:")
+      print(f"  - space_id: {space_id}")
+      print(f"  - content_type: {content_type}")
+      print(f"  - content_bytes length: {len(content_bytes)} bytes")
+      if metadata:
+        print(f"  - metadata:\n{self._safe_json_dumps(metadata)}")
 
     # Build the JSON request metadata
     request_data: Dict[str, Any] = {
@@ -154,7 +162,8 @@ class GoodmemClient:
     if metadata:
       request_data["metadata"] = metadata
 
-    print(f"[DEBUG] request_data:\n{json.dumps(request_data, indent=2)}")
+    if self._debug:
+      print(f"[DEBUG] request_data:\n{self._safe_json_dumps(request_data)}")
 
     # Multipart form data: 'request' as form field, 'file' as file upload
     data = {
@@ -167,13 +176,16 @@ class GoodmemClient:
     # Use only API key header; requests will set Content-Type for multipart
     headers = {"x-api-key": self._api_key}
 
-    print(f"[DEBUG] Making POST request to {url}")
+    if self._debug:
+      print(f"[DEBUG] Making POST request to {url}")
     response = requests.post(url, data=data, files=files, headers=headers, timeout=120)
-    print(f"[DEBUG] Response status: {response.status_code}")
+    if self._debug:
+      print(f"[DEBUG] Response status: {response.status_code}")
 
     response.raise_for_status()
     result = response.json()
-    print(f"[DEBUG] Response:\n{json.dumps(result, indent=2)}")
+    if self._debug:
+      print(f"[DEBUG] Response:\n{self._safe_json_dumps(result)}")
     return result
 
   def retrieve_memories(
@@ -210,9 +222,14 @@ class GoodmemClient:
 
     chunks = []
     for line in response.text.strip().split("\n"):
-      tmp_dict = json.loads(line)
-      if "retrievedItem" in tmp_dict:
-        chunks.append(tmp_dict)
+      if line.strip():  # Skip blank/empty lines
+        try:
+          tmp_dict = json.loads(line)
+          if "retrievedItem" in tmp_dict:
+            chunks.append(tmp_dict)
+        except json.JSONDecodeError:
+          # Skip malformed lines (e.g., transmission errors)
+          continue
     return chunks
 
   def list_spaces(self) -> List[Dict[str, Any]]:
@@ -231,9 +248,9 @@ class GoodmemClient:
 
     while True:
       # Build query parameters
-      params = {"max_results": max_results}
+      params = {"maxResults": max_results}
       if next_token:
-        params["next_token"] = next_token
+        params["nextToken"] = next_token
 
       response = requests.get(url, headers=self._headers, params=params, timeout=30)
       response.raise_for_status()

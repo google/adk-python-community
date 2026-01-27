@@ -120,13 +120,13 @@ adk run web .                # Web UI
 
 ```
 ├── src/google/adk_community/
-│   ├── __init__.py                      (modified: added plugins import)
+│   ├── __init__.py                      (modified: added plugins import, 26 lines)
 │   └── plugins/
-│       ├── __init__.py                   (modified: updated imports to use goodmem submodule)
+│       ├── __init__.py                   (modified: updated imports to use goodmem submodule, 21 lines)
 │       └── goodmem/
-│           ├── __init__.py               (new: module exports)
-│           ├── goodmem_client.py         (new: 281 lines, HTTP client for Goodmem API)
-│           └── goodmem.py                (new: 631 lines, plugin implementation)
+│           ├── __init__.py               (new: module exports, 21 lines)
+│           ├── goodmem_client.py         (new: 300 lines, HTTP client for Goodmem API)
+│           └── goodmem.py                (new: 627 lines, plugin implementation)
 │
 ├── tests/unittests/
 │   └── plugins/
@@ -134,10 +134,10 @@ adk run web .                # Web UI
 │       └── test_goodmem.py               (new: 34 unit tests, 997 lines)
 │
 └── contributing/samples/goodmem/
-    ├── README.md                         (new: overview of Goodmem integrations)
-    ├── PLUGIN.md                         (new: detailed plugin documentation)
+    ├── README.md                         (new: overview of Goodmem integrations, 6 lines)
+    ├── PLUGIN.md                         (new: detailed plugin documentation, 189 lines)
     └── goodmem_plugin_demo/
-        └── agent.py                      (new: sample agent with plugin)
+        └── agent.py                      (new: sample agent with plugin, 45 lines)
 ```
 
 ## Installing the Plugin Before Official Release
