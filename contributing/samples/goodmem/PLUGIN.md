@@ -185,5 +185,5 @@ it normally with `pip install google-adk-community`.
    - File references (`file_data` / URI) are not fetched or stored.
 
 6. **Logging**
-   Debug logging is best-effort. In particular, the binary upload path prints
-   debug output unconditionally.
+   Debug logging is best-effort. The binary upload path prints debug output
+   only when debug mode is enabled.

@@ -36,10 +36,10 @@ class GoodmemClient:
     Args:
       base_url: The base URL for the Goodmem API, without the /v1 suffix
         (e.g., "https://api.goodmem.ai").
-      api_key: The API key for authentication.
+      api_key: The Goodmem API key for authentication.
     """
     # Remove trailing slash if present to avoid double slashes in URLs
-    self._base_url = base_url.rstrip('/')
+    self._base_url = base_url.rstrip("/")
     self._api_key = api_key
     self._headers = {
         "x-api-key": self._api_key,
@@ -166,19 +166,17 @@ class GoodmemClient:
       print(f"[DEBUG] request_data:\n{self._safe_json_dumps(request_data)}")
 
     # Multipart form data: 'request' as form field, 'file' as file upload
-    data = {
-        'request': json.dumps(request_data)
-    }
-    files = {
-        'file': ('upload', content_bytes, content_type)
-    }
+    data = {"request": json.dumps(request_data)}
+    files = {"file": ("upload", content_bytes, content_type)}
 
     # Use only API key header; requests will set Content-Type for multipart
     headers = {"x-api-key": self._api_key}
 
     if self._debug:
       print(f"[DEBUG] Making POST request to {url}")
-    response = requests.post(url, data=data, files=files, headers=headers, timeout=120)
+    response = requests.post(
+        url, data=data, files=files, headers=headers, timeout=120
+    )
     if self._debug:
       print(f"[DEBUG] Response status: {response.status_code}")
 
@@ -232,16 +230,17 @@ class GoodmemClient:
           continue
     return chunks
 
-  def list_spaces(self) -> List[Dict[str, Any]]:
-    """Lists all spaces using pagination.
+  def list_spaces(self, name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Lists spaces, optionally filtering by name.
 
     Returns:
-      List of all spaces.
+      List of spaces (optionally filtered by name).
 
     Raises:
       requests.exceptions.RequestException: If the API request fails.
     """
     url = f"{self._base_url}/v1/spaces"
+
     all_spaces = []
     next_token = None
     max_results = 1000
@@ -251,8 +250,12 @@ class GoodmemClient:
       params = {"maxResults": max_results}
       if next_token:
         params["nextToken"] = next_token
+      if name:
+        params["nameFilter"] = name
 
-      response = requests.get(url, headers=self._headers, params=params, timeout=30)
+      response = requests.get(
+          url, headers=self._headers, params=params, timeout=30
+      )
       response.raise_for_status()
 
       data = response.json()
@@ -293,7 +296,7 @@ class GoodmemClient:
       requests.exceptions.RequestException: If the API request fails.
     """
     # URL-encode the memory_id to handle special characters
-    encoded_memory_id = quote(memory_id, safe='')
+    encoded_memory_id = quote(memory_id, safe="")
     url = f"{self._base_url}/v1/memories/{encoded_memory_id}"
     response = requests.get(url, headers=self._headers, timeout=30)
     response.raise_for_status()

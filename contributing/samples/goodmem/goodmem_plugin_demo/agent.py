@@ -35,11 +35,11 @@ goodmem_chat_plugin = GoodmemChatPlugin(
     api_key=os.getenv("GOODMEM_API_KEY"),
     embedder_id=os.getenv("EMBEDDER_ID"),
     top_k=5,
-    debug=True,
+    debug=False
 )
 
 app = App(
     name="goodmem_plugin_demo",
     root_agent=root_agent,
-    plugins=[goodmem_chat_plugin],
+    plugins=[goodmem_chat_plugin]
 )

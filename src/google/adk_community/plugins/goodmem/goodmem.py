@@ -19,7 +19,7 @@ and retrieving conversation memories to augment LLM prompts with context.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
@@ -114,7 +114,7 @@ class GoodmemChatPlugin(BasePlugin):
     self.top_k: int = top_k
 
   def _get_space_id(
-      self, context: InvocationContext | CallbackContext
+      self, context: Union[InvocationContext, CallbackContext]
   ) -> Optional[str]:
     """Gets or creates the chat space for the current user.
 
@@ -157,8 +157,7 @@ class GoodmemChatPlugin(BasePlugin):
       # Search for existing space
       if self.debug:
         print(f"[DEBUG] Checking if {space_name} space exists...")
-      spaces = self.goodmem_client.list_spaces()
-
+      spaces = self.goodmem_client.list_spaces(name=space_name)
       for space in spaces:
         if space.get("name") == space_name:
           space_id = space.get("spaceId")
@@ -395,7 +394,7 @@ class GoodmemChatPlugin(BasePlugin):
     """
     lines = []
     words = content.split()
-    current_line = []
+    current_line: List[str] = []
     current_length = 0
 
     for word in words:
