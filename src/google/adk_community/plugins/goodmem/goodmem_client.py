@@ -37,6 +37,7 @@ class GoodmemClient:
       base_url: The base URL for the Goodmem API, without the /v1 suffix
         (e.g., "https://api.goodmem.ai").
       api_key: The Goodmem API key for authentication.
+      debug: Whether to enable debug mode.
     """
     # Remove trailing slash if present to avoid double slashes in URLs
     self._base_url = base_url.rstrip("/")
