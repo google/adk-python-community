@@ -368,6 +368,119 @@ class GoodmemChatPlugin(BasePlugin):
 
     return "\n".join(lines)
 
+  def _format_timestamp_for_table(self, timestamp_ms: int) -> str:
+    """Formats timestamp for table display.
+
+    Args:
+      timestamp_ms: Timestamp in milliseconds.
+
+    Returns:
+      Formatted timestamp string in yyyy-mm-dd hh:mm format.
+    """
+    try:
+      dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+      return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+      return str(timestamp_ms)
+
+  def _wrap_content(self, content: str, max_width: int = 55) -> List[str]:
+    """Wraps content to fit within max_width characters.
+
+    Args:
+      content: The content to wrap.
+      max_width: Maximum width in characters.
+
+    Returns:
+      List of wrapped lines.
+    """
+    lines = []
+    words = content.split()
+    current_line = []
+    current_length = 0
+
+    for word in words:
+      word_length = len(word)
+      # If adding this word would exceed max_width, start a new line
+      if current_length > 0 and current_length + 1 + word_length > max_width:
+        lines.append(" ".join(current_line))
+        current_line = [word]
+        current_length = word_length
+      else:
+        current_line.append(word)
+        current_length += (1 + word_length if current_length > 0 else word_length)
+
+    if current_line:
+      lines.append(" ".join(current_line))
+
+    return lines if lines else [""]
+
+  def _format_debug_table(
+      self,
+      records: List[Dict[str, Any]]
+  ) -> str:
+    """Formats memory records as a table for debug output.
+
+    Args:
+      records: List of dicts with keys: memory_id, timestamp_ms, role, content.
+
+    Returns:
+      Formatted table string.
+    """
+    if not records:
+      return ""
+
+    # Calculate column widths
+    id_width = max(len(r["memory_id"]) for r in records)
+    datetime_width = 16  # yyyy-mm-dd hh:mm
+    role_width = max(len(r["role"]) for r in records)
+    content_width = 55
+
+    # Header
+    header = (
+        f"{'memory ID':<{id_width}} | "
+        f"{'datetime':<{datetime_width}} | "
+        f"{'role':<{role_width}} | "
+        f"{'content':<{content_width}}"
+    )
+    separator = "-" * len(header)
+
+    lines = [header, separator]
+
+    # Rows
+    for record in records:
+      memory_id = record["memory_id"]
+      datetime_str = self._format_timestamp_for_table(record["timestamp_ms"])
+      role = record["role"]
+      content_lines = self._wrap_content(record["content"], content_width)
+
+      # First line with all columns
+      if content_lines:
+        first_line = (
+            f"{memory_id:<{id_width}} | "
+            f"{datetime_str:<{datetime_width}} | "
+            f"{role:<{role_width}} | "
+            f"{content_lines[0]:<{content_width}}"
+        )
+        lines.append(first_line)
+
+        # Additional lines for wrapped content (only content column)
+        for content_line in content_lines[1:]:
+          lines.append(
+              f"{'':<{id_width}} | "
+              f"{'':<{datetime_width}} | "
+              f"{'':<{role_width}} | "
+              f"{content_line:<{content_width}}"
+          )
+      else:
+        lines.append(
+            f"{memory_id:<{id_width}} | "
+            f"{datetime_str:<{datetime_width}} | "
+            f"{role:<{role_width}} | "
+            f"{'':<{content_width}}"
+        )
+
+    return "\n".join(lines)
+
   async def before_model_callback(
       self, *, callback_context: CallbackContext, llm_request: LlmRequest
   ) -> Optional[LlmResponse]:
@@ -408,14 +521,6 @@ class GoodmemChatPlugin(BasePlugin):
           user_content, [space_id], request_size=self.top_k
       )
 
-      if self.debug:
-        if chunks:
-          print(f"[DEBUG] Retrieved {len(chunks)} chunks")
-          for chunk in chunks:
-            print(f"[DEBUG] Chunk: {chunk}")
-        else:
-          print("[DEBUG] No chunks retrieved")
-
       if not chunks:
         return None
 
@@ -435,9 +540,6 @@ class GoodmemChatPlugin(BasePlugin):
           chunk_data.get("memoryId") if chunk_data else None for chunk_data in chunks_cleaned
       )
       unique_memory_ids: set[str] = {mid for mid in unique_memory_ids_raw if mid is not None and isinstance(mid, str)}
-      if self.debug:
-        print(f"[DEBUG] Found {len(unique_memory_ids)} unique memory IDs "
-              f"from {len(chunks)} results")
 
       memory_metadata_cache: Dict[str, Dict[str, Any]] = {}
       for memory_id in unique_memory_ids:
@@ -452,6 +554,7 @@ class GoodmemChatPlugin(BasePlugin):
           memory_metadata_cache[memory_id] = {}
 
       formatted_records: List[str] = []
+      debug_records: List[Dict[str, Any]] = []
       for chunk_data in chunks_cleaned:
         if not chunk_data:
           continue
@@ -474,6 +577,20 @@ class GoodmemChatPlugin(BasePlugin):
             chunk_text, chunk_memory_id, timestamp_ms, metadata
         )
         formatted_records.append(formatted)
+
+        # Prepare debug record
+        role = metadata.get("role", "user").lower()
+        content = chunk_text
+        if content.startswith("User: "):
+          content = content[6:]
+        elif content.startswith("LLM: "):
+          content = content[5:]
+        debug_records.append({
+            "memory_id": chunk_memory_id,
+            "timestamp_ms": timestamp_ms,
+            "role": role,
+            "content": content
+        })
 
       memory_block_lines = [
           "BEGIN MEMORY",
@@ -498,7 +615,11 @@ class GoodmemChatPlugin(BasePlugin):
       context_str = "\n".join(memory_block_lines)
 
       if self.debug:
-        print(f"[DEBUG] Context string: {context_str}")
+        if debug_records:
+          table = self._format_debug_table(debug_records)
+          print(f"[DEBUG] Retrieved memories:\n{table}")
+        else:
+          print("[DEBUG] Retrieved memories: none")
 
       if hasattr(llm_request, "contents") and llm_request.contents:
         last_content = llm_request.contents[-1]
@@ -546,7 +667,6 @@ class GoodmemChatPlugin(BasePlugin):
     """
     if self.debug:
       print("[DEBUG] after_model_callback called!")
-      print(f"[DEBUG] llm_response type: {type(llm_response)}")
 
     space_id = self._get_space_id(callback_context)
 
@@ -559,37 +679,18 @@ class GoodmemChatPlugin(BasePlugin):
       response_content: str = ""
 
       if hasattr(llm_response, "content") and llm_response.content:
-        if self.debug:
-          print(f"[DEBUG] llm_response.content type: "
-                f"{type(llm_response.content)}")
         content = llm_response.content
 
         if hasattr(content, "text"):
           response_content = content.text
-          if self.debug:
-            print(f"[DEBUG] Got response from content.text: "
-                  f"{response_content[:100]}")
         elif hasattr(content, "parts") and content.parts:
-          if self.debug:
-            print(f"[DEBUG] Content has parts: {len(content.parts)}")
           for part in content.parts:
             if hasattr(part, "text") and isinstance(part.text, str):
               response_content += part.text
-          if self.debug:
-            print(f"[DEBUG] Got response from parts: "
-                  f"{response_content[:100]}")
         elif isinstance(content, str):
           response_content = content
-          if self.debug:
-            print(f"[DEBUG] Got response as string: {response_content[:100]}")
       elif hasattr(llm_response, "text"):
         response_content = llm_response.text
-        if self.debug:
-          print(f"[DEBUG] Got response from .text: {response_content[:100]}")
-
-      if self.debug:
-        print(f"[DEBUG] Final response_content: "
-              f"{response_content[:200] if response_content else 'EMPTY'}")
 
       if not response_content:
         if self.debug:
@@ -608,8 +709,6 @@ class GoodmemChatPlugin(BasePlugin):
       }
       metadata = {k: v for k, v in metadata.items() if v is not None}
 
-      if self.debug:
-        print(f"[DEBUG] Inserting to Goodmem: {response_content[:100]}")
       content_with_prefix = f"LLM: {response_content}"
       self.goodmem_client.insert_memory(
           space_id, content_with_prefix, "text/plain", metadata=metadata
