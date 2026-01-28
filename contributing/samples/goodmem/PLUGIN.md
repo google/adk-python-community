@@ -105,16 +105,36 @@ app = App(
 
 ## Run the demo
 
-Save `agent.py` under `goodmem_plugin_demo/` (already in this repo), then run
-from its parent directory:
+This repo includes a ready-to-run demo in `goodmem_plugin_demo/` with an `agent.py`.
+
+From the parent directory of `goodmem_plugin_demo/`, run either of the two commands below:
 
 ```bash
-ls
-# Expect:
-# goodmem_plugin_demo  PLUGIN.md  README.md
-adk run goodmem_plugin_demo  # CLI
-adk run web .                # Web UI
+adk run goodmem_plugin_demo # terminal
+# Or:
+adk web . # web browser
 ```
+
+## Installation for local development
+
+If you want to use this plugin after changes not yet merged into an official `google-adk-community` release, install from this repository in editable mode:
+
+```bash
+# Clone the repository (or navigate to your local clone)
+cd adk-python-community
+
+# Install the package in editable mode
+pip install -e .
+```
+
+This will install `google-adk-community` in editable/development mode, which means:
+- Changes to the source code are immediately available without reinstalling
+- The `google.adk_community.plugins.goodmem` import will work
+- You can test and develop with the latest code
+
+After installation, you can use the plugin in your agent code as shown above.
+Once the plugin is merged into the official release, you can simply install
+it normally with `pip install google-adk-community`.
 
 ## File structure
 
@@ -139,28 +159,6 @@ adk run web .                # Web UI
     └── goodmem_plugin_demo/
         └── agent.py                      (new: sample agent with plugin, 45 lines)
 ```
-
-## Installing the Plugin Before Official Release
-
-If you want to use this plugin before it's merged into the official `google-adk-community` package, you can install it in editable mode from the repository:
-
-```bash
-# Clone the repository (or navigate to your local clone)
-cd adk-python-community
-
-# Install the package in editable mode
-pip install -e .
-```
-
-This will install `google-adk-community` in editable/development mode, which means:
-- Changes to the source code are immediately available without reinstalling
-- The `google.adk_community.plugins.goodmem` import will work
-- You can test and develop with the latest code
-
-After installation, you can use the plugin in your agent code as shown above.
-Once the plugin is merged into the official release, you can simply install
-it normally with `pip install google-adk-community`.
-
 
 ## Limitations and caveats
 
