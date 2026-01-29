@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 pairsys.ai (DBA Goodmem.ai)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ADK Community package.
+"""Community plugins for ADK."""
 
-This package provides community-contributed extensions for the Google ADK,
-including memory services, session services, plugins, and tools.
-"""
+from .goodmem.goodmem_plugin import GoodmemChatPlugin
 
-from . import memory
-from . import plugins
-from . import sessions
-from . import tools
-from . import version
-
-__version__ = version.__version__
+__all__ = [
+    "GoodmemChatPlugin",
+]
