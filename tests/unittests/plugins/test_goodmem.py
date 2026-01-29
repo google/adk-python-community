@@ -522,6 +522,85 @@ class TestGoodmemChatPlugin:
     assert metadata["filename"] == "test.pdf"
 
   @pytest.mark.asyncio
+  async def test_on_user_message_filters_unsupported_mime_types(self, mock_goodmem_client: MagicMock) -> None:
+    """Test on_user_message_callback only sends supported MIME types to Goodmem.
+    
+    Note: Files are NOT filtered for the LLM - all files pass through. Only Goodmem
+    storage is filtered. LLM errors must be handled at the application level.
+    """
+    plugin = GoodmemChatPlugin(
+        base_url=MOCK_BASE_URL,
+        api_key=MOCK_API_KEY,
+        embedder_id=MOCK_EMBEDDER_ID
+    )
+
+    # Use a real dict object, not a MagicMock, for state
+    state_dict = {'_goodmem_space_id': MOCK_SPACE_ID}
+
+    class MockSession:
+      id = MOCK_SESSION_ID
+      state = state_dict
+
+    mock_context = MagicMock(spec=['user_id', 'session'])
+    mock_context.user_id = MOCK_USER_ID
+    mock_context.session = MockSession()
+
+    # Create user message with unsupported image file
+    image_data = b"fake image data"
+    image_blob = types.Blob(data=image_data, mime_type="image/png")
+    image_blob.display_name = "test.png"
+
+    # Create user message with supported PDF file
+    pdf_data = b"fake pdf data"
+    pdf_blob = types.Blob(data=pdf_data, mime_type="application/pdf")
+    pdf_blob.display_name = "test.pdf"
+
+    # Create user message with unsupported video file
+    video_data = b"fake video data"
+    video_blob = types.Blob(data=video_data, mime_type="video/mp4")
+    video_blob.display_name = "test.mp4"
+
+    # Create user message with supported text file
+    text_data = b"fake text data"
+    text_blob = types.Blob(data=text_data, mime_type="text/plain")
+    text_blob.display_name = "test.txt"
+
+    # Create user message with supported JSON file
+    json_data = b'{"key": "value"}'
+    json_blob = types.Blob(data=json_data, mime_type="application/json")
+    json_blob.display_name = "test.json"
+
+    user_message = types.Content(
+        role="user",
+        parts=[
+            types.Part(inline_data=image_blob),
+            types.Part(inline_data=pdf_blob),
+            types.Part(inline_data=video_blob),
+            types.Part(inline_data=text_blob),
+            types.Part(inline_data=json_blob)
+        ]
+    )
+
+    result = await plugin.on_user_message_callback(
+        invocation_context=mock_context,
+        user_message=user_message
+    )
+
+    # Verify only supported files (PDF, text, JSON) were inserted to Goodmem
+    assert mock_goodmem_client.insert_memory_binary.call_count == 3
+    call_args_list = mock_goodmem_client.insert_memory_binary.call_args_list
+    # Check that supported types were inserted
+    assert any("application/pdf" in str(call) for call in call_args_list)
+    assert any("text/plain" in str(call) for call in call_args_list)
+    assert any("application/json" in str(call) for call in call_args_list)
+    # Check that unsupported types were not inserted to Goodmem
+    assert not any("image/png" in str(call) for call in call_args_list)
+    assert not any("video/mp4" in str(call) for call in call_args_list)
+
+    # Verify that the callback returns None (no filtering for LLM - all files pass through)
+    assert result is None
+
+  @pytest.mark.asyncio
   async def test_on_user_message_error_handling(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
     """Test on_user_message_callback error handling."""
     mock_context = MagicMock()
@@ -541,6 +620,49 @@ class TestGoodmemChatPlugin:
     )
 
     assert result is None
+
+  def test_is_mime_type_supported(self, mock_goodmem_client: MagicMock) -> None:
+    """Test _is_mime_type_supported method with various MIME types."""
+    plugin = GoodmemChatPlugin(
+        base_url=MOCK_BASE_URL,
+        api_key=MOCK_API_KEY,
+        embedder_id=MOCK_EMBEDDER_ID
+    )
+
+    # Test supported text/* types
+    assert plugin._is_mime_type_supported("text/plain") is True
+    assert plugin._is_mime_type_supported("text/html") is True
+    assert plugin._is_mime_type_supported("text/markdown") is True
+    assert plugin._is_mime_type_supported("text/csv") is True
+
+    # Test supported application types
+    assert plugin._is_mime_type_supported("application/pdf") is True
+    assert plugin._is_mime_type_supported("application/rtf") is True
+    assert plugin._is_mime_type_supported("application/msword") is True
+    assert plugin._is_mime_type_supported(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) is True
+
+    # Test XML-based formats (contains "+xml")
+    assert plugin._is_mime_type_supported("application/xhtml+xml") is True
+    assert plugin._is_mime_type_supported("application/atom+xml") is True
+
+    # Test JSON formats
+    assert plugin._is_mime_type_supported("application/json") is True
+    assert plugin._is_mime_type_supported("application/vnd.api+json") is True
+
+    # Test unsupported types
+    assert plugin._is_mime_type_supported("image/png") is False
+    assert plugin._is_mime_type_supported("image/jpeg") is False
+    assert plugin._is_mime_type_supported("video/mp4") is False
+    assert plugin._is_mime_type_supported("audio/mpeg") is False
+    assert plugin._is_mime_type_supported("application/zip") is False
+    assert plugin._is_mime_type_supported("application/octet-stream") is False
+
+    # Test edge cases
+    assert plugin._is_mime_type_supported("") is False
+    # Note: None would cause AttributeError on .lower(), but in practice mime_type
+    # comes from blob.mime_type which is always a string or defaults to "application/octet-stream"
 
   def test_extract_user_content(self, chat_plugin: GoodmemChatPlugin) -> None:
     """Test _extract_user_content extracts text from LLM request."""

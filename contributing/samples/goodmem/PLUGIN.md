@@ -185,3 +185,12 @@ it normally with `pip install google-adk-community`.
 6. **Logging**
    Debug logging is best-effort. The binary upload path prints debug output
    only when debug mode is enabled.
+
+7. **MIME type support**
+   The plugin filters out unsupported file types before saving to Goodmem.
+   However, all files are passed through to the LLM without filtering.
+   If the LLM doesn't support a file type (e.g., Gemini rejecting zip files),
+   the error will propagate to the application layer (ADK doesn't provide error
+   callbacks for LLM failures in plugins). This is a design limitation of Google
+   ADK - error handling for LLM failures must be done at the application level,
+   not in plugins.

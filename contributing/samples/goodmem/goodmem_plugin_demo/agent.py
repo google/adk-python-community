@@ -35,7 +35,7 @@ goodmem_chat_plugin = GoodmemChatPlugin(
     api_key=os.getenv("GOODMEM_API_KEY"),
     embedder_id=os.getenv("EMBEDDER_ID"),
     top_k=5,
-    debug=False
+    debug=True
 )
 
 app = App(

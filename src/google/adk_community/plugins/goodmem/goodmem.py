@@ -113,6 +113,52 @@ class GoodmemChatPlugin(BasePlugin):
 
     self.top_k: int = top_k
 
+  def _is_mime_type_supported(self, mime_type: str) -> bool:
+    """Checks if a MIME type is supported by Goodmem's TextContentExtractor.
+
+    Based on the Goodmem source code, TextContentExtractor supports:
+    - All text/* MIME types
+    - application/pdf
+    - application/rtf
+    - application/msword (.doc)
+    - application/vnd.openxmlformats-officedocument.wordprocessingml.document (.docx)
+    - Any MIME type containing "+xml" (e.g., application/xhtml+xml, application/epub+zip)
+    - Any MIME type containing "json" (e.g., application/json)
+
+    Args:
+      mime_type: The MIME type to check (e.g., "image/png", "application/pdf").
+
+    Returns:
+      True if the MIME type is supported by Goodmem, False otherwise.
+    """
+    if not mime_type:
+      return False
+
+    mime_type_lower = mime_type.lower()
+
+    # All text/* types are supported
+    if mime_type_lower.startswith("text/"):
+      return True
+
+    # Specific application types
+    if mime_type_lower in (
+        "application/pdf",
+        "application/rtf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ):
+      return True
+
+    # XML-based formats (contains "+xml")
+    if "+xml" in mime_type_lower:
+      return True
+
+    # JSON formats (contains "json")
+    if "json" in mime_type_lower:
+      return True
+
+    return False
+
   def _get_space_id(
       self, context: Union[InvocationContext, CallbackContext]
   ) -> Optional[str]:
@@ -229,13 +275,21 @@ class GoodmemChatPlugin(BasePlugin):
 
     This callback is called when a user message is received, before any model
     processing. Handles both text content and file attachments (inline_data).
+    
+    Note: Only filters files for Goodmem storage. All files are passed through to
+    the LLM without filtering. If the LLM doesn't support a file type (e.g., Gemini
+    rejecting zip files), the error will propagate to the application layer. ADK plugins
+    cannot catch LLM errors because the LLM call happens outside the plugin callback
+    chain (between before_model_callback and after_model_callback). This is a design
+    limitation of Google ADK - error handling for LLM failures must be done at the
+    application level, not in plugins.
 
     Args:
       invocation_context: The invocation context containing user info.
       user_message: The user message content.
 
     Returns:
-      None to allow normal processing to continue.
+      None to allow normal processing to continue (all files go to LLM).
     """
     if self.debug:
       print("[DEBUG] on_user_message called!")
@@ -285,6 +339,35 @@ class GoodmemChatPlugin(BasePlugin):
             print(f"[DEBUG] File attachment: {display_name}, "
                   f"mime={mime_type}, size={len(file_bytes)} bytes")
 
+          # Only filter for Goodmem - let all files through to LLM
+          # If LLM doesn't support a file type, it will return an error that
+          # should be handled by the application (ADK doesn't provide error
+          # callbacks for LLM failures in plugins)
+          if not self._is_mime_type_supported(mime_type):
+            # Always log skipped files (not just in debug mode) so users know
+            # why their files aren't being stored in Goodmem
+            print(
+                f"[WARNING] Skipping file attachment '{display_name}' "
+                f"for Goodmem storage (MIME type '{mime_type}' is not supported by Goodmem). "
+                f"Supported types: text/*, application/pdf, application/rtf, "
+                f"application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, "
+                f"*+xml, *json. The file will still be sent to the LLM."
+            )
+            if self.debug:
+              print(f"[DEBUG] Detailed skip reason: MIME type {mime_type} failed support check")
+            # Don't send to Goodmem, but file will still go to LLM
+            continue
+
+          # Defensive check: double-verify before sending to Goodmem
+          # This should never trigger if filtering is working correctly
+          if not self._is_mime_type_supported(mime_type):
+            print(
+                f"[ERROR] Internal error: Attempted to send unsupported MIME type "
+                f"'{mime_type}' to Goodmem. This should not happen. "
+                f"File '{display_name}' will be skipped."
+            )
+            continue
+
           file_metadata = {**base_metadata, "filename": display_name}
           self.goodmem_client.insert_memory_binary(
               space_id, file_bytes, mime_type, metadata=file_metadata
@@ -300,6 +383,8 @@ class GoodmemChatPlugin(BasePlugin):
           if self.debug:
             print(f"[DEBUG] File reference (URI): {file_uri}, "
                   f"mime={mime_type} - not fetching content")
+          # Note: file_data references are not sent to Goodmem, so no
+          # exclusion check needed here
 
       return None
 
