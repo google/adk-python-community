@@ -14,7 +14,7 @@
 
 """Goodmem tools module for ADK."""
 
-from .goodmem_client import GoodmemClient
+from google.adk_community.plugins.goodmem import GoodmemClient
 from .goodmem_tools import goodmem_fetch
 from .goodmem_tools import goodmem_save
 from .goodmem_tools import GoodmemFetchResponse

@@ -18,10 +18,10 @@ from unittest.mock import call
 from unittest.mock import patch
 
 import pytest
-import requests
+import httpx
 
+from google.adk_community.plugins.goodmem import GoodmemClient
 from google.adk_community.tools.goodmem import goodmem_tools
-from google.adk_community.tools.goodmem.goodmem_client import GoodmemClient
 from google.adk_community.tools.goodmem.goodmem_tools import _format_debug_table
 from google.adk_community.tools.goodmem.goodmem_tools import _format_timestamp_for_table
 from google.adk_community.tools.goodmem.goodmem_tools import _wrap_content
@@ -130,8 +130,8 @@ class TestGoodmemSave:
       mock_client.list_spaces.return_value = [
           {'spaceId': 'existing-space-123', 'name': 'adk_tool_test-user'}
       ]
-      mock_client.insert_memory.side_effect = (
-          requests.exceptions.ConnectionError('Connection failed')
+      mock_client.insert_memory.side_effect = httpx.ConnectError(
+          'Connection failed'
       )
 
       response = await goodmem_save(
@@ -155,7 +155,9 @@ class TestGoodmemSave:
       mock_client.list_spaces.return_value = [
           {'spaceId': 'existing-space-123', 'name': 'adk_tool_test-user'}
       ]
-      mock_error = requests.exceptions.HTTPError()
+      mock_error = httpx.HTTPStatusError(
+          '401', request=MagicMock(), response=MagicMock()
+      )
       mock_error.response = MagicMock()
       mock_error.response.status_code = 401
       mock_client.insert_memory.side_effect = mock_error
@@ -181,7 +183,9 @@ class TestGoodmemSave:
       mock_client.list_spaces.return_value = [
           {'spaceId': 'existing-space-123', 'name': 'adk_tool_test-user'}
       ]
-      mock_error = requests.exceptions.HTTPError()
+      mock_error = httpx.HTTPStatusError(
+          '404', request=MagicMock(), response=MagicMock()
+      )
       mock_error.response = MagicMock()
       mock_error.response.status_code = 404
       mock_client.insert_memory.side_effect = mock_error
@@ -258,7 +262,9 @@ class TestGoodmemSave:
       mock_client.list_embedders.return_value = [
           {'embedderId': 'embedder-1', 'name': 'Test Embedder'}
       ]
-      conflict_error = requests.exceptions.HTTPError()
+      conflict_error = httpx.HTTPStatusError(
+          '409', request=MagicMock(), response=MagicMock()
+      )
       conflict_error.response = MagicMock()
       conflict_error.response.status_code = 409
       mock_client.create_space.side_effect = conflict_error
@@ -608,7 +614,7 @@ class TestGoodmemFetch:
         'google.adk_community.tools.goodmem.goodmem_tools.GoodmemClient'
     ) as MockClient:
       mock_client = MockClient.return_value
-      mock_client.list_spaces.side_effect = requests.exceptions.ConnectionError(
+      mock_client.list_spaces.side_effect = httpx.ConnectError(
           'Connection failed'
       )
 
@@ -703,45 +709,41 @@ class TestGoodmemFetch:
       mock_client.list_spaces.return_value = [
           {'spaceId': 'existing-space-123', 'name': 'adk_tool_test-user'}
       ]
-      # Set debug mode
-      goodmem_tools._tool_debug = True
-      try:
-        mock_client.retrieve_memories.return_value = [{
-            'retrievedItem': {
-                'chunk': {
-                    'chunk': {
-                        'memoryId': 'memory-123',
-                        'chunkText': 'User: Test content',
-                        'updatedAt': 1234567890000,  # 2009-02-13 23:31:30 UTC
-                    }
-                }
-            }
-        }]
-        mock_client.get_memory_by_id.return_value = {
-            'metadata': {'user_id': 'test-user'}
-        }
+      mock_client.retrieve_memories.return_value = [{
+          'retrievedItem': {
+              'chunk': {
+                  'chunk': {
+                      'memoryId': 'memory-123',
+                      'chunkText': 'User: Test content',
+                      'updatedAt': 1234567890000,  # 2009-02-13 23:31:30 UTC
+                  }
+              }
+          }
+      }]
+      mock_client.get_memory_by_id.return_value = {
+          'metadata': {'user_id': 'test-user'}
+      }
 
-        response = await goodmem_fetch(
-            query='test query',
-            tool_context=mock_tool_context,
-            base_url=mock_config['base_url'],
-            api_key=mock_config['api_key'],
-        )
+      response = await goodmem_fetch(
+          query='test query',
+          tool_context=mock_tool_context,
+          base_url=mock_config['base_url'],
+          api_key=mock_config['api_key'],
+          debug=True,
+      )
 
-        assert response.success is True
-        # Verify debug table was printed
-        print_calls = [str(call) for call in mock_print.call_args_list]
-        debug_table_printed = any(
-            '[DEBUG] Retrieved memories:' in str(call) for call in print_calls
-        )
-        assert (
-            debug_table_printed
-        ), 'Debug table should be printed when debug is enabled'
-        mock_client.list_spaces.assert_called_once_with(
-            name='adk_tool_test-user'
-        )
-      finally:
-        goodmem_tools._tool_debug = False
+      assert response.success is True
+      # Verify debug table was printed
+      print_calls = [str(call) for call in mock_print.call_args_list]
+      debug_table_printed = any(
+          '[DEBUG] Retrieved memories:' in str(call) for call in print_calls
+      )
+      assert (
+          debug_table_printed
+      ), 'Debug table should be printed when debug is enabled'
+      mock_client.list_spaces.assert_called_once_with(
+          name='adk_tool_test-user'
+      )
 
   @pytest.mark.asyncio
   async def test_fetch_role_detection_from_prefix(
@@ -758,55 +760,52 @@ class TestGoodmemFetch:
       mock_client.list_spaces.return_value = [
           {'spaceId': 'existing-space-123', 'name': 'adk_tool_test-user'}
       ]
-      goodmem_tools._tool_debug = True
-      try:
-        mock_client.retrieve_memories.return_value = [
-            {
-                'retrievedItem': {
-                    'chunk': {
-                        'chunk': {
-                            'memoryId': 'memory-user',
-                            'chunkText': 'User: This is from user',
-                            'updatedAt': 1234567890000,
-                        }
-                    }
-                }
-            },
-            {
-                'retrievedItem': {
-                    'chunk': {
-                        'chunk': {
-                            'memoryId': 'memory-llm',
-                            'chunkText': 'LLM: This is from llm',
-                            'updatedAt': 1234567891000,
-                        }
-                    }
-                }
-            },
-        ]
-        mock_client.get_memory_by_id.return_value = {'metadata': {}}
+      mock_client.retrieve_memories.return_value = [
+          {
+              'retrievedItem': {
+                  'chunk': {
+                      'chunk': {
+                          'memoryId': 'memory-user',
+                          'chunkText': 'User: This is from user',
+                          'updatedAt': 1234567890000,
+                      }
+                  }
+              }
+          },
+          {
+              'retrievedItem': {
+                  'chunk': {
+                      'chunk': {
+                          'memoryId': 'memory-llm',
+                          'chunkText': 'LLM: This is from llm',
+                          'updatedAt': 1234567891000,
+                      }
+                  }
+              }
+          },
+      ]
+      mock_client.get_memory_by_id.return_value = {'metadata': {}}
 
-        response = await goodmem_fetch(
-            query='test',
-            tool_context=mock_tool_context,
-            base_url=mock_config['base_url'],
-            api_key=mock_config['api_key'],
-        )
+      response = await goodmem_fetch(
+          query='test',
+          tool_context=mock_tool_context,
+          base_url=mock_config['base_url'],
+          api_key=mock_config['api_key'],
+          debug=True,
+      )
 
-        assert response.success is True
-        assert len(response.memories) == 2
-        # Content should have prefix removed
-        assert response.memories[0].content == 'This is from user'
-        assert response.memories[1].content == 'This is from llm'
+      assert response.success is True
+      assert len(response.memories) == 2
+      # Content should have prefix removed
+      assert response.memories[0].content == 'This is from user'
+      assert response.memories[1].content == 'This is from llm'
 
-        # Verify debug table contains correct roles
-        print_calls = str(mock_print.call_args_list)
-        assert 'user' in print_calls.lower() or 'role' in print_calls.lower()
-        mock_client.list_spaces.assert_called_once_with(
-            name='adk_tool_test-user'
-        )
-      finally:
-        goodmem_tools._tool_debug = False
+      # Verify debug table contains correct roles
+      print_calls = str(mock_print.call_args_list)
+      assert 'user' in print_calls.lower() or 'role' in print_calls.lower()
+      mock_client.list_spaces.assert_called_once_with(
+          name='adk_tool_test-user'
+      )
 
 
 class TestDebugTableFormatting:
@@ -915,20 +914,20 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_with_blank_lines(self):
     """Test NDJSON parsing with blank lines interspersed."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    # Mock response with blank lines between valid JSON
-    ndjson_response = (
-        '\n{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
-        ' "First"}}}}\n\n{"retrievedItem": {"chunk": {"chunk": {"memoryId":'
-        ' "2", "chunkText": "Second"}}}}\n'
-    )
-
-    with patch('requests.post') as mock_post:
+      ndjson_response = (
+          '\n{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
+          ' "First"}}}}\n\n{"retrievedItem": {"chunk": {"chunk": {"memoryId":'
+          ' "2", "chunkText": "Second"}}}}\n'
+      )
       mock_response = Mock()
       mock_response.text = ndjson_response
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -938,19 +937,20 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_with_multiple_consecutive_blank_lines(self):
     """Test NDJSON parsing with multiple consecutive blank lines."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    ndjson_response = (
-        '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
-        ' "First"}}}}\n\n\n\n{"retrievedItem": {"chunk": {"chunk": {"memoryId":'
-        ' "2", "chunkText": "Second"}}}}'
-    )
-
-    with patch('requests.post') as mock_post:
+      ndjson_response = (
+          '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
+          ' "First"}}}}\n\n\n\n{"retrievedItem": {"chunk": {"chunk": {"memoryId":'
+          ' "2", "chunkText": "Second"}}}}'
+      )
       mock_response = Mock()
       mock_response.text = ndjson_response
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -958,19 +958,20 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_with_whitespace_only_lines(self):
     """Test NDJSON parsing with lines containing only whitespace."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    ndjson_response = (
-        '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
-        ' "First"}}}}\n   \n\t\n{"retrievedItem": {"chunk": {"chunk":'
-        ' {"memoryId": "2", "chunkText": "Second"}}}}'
-    )
-
-    with patch('requests.post') as mock_post:
+      ndjson_response = (
+          '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
+          ' "First"}}}}\n   \n\t\n{"retrievedItem": {"chunk": {"chunk":'
+          ' {"memoryId": "2", "chunkText": "Second"}}}}'
+      )
       mock_response = Mock()
       mock_response.text = ndjson_response
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -978,19 +979,20 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_with_trailing_newlines(self):
     """Test NDJSON parsing with trailing newlines."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    ndjson_response = (
-        '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
-        ' "First"}}}}\n{"retrievedItem": {"chunk": {"chunk": {"memoryId": "2",'
-        ' "chunkText": "Second"}}}}\n\n\n'
-    )
-
-    with patch('requests.post') as mock_post:
+      ndjson_response = (
+          '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
+          ' "First"}}}}\n{"retrievedItem": {"chunk": {"chunk": {"memoryId": "2",'
+          ' "chunkText": "Second"}}}}\n\n\n'
+      )
       mock_response = Mock()
       mock_response.text = ndjson_response
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -998,15 +1000,15 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_empty_response(self):
     """Test NDJSON parsing with empty response."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    ndjson_response = ''
-
-    with patch('requests.post') as mock_post:
       mock_response = Mock()
-      mock_response.text = ndjson_response
+      mock_response.text = ''
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -1014,15 +1016,15 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_only_blank_lines(self):
     """Test NDJSON parsing with only blank lines."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    ndjson_response = '\n\n\n   \n\t\n'
-
-    with patch('requests.post') as mock_post:
       mock_response = Mock()
-      mock_response.text = ndjson_response
+      mock_response.text = '\n\n\n   \n\t\n'
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
@@ -1030,24 +1032,23 @@ class TestGoodmemClientNDJSON:
 
   def test_ndjson_filters_non_retrieved_items(self):
     """Test that lines without 'retrievedItem' key are filtered out."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    # Mix of valid retrievedItem and other JSON objects
-    ndjson_response = (
-        '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
-        ' "First"}}}}\n{"status": "processing"}\n{"retrievedItem": {"chunk":'
-        ' {"chunk": {"memoryId": "2", "chunkText": "Second"}}}}'
-    )
-
-    with patch('requests.post') as mock_post:
+      ndjson_response = (
+          '{"retrievedItem": {"chunk": {"chunk": {"memoryId": "1", "chunkText":'
+          ' "First"}}}}\n{"status": "processing"}\n{"retrievedItem": {"chunk":'
+          ' {"chunk": {"memoryId": "2", "chunkText": "Second"}}}}'
+      )
       mock_response = Mock()
       mock_response.text = ndjson_response
       mock_response.raise_for_status = Mock()
-      mock_post.return_value = mock_response
+      mock_http.post.return_value = mock_response
 
       result = client.retrieve_memories(query='test', space_ids=['space-1'])
 
-      # Should only return the 2 items with retrievedItem key
       assert len(result) == 2
       assert all('retrievedItem' in item for item in result)
 
@@ -1057,23 +1058,24 @@ class TestGoodmemClientListSpaces:
 
   def test_list_spaces_with_name_filter(self):
     """Test list_spaces includes nameFilter and maxResults."""
-    client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_http = MagicMock()
+      mock_httpx.Client.return_value = mock_http
+      client = GoodmemClient(base_url='http://localhost:8080', api_key='test-key')
 
-    with patch('requests.get') as mock_get:
       mock_response = Mock()
       mock_response.json.return_value = {
           'spaces': [{'spaceId': 'space-1', 'name': 'adk_tool_test-user'}]
       }
       mock_response.raise_for_status = Mock()
-      mock_get.return_value = mock_response
+      mock_http.get.return_value = mock_response
 
       result = client.list_spaces(name='adk_tool_test-user')
 
       assert len(result) == 1
       assert result[0]['name'] == 'adk_tool_test-user'
-      mock_get.assert_called_once_with(
-          'http://localhost:8080/v1/spaces',
-          headers=client._headers,
+      mock_http.get.assert_called_once_with(
+          '/v1/spaces',
           params={'maxResults': 1000, 'nameFilter': 'adk_tool_test-user'},
-          timeout=30,
+          timeout=30.0,
       )

@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Goodmem API client for interacting with Goodmem.ai."""
+"""Goodmem API client for interacting with Goodmem.ai.
+
+Lives under plugins/goodmem and is shared: used by GoodmemChatPlugin and
+re-exported for use by tools (goodmem_save, goodmem_fetch). Uses httpx for
+HTTP calls.
+"""
 
 import json
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-import requests
+import httpx
 
 
 class GoodmemClient:
@@ -39,20 +44,34 @@ class GoodmemClient:
       api_key: The Goodmem API key for authentication.
       debug: Whether to enable debug mode.
     """
-    # Remove trailing slash if present to avoid double slashes in URLs
     self._base_url = base_url.rstrip("/")
     self._api_key = api_key
     self._headers = {
         "x-api-key": self._api_key,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     self._debug = debug
+    self._client = httpx.Client(
+        base_url=self._base_url,
+        headers=self._headers,
+        timeout=30.0,
+    )
+
+  def close(self) -> None:
+    """Closes the underlying HTTP client."""
+    self._client.close()
+
+  def __enter__(self) -> "GoodmemClient":
+    return self
+
+  def __exit__(self, *args: Any) -> None:
+    self.close()
 
   def _safe_json_dumps(self, value: Any) -> str:
     try:
       return json.dumps(value, indent=2)
     except (TypeError, ValueError):
-      return "<non-serializable>"
+      return f"<non-serializable: {type(value).__name__}>"
 
   def create_space(self, space_name: str, embedder_id: str) -> Dict[str, Any]:
     """Creates a new Goodmem space.
@@ -65,27 +84,25 @@ class GoodmemClient:
       The response JSON containing spaceId.
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails (e.g. connection, timeout).
     """
-    url = f"{self._base_url}/v1/spaces"
+    url = "/v1/spaces"
     payload = {
         "name": space_name,
         "spaceEmbedders": [
-            {
-                "embedderId": embedder_id,
-                "defaultRetrievalWeight": 1.0
-            }
+            {"embedderId": embedder_id, "defaultRetrievalWeight": 1.0}
         ],
         "defaultChunkingConfig": {
             "recursive": {
                 "chunkSize": 512,
                 "chunkOverlap": 64,
                 "keepStrategy": "KEEP_END",
-                "lengthMeasurement": "CHARACTER_COUNT"
+                "lengthMeasurement": "CHARACTER_COUNT",
             }
-        }
+        },
     }
-    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
+    response = self._client.post(url, json=payload, timeout=30.0)
     response.raise_for_status()
     return response.json()
 
@@ -108,17 +125,18 @@ class GoodmemClient:
       The response JSON containing memoryId and processingStatus.
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    url = f"{self._base_url}/v1/memories"
+    url = "/v1/memories"
     payload: Dict[str, Any] = {
         "spaceId": space_id,
         "originalContent": content,
-        "contentType": content_type
+        "contentType": content_type,
     }
     if metadata:
       payload["metadata"] = metadata
-    response = requests.post(url, json=payload, headers=self._headers, timeout=30)
+    response = self._client.post(url, json=payload, timeout=30.0)
     response.raise_for_status()
     return response.json()
 
@@ -131,8 +149,6 @@ class GoodmemClient:
   ) -> Dict[str, Any]:
     """Inserts a binary memory into a Goodmem space using multipart upload.
 
-    If debug is enabled, this method prints debug information to stdout.
-
     Args:
       space_id: The ID of the space to insert into.
       content_bytes: The raw binary content as bytes.
@@ -143,9 +159,10 @@ class GoodmemClient:
       The response JSON containing memoryId and processingStatus.
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    url = f"{self._base_url}/v1/memories"
+    url = "/v1/memories"
 
     if self._debug:
       print("[DEBUG] insert_memory_binary called:")
@@ -155,10 +172,9 @@ class GoodmemClient:
       if metadata:
         print(f"  - metadata:\n{self._safe_json_dumps(metadata)}")
 
-    # Build the JSON request metadata
     request_data: Dict[str, Any] = {
         "spaceId": space_id,
-        "contentType": content_type
+        "contentType": content_type,
     }
     if metadata:
       request_data["metadata"] = metadata
@@ -166,17 +182,14 @@ class GoodmemClient:
     if self._debug:
       print(f"[DEBUG] request_data:\n{self._safe_json_dumps(request_data)}")
 
-    # Multipart form data: 'request' as form field, 'file' as file upload
     data = {"request": json.dumps(request_data)}
     files = {"file": ("upload", content_bytes, content_type)}
-
-    # Use only API key header; requests will set Content-Type for multipart
     headers = {"x-api-key": self._api_key}
 
     if self._debug:
       print(f"[DEBUG] Making POST request to {url}")
-    response = requests.post(
-        url, data=data, files=files, headers=headers, timeout=120
+    response = self._client.post(
+        url, data=data, files=files, headers=headers, timeout=120.0
     )
     if self._debug:
       print(f"[DEBUG] Response status: {response.status_code}")
@@ -204,30 +217,30 @@ class GoodmemClient:
       List of matching chunks (parsed from NDJSON response).
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    url = f"{self._base_url}/v1/memories:retrieve"
-    headers = self._headers.copy()
-    headers["Accept"] = "application/x-ndjson"
-
+    url = "/v1/memories:retrieve"
+    headers = {**self._headers, "Accept": "application/x-ndjson"}
     payload = {
         "message": query,
-        "spaceKeys": [{"spaceId": space_id} for space_id in space_ids],
-        "requestedSize": request_size
+        "spaceKeys": [{"spaceId": sid} for sid in space_ids],
+        "requestedSize": request_size,
     }
 
-    response = requests.post(url, json=payload, headers=headers, timeout=30)
+    response = self._client.post(
+        url, json=payload, headers=headers, timeout=30.0
+    )
     response.raise_for_status()
 
-    chunks = []
+    chunks: List[Dict[str, Any]] = []
     for line in response.text.strip().split("\n"):
-      if line.strip():  # Skip blank/empty lines
+      if line.strip():
         try:
           tmp_dict = json.loads(line)
           if "retrievedItem" in tmp_dict:
             chunks.append(tmp_dict)
         except json.JSONDecodeError:
-          # Skip malformed lines (e.g., transmission errors)
           continue
     return chunks
 
@@ -238,32 +251,28 @@ class GoodmemClient:
       List of spaces (optionally filtered by name).
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    url = f"{self._base_url}/v1/spaces"
-
-    all_spaces = []
-    next_token = None
+    url = "/v1/spaces"
+    all_spaces: List[Dict[str, Any]] = []
+    next_token: Optional[str] = None
     max_results = 1000
 
     while True:
-      # Build query parameters
-      params = {"maxResults": max_results}
+      params: Dict[str, Any] = {"maxResults": max_results}
       if next_token:
         params["nextToken"] = next_token
       if name:
         params["nameFilter"] = name
 
-      response = requests.get(
-          url, headers=self._headers, params=params, timeout=30
-      )
+      response = self._client.get(url, params=params, timeout=30.0)
       response.raise_for_status()
 
       data = response.json()
       spaces = data.get("spaces", [])
       all_spaces.extend(spaces)
 
-      # Check for next page
       next_token = data.get("nextToken")
       if not next_token:
         break
@@ -277,10 +286,11 @@ class GoodmemClient:
       List of embedders.
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    url = f"{self._base_url}/v1/embedders"
-    response = requests.get(url, headers=self._headers, timeout=30)
+    url = "/v1/embedders"
+    response = self._client.get(url, timeout=30.0)
     response.raise_for_status()
     return response.json().get("embedders", [])
 
@@ -294,11 +304,37 @@ class GoodmemClient:
       The memory object including metadata, contentType, etc.
 
     Raises:
-      requests.exceptions.RequestException: If the API request fails.
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
     """
-    # URL-encode the memory_id to handle special characters
     encoded_memory_id = quote(memory_id, safe="")
-    url = f"{self._base_url}/v1/memories/{encoded_memory_id}"
-    response = requests.get(url, headers=self._headers, timeout=30)
+    url = f"/v1/memories/{encoded_memory_id}"
+    response = self._client.get(url, timeout=30.0)
     response.raise_for_status()
     return response.json()
+
+  def get_memories_batch(self, memory_ids: List[str]) -> List[Dict[str, Any]]:
+    """Gets multiple memories by ID in a single request (batch get).
+
+    Uses POST /v1/memories:batchGet to avoid N+1 queries when enriching
+    many chunks with full memory metadata.
+
+    Args:
+      memory_ids: List of memory IDs to fetch.
+
+    Returns:
+      List of memory objects (same shape as get_memory_by_id). Order and
+      presence may not match request; missing or failed IDs are omitted.
+
+    Raises:
+      httpx.HTTPStatusError: If the API request fails with an error status.
+      httpx.RequestError: If the request fails.
+    """
+    if not memory_ids:
+      return []
+    url = "/v1/memories:batchGet"
+    payload = {"memoryIds": list(memory_ids)}
+    response = self._client.post(url, json=payload, timeout=30.0)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("memories", [])

@@ -15,10 +15,11 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from google.genai import types
 
-from google.adk_community.plugins.goodmem.goodmem_client import GoodmemClient
+from google.adk_community.plugins.goodmem import GoodmemClient
 from google.adk_community.plugins.goodmem.goodmem_plugin import GoodmemChatPlugin
 
 
@@ -38,13 +39,15 @@ class TestGoodmemClient:
 
 
   @pytest.fixture
-  def mock_requests(self) -> MagicMock:
-    """Mock requests library for testing."""
-    with patch('google.adk_community.plugins.goodmem.goodmem_client.requests') as mock_req:
-      yield mock_req
+  def mock_httpx_client(self) -> MagicMock:
+    """Mock httpx.Client for testing."""
+    with patch('google.adk_community.plugins.goodmem.client.httpx') as mock_httpx:
+      mock_client = MagicMock()
+      mock_httpx.Client.return_value = mock_client
+      yield mock_client
 
   @pytest.fixture
-  def goodmem_client(self) -> GoodmemClient:
+  def goodmem_client(self, mock_httpx_client: MagicMock) -> GoodmemClient:
     """Create GoodmemClient instance for testing."""
     return GoodmemClient(base_url=MOCK_BASE_URL, api_key=MOCK_API_KEY)
 
@@ -55,23 +58,23 @@ class TestGoodmemClient:
     assert goodmem_client._headers["x-api-key"] == MOCK_API_KEY
     assert goodmem_client._headers["Content-Type"] == "application/json"
 
-  def test_create_space(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_create_space(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test creating a new space."""
     mock_response = MagicMock()
     mock_response.json.return_value = {"spaceId": MOCK_SPACE_ID}
     mock_response.raise_for_status = MagicMock()
-    mock_requests.post.return_value = mock_response
+    mock_httpx_client.post.return_value = mock_response
 
     result = goodmem_client.create_space(MOCK_SPACE_NAME, MOCK_EMBEDDER_ID)
 
     assert result["spaceId"] == MOCK_SPACE_ID
-    mock_requests.post.assert_called_once()
-    call_args = mock_requests.post.call_args
-    assert call_args.args[0] == f"{MOCK_BASE_URL}/v1/spaces"
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
+    assert call_args.args[0] == "/v1/spaces"
     assert call_args.kwargs["json"]["name"] == MOCK_SPACE_NAME
     assert call_args.kwargs["json"]["spaceEmbedders"][0]["embedderId"] == MOCK_EMBEDDER_ID
 
-  def test_insert_memory(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_insert_memory(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test inserting a text memory."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -79,7 +82,7 @@ class TestGoodmemClient:
         "processingStatus": "COMPLETED"
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.post.return_value = mock_response
+    mock_httpx_client.post.return_value = mock_response
 
     content = "Test memory content"
     metadata = {"session_id": MOCK_SESSION_ID, "user_id": MOCK_USER_ID}
@@ -88,14 +91,14 @@ class TestGoodmemClient:
     )
 
     assert result["memoryId"] == MOCK_MEMORY_ID
-    mock_requests.post.assert_called_once()
-    call_args = mock_requests.post.call_args
-    assert call_args.args[0] == f"{MOCK_BASE_URL}/v1/memories"
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
+    assert call_args.args[0] == "/v1/memories"
     assert call_args.kwargs["json"]["spaceId"] == MOCK_SPACE_ID
     assert call_args.kwargs["json"]["originalContent"] == content
     assert call_args.kwargs["json"]["metadata"] == metadata
 
-  def test_insert_memory_binary(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_insert_memory_binary(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test inserting a binary memory using multipart upload."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -103,7 +106,7 @@ class TestGoodmemClient:
         "processingStatus": "COMPLETED"
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.post.return_value = mock_response
+    mock_httpx_client.post.return_value = mock_response
 
     file_bytes = b"test file content"
     metadata = {"filename": "test.pdf", "user_id": MOCK_USER_ID}
@@ -113,8 +116,8 @@ class TestGoodmemClient:
     )
 
     assert result["memoryId"] == MOCK_MEMORY_ID
-    mock_requests.post.assert_called_once()
-    call_args = mock_requests.post.call_args
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
 
     # Verify multipart form data was used
     assert "data" in call_args.kwargs
@@ -134,7 +137,7 @@ class TestGoodmemClient:
     assert files["file"][1] == file_bytes
     assert files["file"][2] == "application/pdf"
 
-  def test_retrieve_memories(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_retrieve_memories(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test retrieving memories."""
     mock_response = MagicMock()
     # Simulate NDJSON response
@@ -145,7 +148,7 @@ class TestGoodmemClient:
     ]
     mock_response.text = "\n".join(ndjson_lines)
     mock_response.raise_for_status = MagicMock()
-    mock_requests.post.return_value = mock_response
+    mock_httpx_client.post.return_value = mock_response
 
     query = "test query"
     space_ids = [MOCK_SPACE_ID]
@@ -153,12 +156,12 @@ class TestGoodmemClient:
 
     assert len(result) == 2  # Only items with retrievedItem
     assert result[0]["retrievedItem"]["chunk"]["chunk"]["chunkText"] == "chunk 1"
-    mock_requests.post.assert_called_once()
-    call_args = mock_requests.post.call_args
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
     assert call_args.kwargs["json"]["message"] == query
     assert call_args.kwargs["json"]["requestedSize"] == 5
 
-  def test_list_spaces(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_list_spaces(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test getting all spaces."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -168,21 +171,20 @@ class TestGoodmemClient:
         ]
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.get.return_value = mock_response
+    mock_httpx_client.get.return_value = mock_response
 
     result = goodmem_client.list_spaces()
 
     assert len(result) == 2
     assert result[0]["name"] == "Space 1"
-    mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/v1/spaces",
-        headers=goodmem_client._headers,
+    mock_httpx_client.get.assert_called_once_with(
+        "/v1/spaces",
         params={"maxResults": 1000},
-        timeout=30
+        timeout=30.0,
     )
 
   def test_list_spaces_with_name_filter(
-      self, goodmem_client: GoodmemClient, mock_requests: MagicMock
+      self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock
   ) -> None:
     """Test filtering spaces by name."""
     mock_response = MagicMock()
@@ -192,20 +194,19 @@ class TestGoodmemClient:
         ]
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.get.return_value = mock_response
+    mock_httpx_client.get.return_value = mock_response
 
     result = goodmem_client.list_spaces(name=MOCK_SPACE_NAME)
 
     assert len(result) == 1
     assert result[0]["name"] == "adk_chat_test_user"
-    mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/v1/spaces",
-        headers=goodmem_client._headers,
+    mock_httpx_client.get.assert_called_once_with(
+        "/v1/spaces",
         params={"maxResults": 1000, "nameFilter": MOCK_SPACE_NAME},
-        timeout=30
+        timeout=30.0,
     )
 
-  def test_list_embedders(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_list_embedders(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test listing embedders."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -215,19 +216,18 @@ class TestGoodmemClient:
         ]
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.get.return_value = mock_response
+    mock_httpx_client.get.return_value = mock_response
 
     result = goodmem_client.list_embedders()
 
     assert len(result) == 2
     assert result[0]["embedderId"] == "emb1"
-    mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/v1/embedders",
-        headers=goodmem_client._headers,
-        timeout=30
+    mock_httpx_client.get.assert_called_once_with(
+        "/v1/embedders",
+        timeout=30.0,
     )
 
-  def test_get_memory_by_id(self, goodmem_client: GoodmemClient, mock_requests: MagicMock) -> None:
+  def test_get_memory_by_id(self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock) -> None:
     """Test getting a memory by ID."""
     mock_response = MagicMock()
     mock_response.json.return_value = {
@@ -235,19 +235,51 @@ class TestGoodmemClient:
         "metadata": {"user_id": MOCK_USER_ID}
     }
     mock_response.raise_for_status = MagicMock()
-    mock_requests.get.return_value = mock_response
+    mock_httpx_client.get.return_value = mock_response
 
     result = goodmem_client.get_memory_by_id(MOCK_MEMORY_ID)
 
     assert result["memoryId"] == MOCK_MEMORY_ID
     assert result["metadata"]["user_id"] == MOCK_USER_ID
     from urllib.parse import quote
-    encoded_memory_id = quote(MOCK_MEMORY_ID, safe='')
-    mock_requests.get.assert_called_once_with(
-        f"{MOCK_BASE_URL}/v1/memories/{encoded_memory_id}",
-        headers=goodmem_client._headers,
-        timeout=30
+    encoded_memory_id = quote(MOCK_MEMORY_ID, safe="")
+    mock_httpx_client.get.assert_called_once_with(
+        f"/v1/memories/{encoded_memory_id}",
+        timeout=30.0,
     )
+
+  def test_get_memories_batch(
+      self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock
+  ) -> None:
+    """Test batch get of memories (POST /v1/memories:batchGet)."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "memories": [
+            {"memoryId": "mem1", "metadata": {"role": "user"}},
+            {"memoryId": "mem2", "metadata": {"role": "LLM"}},
+        ]
+    }
+    mock_response.raise_for_status = MagicMock()
+    mock_httpx_client.post.return_value = mock_response
+
+    result = goodmem_client.get_memories_batch(["mem1", "mem2"])
+
+    assert len(result) == 2
+    assert result[0]["memoryId"] == "mem1"
+    assert result[0]["metadata"]["role"] == "user"
+    assert result[1]["memoryId"] == "mem2"
+    mock_httpx_client.post.assert_called_once()
+    call_args = mock_httpx_client.post.call_args
+    assert call_args.args[0] == "/v1/memories:batchGet"
+    assert set(call_args.kwargs["json"]["memoryIds"]) == {"mem1", "mem2"}
+
+  def test_get_memories_batch_empty(
+      self, goodmem_client: GoodmemClient, mock_httpx_client: MagicMock
+  ) -> None:
+    """Test get_memories_batch with empty list does not call API."""
+    result = goodmem_client.get_memories_batch([])
+    assert result == []
+    mock_httpx_client.post.assert_not_called()
 
 
 class TestGoodmemChatPlugin:
@@ -286,11 +318,16 @@ class TestGoodmemChatPlugin:
       # Mock retrieve_memories
       mock_client.retrieve_memories.return_value = []
 
-      # Mock get_memory_by_id
+      # Mock get_memory_by_id (used by tools / single fetch)
       mock_client.get_memory_by_id.return_value = {
           "memoryId": MOCK_MEMORY_ID,
           "metadata": {"user_id": MOCK_USER_ID, "role": "user"}
       }
+
+      # Mock get_memories_batch (used by before_model_callback for metadata)
+      mock_client.get_memories_batch.return_value = [
+          {"memoryId": MOCK_MEMORY_ID, "metadata": {"user_id": MOCK_USER_ID, "role": "user"}}
+      ]
 
       mock_client_class.return_value = mock_client
       yield mock_client
@@ -324,23 +361,34 @@ class TestGoodmemChatPlugin:
     assert plugin.embedder_id == MOCK_EMBEDDER_ID
 
   def test_plugin_initialization_no_embedders_fails(self, mock_goodmem_client: MagicMock) -> None:
-    """Test plugin initialization fails when no embedders available."""
+    """Test that embedder resolution fails when no embedders available."""
     mock_goodmem_client.list_embedders.return_value = []
 
+    plugin = GoodmemChatPlugin(
+        base_url=MOCK_BASE_URL,
+        api_key=MOCK_API_KEY
+    )
     with pytest.raises(ValueError, match="No embedders available"):
-      GoodmemChatPlugin(
-          base_url=MOCK_BASE_URL,
-          api_key=MOCK_API_KEY
-      )
+      plugin._get_embedder_id()
 
   def test_plugin_initialization_invalid_embedder_fails(self, mock_goodmem_client: MagicMock) -> None:
-    """Test plugin initialization fails with invalid embedder_id."""
+    """Test that embedder resolution fails with invalid embedder_id."""
+    plugin = GoodmemChatPlugin(
+        base_url=MOCK_BASE_URL,
+        api_key=MOCK_API_KEY,
+        embedder_id="invalid-embedder-id"
+    )
     with pytest.raises(ValueError, match="is not valid"):
-      GoodmemChatPlugin(
-          base_url=MOCK_BASE_URL,
-          api_key=MOCK_API_KEY,
-          embedder_id="invalid-embedder-id"
-      )
+      plugin._get_embedder_id()
+
+  def test_plugin_initialization_no_network_call(self, mock_goodmem_client: MagicMock) -> None:
+    """Test that __init__ does not call list_embedders (lazy resolution)."""
+    GoodmemChatPlugin(
+        base_url=MOCK_BASE_URL,
+        api_key=MOCK_API_KEY,
+        embedder_id=MOCK_EMBEDDER_ID,
+    )
+    mock_goodmem_client.list_embedders.assert_not_called()
 
   def test_plugin_initialization_requires_base_url(self) -> None:
     """Test plugin initialization requires base_url."""
@@ -606,14 +654,14 @@ class TestGoodmemChatPlugin:
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
 
-    mock_goodmem_client.insert_memory.side_effect = Exception("API Error")
+    mock_goodmem_client.insert_memory.side_effect = httpx.RequestError("API Error")
 
     user_message = types.Content(
         role="user",
         parts=[types.Part(text="Test message")]
     )
 
-    # Should not raise exception
+    # Should not raise; plugin catches httpx.HTTPError and returns None
     result = await chat_plugin.on_user_message_callback(
         invocation_context=mock_context,
         user_message=user_message
@@ -704,7 +752,7 @@ class TestGoodmemChatPlugin:
 
   @pytest.mark.asyncio
   async def test_before_model_callback_augments_request(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
-    """Test before_model_callback augments LLM request with memory."""
+    """Test before_model_callback augments LLM request with memory (uses batch get)."""
     mock_context = MagicMock()
     mock_context.user_id = MOCK_USER_ID
 
@@ -724,10 +772,9 @@ class TestGoodmemChatPlugin:
         }
     ]
 
-    mock_goodmem_client.get_memory_by_id.return_value = {
-        "memoryId": "mem1",
-        "metadata": {"role": "user"}
-    }
+    mock_goodmem_client.get_memories_batch.return_value = [
+        {"memoryId": "mem1", "metadata": {"role": "user"}}
+    ]
 
     # Create LLM request
     mock_request = MagicMock()
@@ -742,11 +789,70 @@ class TestGoodmemChatPlugin:
         llm_request=mock_request
     )
 
+    # Verify batch get was called once with the memory id (no N+1)
+    mock_goodmem_client.get_memories_batch.assert_called_once()
+    call_args = mock_goodmem_client.get_memories_batch.call_args
+    assert set(call_args[0][0]) == {"mem1"}
+
     # Verify request was augmented
     assert "BEGIN MEMORY" in mock_part.text
     assert "END MEMORY" in mock_part.text
     assert "Previous conversation" in mock_part.text
     assert result is None
+
+  @pytest.mark.asyncio
+  async def test_before_model_callback_batch_get_multiple_memories(
+      self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock
+  ) -> None:
+    """Test before_model_callback uses single batch get for multiple memory IDs (no N+1)."""
+    mock_context = MagicMock()
+    mock_context.user_id = MOCK_USER_ID
+
+    # Two chunks from two different memories
+    mock_goodmem_client.retrieve_memories.return_value = [
+        {
+            "retrievedItem": {
+                "chunk": {
+                    "chunk": {
+                        "memoryId": "mem1",
+                        "chunkText": "User: First message",
+                        "updatedAt": 1768694400000,
+                    }
+                }
+            }
+        },
+        {
+            "retrievedItem": {
+                "chunk": {
+                    "chunk": {
+                        "memoryId": "mem2",
+                        "chunkText": "LLM: Second response",
+                        "updatedAt": 1768694401000,
+                    }
+                }
+            }
+        },
+    ]
+    mock_goodmem_client.get_memories_batch.return_value = [
+        {"memoryId": "mem1", "metadata": {"role": "user"}},
+        {"memoryId": "mem2", "metadata": {"role": "LLM"}},
+    ]
+
+    mock_request = MagicMock()
+    mock_part = MagicMock()
+    mock_part.text = "Current query"
+    mock_request.contents = [MagicMock(parts=[mock_part])]
+
+    await chat_plugin.before_model_callback(
+        callback_context=mock_context,
+        llm_request=mock_request,
+    )
+
+    # Single batch call with both IDs (no N+1)
+    mock_goodmem_client.get_memories_batch.assert_called_once()
+    call_args = mock_goodmem_client.get_memories_batch.call_args
+    assert set(call_args[0][0]) == {"mem1", "mem2"}
+    mock_goodmem_client.get_memory_by_id.assert_not_called()
 
   @pytest.mark.asyncio
   async def test_before_model_callback_no_chunks(self, chat_plugin: GoodmemChatPlugin, mock_goodmem_client: MagicMock) -> None:
@@ -803,7 +909,7 @@ class TestGoodmemChatPlugin:
     mock_context.user_id = MOCK_USER_ID
     mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
 
-    mock_goodmem_client.retrieve_memories.side_effect = Exception("API Error")
+    mock_goodmem_client.retrieve_memories.side_effect = httpx.RequestError("API Error")
 
     mock_request = MagicMock()
     mock_content = MagicMock()
@@ -891,14 +997,14 @@ class TestGoodmemChatPlugin:
     mock_context.session.id = MOCK_SESSION_ID
     mock_context.state = {'_goodmem_space_id': MOCK_SPACE_ID}
 
-    mock_goodmem_client.insert_memory.side_effect = Exception("API Error")
+    mock_goodmem_client.insert_memory.side_effect = httpx.RequestError("API Error")
 
     mock_response = MagicMock()
     mock_content = MagicMock()
     mock_content.text = "Response text"
     mock_response.content = mock_content
 
-    # Should not raise exception
+    # Should not raise; plugin catches httpx.HTTPError and returns None
     result = await chat_plugin.after_model_callback(
         callback_context=mock_context,
         llm_response=mock_response
@@ -1145,13 +1251,9 @@ class TestGoodmemChatPlugin:
 
     mock_goodmem_client.insert_memory.side_effect = track_insert
 
-    # Simulate async delay (where race condition occurs)
-    async def slow_retrieve(*args, **kwargs):
-        await asyncio.sleep(0.01)  # Simulate network delay
-        return []
-
-    # Use AsyncMock to properly handle the async function
-    mock_goodmem_client.retrieve_memories = AsyncMock(side_effect=slow_retrieve)
+    # retrieve_memories is called synchronously by the plugin; return [] so
+    # before_model_callback completes without error
+    mock_goodmem_client.retrieve_memories.return_value = []
 
     # Alice's context and response
     alice_context = MagicMock()

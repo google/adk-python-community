@@ -78,7 +78,7 @@ If you want to use these tools after changes not yet merged into an official `go
 cd adk-python-community
 
 # Install the package in editable/development mode
-pip install -e ".[goodmem]"
+pip install -e .
 ```
 
 This will make `from google.adk_community.tools import goodmem_save, goodmem_fetch`
@@ -140,6 +140,6 @@ adk-python-community/
 
 - **user_id is never None**: ADK's `Session.user_id` is a required field enforced by Pydantic. Do not add defensive null-checks for `tool_context.user_id`.
 - **Debug prints in binary uploads are intentional**: The data printed is already stored in Goodmem. Developers control both logs and database.
-- **`_tool_debug` global flag**: This is low risk and only applies when debug mode is enabled. In normal deployments debug is off, so this does not apply.
-- **Blocking HTTP in async functions**: The tools use synchronous `requests` in async functions. This matches ADK's own `RestApiTool` pattern.
+- **Debug is per-instance**: Each tool instance has its own `debug` flag; no global state, so multiple instances with different debug settings are thread-safe.
+- **Blocking HTTP in async functions**: The tools use synchronous httpx in async functions. This matches ADK's own `RestApiTool` pattern.
 - **NDJSON parsing**: Malformed lines are skipped gracefully for better UX.

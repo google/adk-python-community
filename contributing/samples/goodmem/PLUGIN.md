@@ -146,7 +146,7 @@ it normally with `pip install google-adk-community`.
 │       └── goodmem/
 │           ├── __init__.py               (new: module exports, 21 lines)
 │           ├── goodmem_client.py         (new: 300 lines, HTTP client for Goodmem API)
-│           └── goodmem.py                (new: 627 lines, plugin implementation)
+│           └── goodmem_plugin.py                (new: 627 lines, plugin implementation)
 │
 ├── tests/unittests/
 │   └── plugins/

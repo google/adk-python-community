@@ -21,6 +21,7 @@ and retrieving conversation memories to augment LLM prompts with context.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
+import httpx
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.models.llm_request import LlmRequest
@@ -28,7 +29,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import BasePlugin
 from google.genai import types
 
-from .goodmem_client import GoodmemClient
+from .client import GoodmemClient
 
 
 class GoodmemChatPlugin(BasePlugin):
@@ -40,7 +41,7 @@ class GoodmemChatPlugin(BasePlugin):
   Attributes:
     debug: Whether debug mode is enabled.
     goodmem_client: The Goodmem API client.
-    embedder_id: The embedder ID used for the space.
+    embedder_id: The embedder ID used for the space (resolved on first use).
     top_k: Number of relevant entries to retrieve.
   """
 
@@ -55,18 +56,20 @@ class GoodmemChatPlugin(BasePlugin):
   ) -> None:
     """Initializes the Goodmem Chat Plugin.
 
+    No network calls are made in the constructor. Embedder resolution and
+    validation are deferred until first use (e.g. when creating a chat space).
+
     Args:
       base_url: The base URL for the Goodmem API.
       api_key: The API key for authentication.
       name: The name of the plugin.
-      embedder_id: The embedder ID to use. If not provided, will fetch the
-        first embedder from API.
+      embedder_id: The embedder ID to use. If not provided, the first
+        available embedder is used when first needed.
       top_k: The number of top-k most relevant entries to retrieve.
       debug: Whether to enable debug mode.
 
     Raises:
       ValueError: If base_url or api_key is None.
-      ValueError: If no embedders are available or embedder_id is invalid.
     """
     super().__init__(name=name)
 
@@ -87,6 +90,24 @@ class GoodmemChatPlugin(BasePlugin):
       )
 
     self.goodmem_client = GoodmemClient(base_url, api_key, debug=self.debug)
+    self._embedder_id = embedder_id
+    self._resolved_embedder_id: Optional[str] = None
+    self.top_k: int = top_k
+
+  def _get_embedder_id(self) -> str:
+    """Returns the embedder ID, resolving and validating on first use.
+
+    Fetches embedders from the API only when first needed (e.g. when
+    creating a new space). Result is cached for subsequent use.
+
+    Returns:
+      The resolved embedder ID.
+
+    Raises:
+      ValueError: If no embedders are available or embedder_id is invalid.
+    """
+    if self._resolved_embedder_id is not None:
+      return self._resolved_embedder_id
 
     embedders = self.goodmem_client.list_embedders()
     if not embedders:
@@ -95,23 +116,29 @@ class GoodmemChatPlugin(BasePlugin):
           "embedder in Goodmem."
       )
 
-    if embedder_id is None:
-      self.embedder_id = embedders[0].get("embedderId", None)
+    if self._embedder_id is None:
+      resolved = embedders[0].get("embedderId", None)
     else:
-      if embedder_id in [embedder.get("embedderId") for embedder in embedders]:
-        self.embedder_id = embedder_id
+      if self._embedder_id in [e.get("embedderId") for e in embedders]:
+        resolved = self._embedder_id
       else:
         raise ValueError(
-            f"EMBEDDER_ID {embedder_id} is not valid. Please provide a valid "
-            "embedder ID"
+            f"EMBEDDER_ID {self._embedder_id} is not valid. Please provide a "
+            "valid embedder ID"
         )
 
-    if self.embedder_id is None:
+    if resolved is None:
       raise ValueError(
           "EMBEDDER_ID is not set and no embedders available in Goodmem."
       )
 
-    self.top_k: int = top_k
+    self._resolved_embedder_id = resolved
+    return resolved
+
+  @property
+  def embedder_id(self) -> str:
+    """Resolved embedder ID (validated on first access)."""
+    return self._get_embedder_id()
 
   def _is_mime_type_supported(self, mime_type: str) -> bool:
     """Checks if a MIME type is supported by Goodmem's TextContentExtractor.
@@ -217,10 +244,10 @@ class GoodmemChatPlugin(BasePlugin):
       # Space doesn't exist, create it
       if self.debug:
         print(f"[DEBUG] {space_name} space not found, creating new one...")
-      if self.embedder_id is None:
-        raise ValueError("embedder_id is not set")
 
-      response = self.goodmem_client.create_space(space_name, self.embedder_id)
+      response = self.goodmem_client.create_space(
+          space_name, self._get_embedder_id()
+      )
       space_id = response.get("spaceId")
 
       if space_id:
@@ -232,7 +259,7 @@ class GoodmemChatPlugin(BasePlugin):
 
       return None
 
-    except Exception as e:
+    except httpx.HTTPError as e:
       if self.debug:
         print(f"[DEBUG] Error in _get_space_id: {e}")
         import traceback
@@ -388,7 +415,7 @@ class GoodmemChatPlugin(BasePlugin):
 
       return None
 
-    except Exception as e:
+    except httpx.HTTPError as e:
       if self.debug:
         print(f"[DEBUG] Error in on_user_message: {e}")
         import traceback
@@ -407,7 +434,7 @@ class GoodmemChatPlugin(BasePlugin):
     try:
       dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
       return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
+    except (ValueError, OSError, OverflowError):
       return str(timestamp_ms)
 
   def _format_chunk_context(
@@ -464,7 +491,7 @@ class GoodmemChatPlugin(BasePlugin):
     try:
       dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
       return dt.strftime("%Y-%m-%d %H:%M")
-    except Exception:
+    except (ValueError, OSError, OverflowError):
       return str(timestamp_ms)
 
   def _wrap_content(self, content: str, max_width: int = 55) -> List[str]:
@@ -611,7 +638,7 @@ class GoodmemChatPlugin(BasePlugin):
       def get_chunk_data(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
           return item["retrievedItem"]["chunk"]["chunk"]
-        except Exception as e:
+        except (KeyError, TypeError) as e:
           if self.debug:
             print(f"[DEBUG] Error extracting chunk data: {e}")
             print(f"[DEBUG] Item structure: {item}")
@@ -626,15 +653,19 @@ class GoodmemChatPlugin(BasePlugin):
       unique_memory_ids: set[str] = {mid for mid in unique_memory_ids_raw if mid is not None and isinstance(mid, str)}
 
       memory_metadata_cache: Dict[str, Dict[str, Any]] = {}
-      for memory_id in unique_memory_ids:
-        try:
-          full_memory = self.goodmem_client.get_memory_by_id(memory_id)
-          if full_memory:
-            memory_metadata_cache[memory_id] = full_memory.get("metadata", {})
-        except Exception as e:
-          if self.debug:
-            print(f"[DEBUG] Failed to fetch metadata for memory "
-                  f"{memory_id}: {e}")
+      try:
+        batch = self.goodmem_client.get_memories_batch(list(unique_memory_ids))
+        for full_memory in batch:
+          mid = full_memory.get("memoryId")
+          if mid is not None:
+            memory_metadata_cache[mid] = full_memory.get("metadata", {})
+        for memory_id in unique_memory_ids:
+          if memory_id not in memory_metadata_cache:
+            memory_metadata_cache[memory_id] = {}
+      except httpx.HTTPError as e:
+        if self.debug:
+          print(f"[DEBUG] Failed to batch-fetch metadata for memories: {e}")
+        for memory_id in unique_memory_ids:
           memory_metadata_cache[memory_id] = {}
 
       formatted_records: List[str] = []
@@ -728,7 +759,7 @@ class GoodmemChatPlugin(BasePlugin):
 
       return None
 
-    except Exception as e:
+    except httpx.HTTPError as e:
       if self.debug:
         print(f"[DEBUG] Error in before_model_callback: {e}")
         import traceback
@@ -802,7 +833,7 @@ class GoodmemChatPlugin(BasePlugin):
 
       return None
 
-    except Exception as e:
+    except httpx.HTTPError as e:
       if self.debug:
         print(f"[DEBUG] Error in after_model_callback: {e}")
         import traceback

@@ -14,8 +14,10 @@
 
 """Goodmem plugin module for ADK."""
 
+from .client import GoodmemClient
 from .goodmem_plugin import GoodmemChatPlugin
 
 __all__ = [
     "GoodmemChatPlugin",
+    "GoodmemClient",
 ]

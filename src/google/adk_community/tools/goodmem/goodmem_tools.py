@@ -36,9 +36,9 @@ from google.adk.tools.tool_context import ToolContext
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import JsonValue
-import requests
+import httpx
 
-from .goodmem_client import GoodmemClient
+from google.adk_community.plugins.goodmem import GoodmemClient
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -47,10 +47,6 @@ from .goodmem_client import GoodmemClient
 # Module-level client cache to avoid recreating on every call
 _client_cache: Dict[tuple[str, str, bool], GoodmemClient] = {}
 _client_cache_lock = threading.Lock()
-
-# Module-level debug flag (set by tool instances)
-_tool_debug = False
-
 
 class DebugRecord(TypedDict):
   """Record used for debug table rendering."""
@@ -260,6 +256,7 @@ def _get_or_create_space(
     client: GoodmemClient,
     tool_context: ToolContext,
     embedder_id: Optional[str] = None,
+    debug: bool = False,
 ) -> tuple[Optional[str], Optional[str]]:
   """Get or create Goodmem space for the current user.
 
@@ -271,6 +268,7 @@ def _get_or_create_space(
     tool_context: The tool context with user_id and session state.
     embedder_id: Optional embedder ID to use when creating a new space.
       If None, uses the first available embedder.
+    debug: Whether to print debug messages.
 
   Returns:
     Tuple of (space_id, error_message). error_message is None on success.
@@ -278,7 +276,7 @@ def _get_or_create_space(
   # Check cache first
   cached_space_id = tool_context.state.get("_goodmem_space_id")
   if cached_space_id:
-    if _tool_debug:
+    if debug:
       print(
           "[DEBUG] Using cached Goodmem space_id from session state: "
           f"{cached_space_id}"
@@ -290,7 +288,7 @@ def _get_or_create_space(
 
   try:
     # Search for existing space
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Checking for existing space: {space_name}")
     spaces = client.list_spaces(name=space_name)
     for space in spaces:
@@ -298,7 +296,7 @@ def _get_or_create_space(
         space_id = space["spaceId"]
         # Cache it for future calls
         tool_context.state["_goodmem_space_id"] = space_id
-        if _tool_debug:
+        if debug:
           print(f"[DEBUG] Found existing space: {space_id}")
         return (space_id, None)
 
@@ -324,7 +322,7 @@ def _get_or_create_space(
       embedder_id = embedders[0]["embedderId"]
 
     # Create the space
-    if _tool_debug:
+    if debug:
       print(
           "[DEBUG] Creating Goodmem space "
           f"{space_name} with embedder_id={embedder_id}"
@@ -334,16 +332,14 @@ def _get_or_create_space(
 
     # Cache it
     tool_context.state["_goodmem_space_id"] = space_id
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Created new Goodmem space: {space_id}")
     return (space_id, None)
 
-  except requests.exceptions.HTTPError as e:
-    status_code = (
-        e.response.status_code if hasattr(e, "response") and e.response else None
-    )
+  except httpx.HTTPStatusError as e:
+    status_code = e.response.status_code
     if status_code == 409:
-      if _tool_debug:
+      if debug:
         print(
             "[DEBUG] Space already exists; re-fetching space ID after conflict"
         )
@@ -353,24 +349,24 @@ def _get_or_create_space(
           if space.get("name") == space_name:
             space_id = space["spaceId"]
             tool_context.state["_goodmem_space_id"] = space_id
-            if _tool_debug:
+            if debug:
               print(
                   "[DEBUG] Found existing space after conflict: "
                   f"{space_id}"
               )
             return (space_id, None)
       except Exception as list_error:
-        if _tool_debug:
+        if debug:
           print(
               "[DEBUG] Error re-fetching space after conflict: "
               f"{list_error}"
           )
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Error getting or creating space: {e}")
     return (None, f"Error getting or creating space: {str(e)}")
 
   except Exception as e:
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Error getting or creating space: {e}")
     return (None, f"Error getting or creating space: {str(e)}")
 
@@ -398,6 +394,7 @@ async def goodmem_save(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     embedder_id: Optional[str] = None,
+    debug: bool = False,
 ) -> GoodmemSaveResponse:
   """Saves important information to persistent memory storage.
 
@@ -424,7 +421,7 @@ async def goodmem_save(
   Returns:
     A GoodmemSaveResponse containing the operation status and memory ID.
   """
-  if _tool_debug:
+  if debug:
     print("[DEBUG] goodmem_save called")
 
   if not base_url:
@@ -456,18 +453,18 @@ async def goodmem_save(
 
   try:
     # Get cached Goodmem client
-    client = _get_client(base_url=base_url, api_key=api_key, debug=_tool_debug)
+    client = _get_client(base_url=base_url, api_key=api_key, debug=debug)
 
     # Get or create space for this user
     space_id, error = _get_or_create_space(
-        client, tool_context, embedder_id=embedder_id
+        client, tool_context, embedder_id=embedder_id, debug=debug
     )
     if error:
-      if _tool_debug:
+      if debug:
         print(f"[DEBUG] Failed to get or create space: {error}")
       return GoodmemSaveResponse(success=False, message=error)
     if space_id is None:
-      if _tool_debug:
+      if debug:
         print("[DEBUG] No space_id returned, aborting dump")
       return GoodmemSaveResponse(
           success=False, message="Failed to get or create space"
@@ -490,7 +487,7 @@ async def goodmem_save(
         metadata["session_id"] = tool_context.session.id
 
     # Insert memory into Goodmem
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Inserting memory into space {space_id}")
     response = client.insert_memory(
         space_id=space_id,
@@ -500,7 +497,7 @@ async def goodmem_save(
     )
 
     memory_id = response.get("memoryId")
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Goodmem insert response memory_id={memory_id}")
 
     return GoodmemSaveResponse(
@@ -510,12 +507,10 @@ async def goodmem_save(
     )
 
   except Exception as e:
-    import requests
-
     error_msg = str(e)
 
     # Determine specific error type
-    if isinstance(e, requests.exceptions.ConnectionError):
+    if isinstance(e, httpx.ConnectError):
       return GoodmemSaveResponse(
           success=False,
           message=(
@@ -524,7 +519,7 @@ async def goodmem_save(
               f"Details: {error_msg}"
           ),
       )
-    elif isinstance(e, requests.exceptions.Timeout):
+    elif isinstance(e, httpx.TimeoutException):
       return GoodmemSaveResponse(
           success=False,
           message=(
@@ -532,10 +527,8 @@ async def goodmem_save(
               "Please check your connection or server status."
           ),
       )
-    elif isinstance(e, requests.exceptions.HTTPError):
-      status_code = (
-          e.response.status_code if hasattr(e, "response") else "unknown"
-      )
+    elif isinstance(e, httpx.HTTPStatusError):
+      status_code = e.response.status_code
       if status_code in (401, 403):
         return GoodmemSaveResponse(
             success=False,
@@ -594,8 +587,6 @@ class GoodmemSaveTool(FunctionTool):
     self._api_key = api_key
     self._embedder_id = embedder_id
     self._debug = debug
-    global _tool_debug
-    _tool_debug = debug
 
     # Create a wrapper function that passes the stored config
     # We need to preserve the function signature for FunctionTool introspection
@@ -609,6 +600,7 @@ class GoodmemSaveTool(FunctionTool):
           base_url=self._base_url,
           api_key=self._api_key,
           embedder_id=self._embedder_id,
+          debug=self._debug,
       )
 
     # Preserve function metadata for FunctionTool introspection
@@ -616,7 +608,7 @@ class GoodmemSaveTool(FunctionTool):
     original_sig = inspect.signature(goodmem_save)
     params = []
     for name, param in original_sig.parameters.items():
-      if name not in ("base_url", "api_key", "embedder_id"):
+      if name not in ("base_url", "api_key", "embedder_id", "debug"):
         params.append(param)
     setattr(
         _wrapped_save,
@@ -671,6 +663,7 @@ async def goodmem_fetch(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     embedder_id: Optional[str] = None,
+    debug: bool = False,
 ) -> GoodmemFetchResponse:
   """Searches for relevant memories using semantic search.
 
@@ -703,7 +696,7 @@ async def goodmem_fetch(
   Returns:
     A GoodmemFetchResponse containing the retrieved memories and metadata.
   """
-  if _tool_debug:
+  if debug:
     print(f"[DEBUG] goodmem_fetch called query='{query}' top_k={top_k}")
 
   # top_k validation
@@ -741,32 +734,32 @@ async def goodmem_fetch(
 
   try:
     # Get cached Goodmem client
-    client = _get_client(base_url=base_url, api_key=api_key, debug=_tool_debug)
+    client = _get_client(base_url=base_url, api_key=api_key, debug=debug)
 
     # Get or create space for this user
     space_id, error = _get_or_create_space(
-        client, tool_context, embedder_id=embedder_id
+        client, tool_context, embedder_id=embedder_id, debug=debug
     )
     if error:
-      if _tool_debug:
+      if debug:
         print(f"[DEBUG] Failed to get or create space: {error}")
       return GoodmemFetchResponse(success=False, message=error)
     if space_id is None:
-      if _tool_debug:
+      if debug:
         print("[DEBUG] No space_id returned, aborting fetch")
       return GoodmemFetchResponse(
           success=False, message="Failed to get or create space"
       )
 
     # Retrieve memories using semantic search
-    if _tool_debug:
+    if debug:
       print(f"[DEBUG] Retrieving memories from space {space_id}")
     chunks = client.retrieve_memories(
         query=query, space_ids=[space_id], request_size=top_k
     )
 
     if not chunks:
-      if _tool_debug:
+      if debug:
         print("[DEBUG] No chunks retrieved from Goodmem")
       return GoodmemFetchResponse(
           success=True,
@@ -785,7 +778,7 @@ async def goodmem_fetch(
         continue
       chunk_data_list.append(chunk_data)
       memory_ids.add(chunk_data["memoryId"])
-    if _tool_debug:
+    if debug:
       print(
           "[DEBUG] Retrieved "
           f"{len(chunk_data_list)} chunks, {len(memory_ids)} unique memory IDs"
@@ -846,7 +839,7 @@ async def goodmem_fetch(
       )
 
     # Format debug table if debug mode is enabled
-    if _tool_debug and memories:
+    if debug and memories:
       debug_records: List[DebugRecord] = []
       for memory in memories:
         role = memory_roles.get(memory.memory_id, "user")
@@ -868,12 +861,10 @@ async def goodmem_fetch(
     )
 
   except Exception as e:
-    import requests
-
     error_msg = str(e)
 
     # Determine specific error type
-    if isinstance(e, requests.exceptions.ConnectionError):
+    if isinstance(e, httpx.ConnectError):
       return GoodmemFetchResponse(
           success=False,
           message=(
@@ -882,7 +873,7 @@ async def goodmem_fetch(
               f"Details: {error_msg}"
           ),
       )
-    elif isinstance(e, requests.exceptions.Timeout):
+    elif isinstance(e, httpx.TimeoutException):
       return GoodmemFetchResponse(
           success=False,
           message=(
@@ -890,10 +881,8 @@ async def goodmem_fetch(
               "Please check your connection or server status."
           ),
       )
-    elif isinstance(e, requests.exceptions.HTTPError):
-      status_code = (
-          e.response.status_code if hasattr(e, "response") else "unknown"
-      )
+    elif isinstance(e, httpx.HTTPStatusError):
+      status_code = e.response.status_code
       if status_code in (401, 403):
         return GoodmemFetchResponse(
             success=False,
@@ -955,8 +944,6 @@ class GoodmemFetchTool(FunctionTool):
     self._embedder_id = embedder_id
     self._top_k = top_k
     self._debug = debug
-    global _tool_debug
-    _tool_debug = debug
 
     # Create a wrapper function that uses instance top_k as default
     # We need a wrapper because top_k needs to use self._top_k as default
@@ -975,6 +962,7 @@ class GoodmemFetchTool(FunctionTool):
           base_url=self._base_url,
           api_key=self._api_key,
           embedder_id=self._embedder_id,
+          debug=self._debug,
       )
 
     # Preserve function metadata for FunctionTool introspection
@@ -982,7 +970,7 @@ class GoodmemFetchTool(FunctionTool):
     original_sig = inspect.signature(goodmem_fetch)
     params = []
     for name, param in original_sig.parameters.items():
-      if name not in ("base_url", "api_key", "embedder_id"):
+      if name not in ("base_url", "api_key", "embedder_id", "debug"):
         # Update top_k default to use instance default
         if name == "top_k":
           params.append(param.replace(default=self._top_k))
