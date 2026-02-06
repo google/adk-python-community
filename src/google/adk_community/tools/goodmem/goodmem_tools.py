@@ -218,6 +218,53 @@ def _extract_chunk_data(item: object) -> Optional[ChunkData]:
   }
 
 
+def _is_mime_type_supported(mime_type: str) -> bool:
+  """Checks if a MIME type is supported by Goodmem's TextContentExtractor.
+
+  Based on the Goodmem source code, TextContentExtractor supports:
+  - All text/* MIME types
+  - application/pdf
+  - application/rtf
+  - application/msword (.doc)
+  - application/vnd.openxmlformats-officedocument.wordprocessingml.document (.docx)
+  - Any MIME type containing "+xml" (e.g., application/xhtml+xml)
+  - Any MIME type containing "json" (e.g., application/json)
+
+  Args:
+    mime_type: The MIME type to check (e.g., "image/png", "application/pdf").
+
+  Returns:
+    True if the MIME type is supported by Goodmem, False otherwise.
+  """
+  if not mime_type:
+    return False
+
+  mime_type_lower = mime_type.lower()
+
+  # All text/* types are supported
+  if mime_type_lower.startswith("text/"):
+    return True
+
+  # Specific application types
+  if mime_type_lower in (
+      "application/pdf",
+      "application/rtf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ):
+    return True
+
+  # XML-based formats (contains "+xml")
+  if "+xml" in mime_type_lower:
+    return True
+
+  # JSON formats (contains "json")
+  if "json" in mime_type_lower:
+    return True
+
+  return False
+
+
 def _get_client(base_url: str, api_key: str, debug: bool) -> GoodmemClient:
   """Get or create a cached GoodmemClient instance.
 
@@ -383,7 +430,11 @@ class GoodmemSaveResponse(BaseModel):
       description="Whether the write operation was successful"
   )
   memory_id: Optional[str] = Field(
-      default=None, description="The ID of the created memory in Goodmem"
+      default=None, description="The ID of the created text memory in Goodmem"
+  )
+  attachments_saved: int = Field(
+      default=0,
+      description="Number of binary file attachments saved to Goodmem"
   )
   message: str = Field(description="Status message")
 
@@ -404,22 +455,33 @@ async def goodmem_save(
     worth remembering
   - After solving problems or making decisions worth remembering
   - Proactively save context that would help in future conversations
+  - When the user uploads a file(s)
   - When the user asks you to remember something
 
+  FILE ATTACHMENTS: If the user uploaded a file(s) (PDF, document, etc.),
+  this tool will AUTOMATICALLY save the binary file to Goodmem (if the
+  MIME type is supported). 
+
+  Supported file types: text/*, application/pdf, application/rtf,
+  application/msword, .docx, XML-based formats, JSON formats.
+  Unsupported types (images, video, zip, etc.) are skipped.
+
   CRITICAL: Always confirm to the user what you saved. Check the 'success' field
-  in the response - only claim you saved something if success=True.
+  and 'attachments_saved' count in the response.
 
   METADATA: user_id and session_id are automatically captured from context.
 
   Args:
-    content: The text content to write to memory storage (plain text only).
+    content: The text content to write to memory storage. For file attachments,
+      provide a summary of the file's contents so it's searchable.
     tool_context: The tool execution context (automatically provided by ADK).
     base_url: The base URL for the Goodmem API (required).
     api_key: The API key for authentication (required).
     embedder_id: Optional embedder ID to use when creating new spaces.
 
   Returns:
-    A GoodmemSaveResponse containing the operation status and memory ID.
+    A GoodmemSaveResponse containing the operation status, memory ID, and
+    number of file attachments saved.
   """
   if debug:
     print("[DEBUG] goodmem_save called")
@@ -486,9 +548,9 @@ async def goodmem_save(
       if hasattr(tool_context.session, "id"):
         metadata["session_id"] = tool_context.session.id
 
-    # Insert memory into Goodmem
+    # Insert text memory into Goodmem
     if debug:
-      print(f"[DEBUG] Inserting memory into space {space_id}")
+      print(f"[DEBUG] Inserting text memory into space {space_id}")
     response = client.insert_memory(
         space_id=space_id,
         content=content,
@@ -500,10 +562,70 @@ async def goodmem_save(
     if debug:
       print(f"[DEBUG] Goodmem insert response memory_id={memory_id}")
 
+    # Also save any binary attachments from the user's message
+    attachments_saved = 0
+    user_content = getattr(tool_context, "user_content", None)
+    if user_content and hasattr(user_content, "parts") and user_content.parts:
+      for part in user_content.parts:
+        inline_data = getattr(part, "inline_data", None)
+        if not inline_data:
+          continue
+
+        data = getattr(inline_data, "data", None)
+        if not data or not isinstance(data, bytes):
+          continue
+
+        mime_type = getattr(inline_data, "mime_type", None) or "application/octet-stream"
+        display_name = getattr(inline_data, "display_name", None)
+
+        # Only save supported MIME types
+        if not _is_mime_type_supported(mime_type):
+          if debug:
+            print(
+                f"[DEBUG] Skipping unsupported MIME type: {mime_type} "
+                f"(file: {display_name or 'unnamed'})"
+            )
+          continue
+
+        # Build metadata for the attachment
+        attachment_metadata = dict(metadata)  # Copy base metadata
+        if display_name:
+          attachment_metadata["filename"] = display_name
+
+        try:
+          if debug:
+            print(
+                f"[DEBUG] Saving binary attachment: {display_name or 'unnamed'} "
+                f"({mime_type}, {len(data)} bytes)"
+            )
+          client.insert_memory_binary(
+              space_id=space_id,
+              content_bytes=data,
+              content_type=mime_type,
+              metadata=attachment_metadata if attachment_metadata else None,
+          )
+          attachments_saved += 1
+          if debug:
+            print(f"[DEBUG] Binary attachment saved successfully")
+        except Exception as attach_err:
+          if debug:
+            print(f"[DEBUG] Failed to save binary attachment: {attach_err}")
+          # Continue with other attachments even if one fails
+
+    # Build success message
+    if attachments_saved > 0:
+      message = (
+          f"Successfully wrote content to memory (ID: {memory_id}) "
+          f"and saved {attachments_saved} file attachment(s)."
+      )
+    else:
+      message = f"Successfully wrote content to memory. Memory ID: {memory_id}"
+
     return GoodmemSaveResponse(
         success=True,
         memory_id=memory_id,
-        message=f"Successfully wrote content to memory. Memory ID: {memory_id}",
+        attachments_saved=attachments_saved,
+        message=message,
     )
 
   except Exception as e:
