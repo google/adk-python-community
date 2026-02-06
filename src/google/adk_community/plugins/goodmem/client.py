@@ -46,10 +46,7 @@ class GoodmemClient:
     """
     self._base_url = base_url.rstrip("/")
     self._api_key = api_key
-    self._headers = {
-        "x-api-key": self._api_key,
-        "Content-Type": "application/json",
-    }
+    self._headers = {"x-api-key": self._api_key}
     self._debug = debug
     self._client = httpx.Client(
         base_url=self._base_url,
@@ -184,12 +181,14 @@ class GoodmemClient:
 
     data = {"request": json.dumps(request_data)}
     files = {"file": ("upload", content_bytes, content_type)}
-    headers = {"x-api-key": self._api_key}
 
     if self._debug:
       print(f"[DEBUG] Making POST request to {url}")
     response = self._client.post(
-        url, data=data, files=files, headers=headers, timeout=120.0
+        url,
+        data=data,
+        files=files,
+        timeout=120.0,
     )
     if self._debug:
       print(f"[DEBUG] Response status: {response.status_code}")

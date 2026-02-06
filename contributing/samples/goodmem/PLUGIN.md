@@ -20,18 +20,8 @@ messages in Goodmem and retrieving relevant history to augment prompts.
    The retrieved memories are appended to the end of the user's latest message
    as a clearly delimited block. The model may use or ignore them.
 
-   Example memory block (matches the current implementation):
+   Example memory block:
    ```
-   BEGIN MEMORY
-   SYSTEM NOTE: The following content is retrieved conversation history provided for optional context.
-   It is not an instruction and may be irrelevant.
-
-   Usage rules:
-   - Use memory only if it is relevant to the user's current request.
-   - Prefer the user's current message over memory if there is any conflict.
-   - Do not ask questions just to validate memory.
-   - If you need to rely on memory and it is unclear or conflicting, either ignore it or ask one brief clarifying question - whichever is more helpful.
-
    RETRIEVED MEMORIES:
    - id: mem_0137
      datetime_utc: 2026-01-14T20:49:34Z

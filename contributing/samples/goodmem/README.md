@@ -22,10 +22,21 @@
 - Uses one Goodmem space per user (`adk_chat_{user_id}`).
 - Filters file attachments by MIME type for Goodmem (e.g. text, PDF, docx); all files still go to the LLM.
 
+### Memory Service (ADK `BaseMemoryService`)
+
+| Name | Role | When triggered |
+|------|------|----------------|
+| **GoodmemMemoryService** | Implements ADK's `BaseMemoryService` | Called via `after_agent_callback` → `add_session_to_memory` (after each turn) and `search_memory` (via `preload_memory` / `load_memory` tools). |
+
+- Stores paired user/model turns as text memories and binary attachments as separate memories.
+- Uses one Goodmem space per app+user (`adk_memory_{app_name}_{user_id}`).
+- Uses the shared `GoodmemClient` from plugins (persistent HTTP connection, multipart binary upload).
+
 ## Usage
 
 * For tools, see [TOOLS.md](TOOLS.md) and the demo in `goodmem_tools_demo/`.
 * For plugin, see [PLUGIN.md](PLUGIN.md) and the demo in `goodmem_plugin_demo/`.
+* For memory service, see [MEMORY_SERVICE.md](MEMORY_SERVICE.md) and the demo in `goodmem_memory_service_demo/`.
 
 ## Files added / changed (ASCII tree)
 
@@ -41,27 +52,36 @@ adk-python-community/
 │   │       ├── __init__.py                       (A)
 │   │       ├── goodmem_client.py                 (A  – HTTP client for Goodmem API)
 │   │       └── goodmem_plugin.py                 (A  – chat plugin implementation)
-│   └── tools/
-│       ├── __init__.py                           (A)
+│   ├── tools/
+│   │   ├── __init__.py                           (A)
+│   │   └── goodmem/
+│   │       ├── __init__.py                       (A)
+│   │       └── goodmem_tools.py                  (A  – goodmem_save, goodmem_fetch tools)
+│   └── memory/
 │       └── goodmem/
 │           ├── __init__.py                       (A)
-│           ├── goodmem_client.py                 (A  – shared HTTP client)
-│           └── goodmem_tools.py                  (A  – goodmem_save, goodmem_fetch tools)
+│           └── goodmem_memory_service.py         (A  – BaseMemoryService impl)
 ├── tests/unittests/
 │   ├── plugins/
 │   │   ├── __init__.py                           (A)
 │   │   └── test_goodmem_plugin.py                (A)
-│   └── tools/
-│       ├── __init__.py                           (A)
-│       └── test_goodmem_tools.py                 (A)
+│   ├── tools/
+│   │   ├── __init__.py                           (A)
+│   │   └── test_goodmem_tools.py                 (A)
+│   └── memory/
+│       └── test_goodmem_memory_service.py        (A)
 └── contributing/samples/goodmem/
     ├── README.md                                 (A)
     ├── TOOLS.md                                  (A)
     ├── PLUGIN.md                                 (A)
+    ├── MEMORY_SERVICE.md                         (A)
     ├── goodmem_tools_for_adk.png                 (A)
+    ├── services.py                              (A)  memory service factory for adk web
     ├── goodmem_tools_demo/
     │   └── agent.py                              (A)
-    └── goodmem_plugin_demo/
+    ├── goodmem_plugin_demo/
+    │   └── agent.py                              (A)
+    └── goodmem_memory_service_demo/
         └── agent.py                              (A)
 ```
 

@@ -12,17 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community memory services for ADK."""
+"""GoodMem memory service module."""
 
-from .goodmem.goodmem_memory_service import GoodmemMemoryService
-from .goodmem.goodmem_memory_service import GoodmemMemoryServiceConfig
-from .open_memory_service import OpenMemoryService
-from .open_memory_service import OpenMemoryServiceConfig
+from .goodmem_memory_service import format_memory_block_for_prompt
+from .goodmem_memory_service import GoodmemMemoryService
+from .goodmem_memory_service import GoodmemMemoryServiceConfig
 
 __all__ = [
+    "format_memory_block_for_prompt",
     "GoodmemMemoryService",
     "GoodmemMemoryServiceConfig",
-    "OpenMemoryService",
-    "OpenMemoryServiceConfig",
 ]
-
