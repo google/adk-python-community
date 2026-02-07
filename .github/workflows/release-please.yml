@@ -1,15 +1,12 @@
-name: Release Please
+# Runs release-please to create/update a PR with version bump and changelog.
+# Triggered by pushes to release/candidate or manually.
+name: "Release: Please"
 
 on:
   push:
     branches:
-      - 'release/**'
+      - release/candidate
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g., 0.3.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -19,49 +16,13 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - name: Determine version and branch
-        id: vars
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
-            BRANCH="release/v${{ inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#release/v}"
-            BRANCH="${GITHUB_REF_NAME}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION, Branch: $BRANCH"
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.vars.outputs.branch }}
-
-      - name: Check if release already exists
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.vars.outputs.version }}"
-          if gh release view "v$VERSION" --repo ${{ github.repository }} &>/dev/null; then
-            echo "Release v$VERSION already exists, skipping"
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Set release-as version
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          jq --arg version "${{ steps.vars.outputs.version }}" \
-            '.packages["."]["release-as"] = $version' \
-            .github/release-please-config.json > tmp.json && mv tmp.json .github/release-please-config.json
+          ref: release/candidate
 
       - uses: googleapis/release-please-action@v4
-        if: steps.check.outputs.skip != 'true'
-        id: release
         with:
           token: ${{ secrets.RELEASE_PAT }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
-          target-branch: ${{ steps.vars.outputs.branch }}
+          target-branch: release/candidate
