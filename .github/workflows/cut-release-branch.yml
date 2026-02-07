@@ -1,0 +1,60 @@
+name: Cut Release Branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for the release (e.g., 0.3.0)'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Commit SHA to cut from (leave empty for latest main)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  cut-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha || 'main' }}
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Error: Version must be in format X.Y.Z (e.g., 0.3.0)"
+            exit 1
+          fi
+
+      - name: Create release branch
+        run: |
+          BRANCH_NAME="release/v${{ inputs.version }}"
+          git checkout -b "$BRANCH_NAME"
+          echo "Created branch: $BRANCH_NAME"
+
+      - name: Bump version
+        run: |
+          # Update version.py
+          sed -i 's/__version__ = ".*"/__version__ = "${{ inputs.version }}"/' src/google/adk_community/version.py
+
+          # Update release-please manifest
+          echo '{".": "${{ inputs.version }}"}' > .github/.release-please-manifest.json
+
+          echo "Bumped version to ${{ inputs.version }}"
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/google/adk_community/version.py .github/.release-please-manifest.json
+          COMMIT_MSG="chore: bump version to ${{ inputs.version }}
+
+          To test this release:
+          uv pip install git+https://github.com/${{ github.repository }}.git@release/v${{ inputs.version }}"
+
+          git commit -m "$COMMIT_MSG"
+          git push origin "release/v${{ inputs.version }}"

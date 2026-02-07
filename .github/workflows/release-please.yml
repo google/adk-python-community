@@ -1,0 +1,30 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from branch name
+        id: extract-version
+        run: |
+          # Branch name is like "release/v0.3.0", extract "0.3.0"
+          VERSION="${GITHUB_REF_NAME#release/v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
+          target-branch: ${{ github.ref_name }}
+          release-as: ${{ steps.extract-version.outputs.version }}

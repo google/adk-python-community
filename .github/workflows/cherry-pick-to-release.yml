@@ -1,0 +1,41 @@
+name: Cherry-pick to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.3.0)'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Commit SHA to cherry-pick'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Cherry-pick commit
+        run: |
+          echo "Cherry-picking ${{ inputs.commit_sha }} to release/v${{ inputs.version }}"
+          git cherry-pick ${{ inputs.commit_sha }}
+
+      - name: Push changes
+        run: |
+          git push origin release/v${{ inputs.version }}
+          echo "Successfully cherry-picked commit to release/v${{ inputs.version }}"
+          echo "Release-please will update the CHANGELOG PR automatically."
