@@ -1,4 +1,6 @@
-name: Publish to PyPI
+# Builds and publishes the package to PyPI from a release branch.
+# Creates a merge-back PR to sync release changes to main.
+name: "Release: Publish to PyPi"
 
 on:
   workflow_dispatch:
@@ -18,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ inputs.version }}
+          ref: release/v${{ inputs.version }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -40,7 +42,7 @@ jobs:
 
       - name: Create merge-back PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           gh pr create \
             --base main \
