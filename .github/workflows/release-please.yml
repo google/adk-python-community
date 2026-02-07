@@ -37,13 +37,14 @@ jobs:
         with:
           ref: ${{ steps.vars.outputs.branch }}
 
-      - name: Check if version already released
+      - name: Check if release already exists
         id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          TARGET="${{ steps.vars.outputs.version }}"
-          CURRENT=$(jq -r '."."' .github/.release-please-manifest.json)
-          if [ "$CURRENT" == "$TARGET" ]; then
-            echo "Version $TARGET already released, skipping"
+          VERSION="${{ steps.vars.outputs.version }}"
+          if gh release view "v$VERSION" --repo ${{ github.repository }} &>/dev/null; then
+            echo "Release v$VERSION already exists, skipping"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "skip=false" >> $GITHUB_OUTPUT
