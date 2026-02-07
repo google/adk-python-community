@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - 'release/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 0.3.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,18 +19,24 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - name: Extract version from branch name
-        id: extract-version
+      - name: Determine version
+        id: version
         run: |
-          # Branch name is like "release/v0.3.0", extract "0.3.0"
-          VERSION="${GITHUB_REF_NAME#release/v}"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            BRANCH="release/v${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#release/v}"
+            BRANCH="${GITHUB_REF_NAME}"
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION, Branch: $BRANCH"
 
       - uses: googleapis/release-please-action@v4
         id: release
         with:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
-          target-branch: ${{ github.ref_name }}
-          release-as: ${{ steps.extract-version.outputs.version }}
+          target-branch: ${{ steps.version.outputs.branch }}
+          release-as: ${{ steps.version.outputs.version }}
