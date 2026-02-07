@@ -14,6 +14,8 @@ permissions:
 
 jobs:
   release-please:
+    # Skip if this is a release-please PR merge (handled by Release: Finalize)
+    if: "!startsWith(github.event.head_commit.message, 'chore(release')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
