@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   cherry-pick:
@@ -38,4 +39,12 @@ jobs:
         run: |
           git push origin release/v${{ inputs.version }}
           echo "Successfully cherry-picked commit to release/v${{ inputs.version }}"
-          echo "Release-please will update the CHANGELOG PR automatically."
+
+      - name: Trigger Release Please
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run release-please.yml \
+            --repo ${{ github.repository }} \
+            -f version=${{ inputs.version }}
+          echo "Triggered Release Please workflow for version ${{ inputs.version }}"
