@@ -4,6 +4,7 @@
     ".": {
       "release-type": "python",
       "package-name": "google-adk-community",
+      "include-component-in-tag": false,
       "draft": true,
       "changelog-path": "CHANGELOG.md",
       "changelog-sections": [

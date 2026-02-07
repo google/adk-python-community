@@ -37,13 +37,27 @@ jobs:
         with:
           ref: ${{ steps.vars.outputs.branch }}
 
+      - name: Check if version already released
+        id: check
+        run: |
+          TARGET="${{ steps.vars.outputs.version }}"
+          CURRENT=$(jq -r '."."' .github/.release-please-manifest.json)
+          if [ "$CURRENT" == "$TARGET" ]; then
+            echo "Version $TARGET already released, skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set release-as version
+        if: steps.check.outputs.skip != 'true'
         run: |
           jq --arg version "${{ steps.vars.outputs.version }}" \
             '.packages["."]["release-as"] = $version' \
             .github/release-please-config.json > tmp.json && mv tmp.json .github/release-please-config.json
 
       - uses: googleapis/release-please-action@v4
+        if: steps.check.outputs.skip != 'true'
         id: release
         with:
           token: ${{ secrets.RELEASE_PAT }}
