@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   finalize:
@@ -53,3 +54,13 @@ jobs:
         run: |
           git push origin --delete release/candidate
           echo "Deleted branch: release/candidate"
+
+      - name: Update PR label to tagged
+        if: steps.check.outputs.is_release_pr == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr edit ${{ github.event.pull_request.number }} \
+            --remove-label "autorelease: pending" \
+            --add-label "autorelease: tagged"
+          echo "Updated PR label to autorelease: tagged"
