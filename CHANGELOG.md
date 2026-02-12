@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/google/adk-python-community/compare/v0.3.0...v0.3.1) (2026-02-12)
+
+
+### Bug Fixes
+
+* update PR label to tagged after release finalize ([#67](https://github.com/google/adk-python-community/issues/67)) ([43047c7](https://github.com/google/adk-python-community/commit/43047c7faf9396b016ef59cdf53559a669df4b70))
+
 ## [0.3.0](https://github.com/google/adk-python-community/compare/v0.2.0...v0.3.0) (2026-02-07)
 
 
