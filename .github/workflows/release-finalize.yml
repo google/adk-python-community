@@ -1,5 +1,5 @@
 # Triggers when release-please PR is merged to release/candidate.
-# Creates the final release/v{version} branch and deletes the candidate branch.
+# Renames release/candidate to release/v{version}.
 name: "Release: Finalize"
 
 on:
@@ -42,18 +42,12 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
-      - name: Create release branch
+      - name: Rename release/candidate to release/v{version}
         if: steps.check.outputs.is_release_pr == 'true'
         run: |
-          git checkout -b "release/v${{ steps.version.outputs.version }}"
-          git push origin "release/v${{ steps.version.outputs.version }}"
-          echo "Created branch: release/v${{ steps.version.outputs.version }}"
-
-      - name: Delete release/candidate branch
-        if: steps.check.outputs.is_release_pr == 'true'
-        run: |
-          git push origin --delete release/candidate
-          echo "Deleted branch: release/candidate"
+          VERSION="v${{ steps.version.outputs.version }}"
+          git push origin "release/candidate:refs/heads/release/$VERSION" ":release/candidate"
+          echo "Renamed release/candidate to release/$VERSION"
 
       - name: Update PR label to tagged
         if: steps.check.outputs.is_release_pr == 'true'
