@@ -73,6 +73,10 @@ uv.lock
 docs/_build/
 site/
 
+# ADK session state
+.adk/
+*.db
+
 # Misc
 Thumbs.db
 *.bak

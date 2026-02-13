@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 pairsys.ai (DBA Goodmem.ai)
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community memory services for ADK."""
+"""Community-contributed tools for Google ADK."""
 
-from .goodmem.goodmem_memory_service import GoodmemMemoryService
-from .goodmem.goodmem_memory_service import GoodmemMemoryServiceConfig
-from .open_memory_service import OpenMemoryService
-from .open_memory_service import OpenMemoryServiceConfig
+# Export tool classes - users should instantiate them with configuration
+from .goodmem.goodmem_tools import GoodmemFetchTool
+from .goodmem.goodmem_tools import GoodmemSaveTool
 
 __all__ = [
-    "GoodmemMemoryService",
-    "GoodmemMemoryServiceConfig",
-    "OpenMemoryService",
-    "OpenMemoryServiceConfig",
+    "GoodmemSaveTool",
+    "GoodmemFetchTool",
 ]
-
