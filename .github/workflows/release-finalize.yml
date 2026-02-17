@@ -1,5 +1,5 @@
-# Triggers when release-please PR is merged to release/candidate.
-# Renames release/candidate to release/v{version}.
+# Step 4: Triggers when the changelog PR is merged to release/candidate.
+# Records last-release-sha and renames release/candidate to release/v{version}.
 name: "Release: Finalize"
 
 on:
