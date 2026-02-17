@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/google/adk-python-community/compare/v0.3.1...v0.4.0) (2026-02-17)
+
+
+### Features
+
+* add release tag workflow ([#75](https://github.com/google/adk-python-community/issues/75)) ([bb9c361](https://github.com/google/adk-python-community/commit/bb9c361069d71802b68e5f11284a373c5bb8829d))
+
 ## [0.3.1](https://github.com/google/adk-python-community/compare/v0.3.0...v0.3.1) (2026-02-12)
 
 
