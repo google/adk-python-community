@@ -1,5 +1,5 @@
-# Starts the release process by creating a release/candidate branch.
-# Triggers release-please to generate a changelog PR.
+# Step 1: Starts the release process by creating a release/candidate branch.
+# Generates a changelog PR for review (step 2).
 name: "Release: Cut"
 
 on:

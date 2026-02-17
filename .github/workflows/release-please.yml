@@ -1,5 +1,5 @@
 # Runs release-please to create/update a PR with version bump and changelog.
-# Triggered by pushes to release/candidate or manually.
+# Triggered automatically by step 1 (cut) or step 3 (cherry-pick).
 name: "Release: Please"
 
 on:
