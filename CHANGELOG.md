@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1](https://github.com/google/adk-python-community/compare/v0.4.0...v0.4.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* **release:** configure git identity from RELEASE_PAT in finalize ([#81](https://github.com/google/adk-python-community/issues/81)) ([2b0c576](https://github.com/google/adk-python-community/commit/2b0c5768ef0a6e43af392e8ddd42433229507b4b))
+* **release:** dispatch release-please on release/candidate branch ([#84](https://github.com/google/adk-python-community/issues/84)) ([81c5371](https://github.com/google/adk-python-community/commit/81c5371c05b4a72959d935d0c51cee52e2e57218))
+* **release:** skip release-please when release/candidate is renamed ([#83](https://github.com/google/adk-python-community/issues/83)) ([f620dab](https://github.com/google/adk-python-community/commit/f620dabd527e1d7f84980c254ac1f4ffc244cf24))
+* **release:** use gh api for branch check in release-please ([#85](https://github.com/google/adk-python-community/issues/85)) ([14da7e9](https://github.com/google/adk-python-community/commit/14da7e9d7a1fc51c984e753d2e39dfb9ebfc61a8))
+* **release:** use last-release-sha instead of tags for release-please ([#78](https://github.com/google/adk-python-community/issues/78)) ([d2af60a](https://github.com/google/adk-python-community/commit/d2af60ab334d0bb44d27eaf0b88797f5fc5aa18f))
+
 ## [0.4.0](https://github.com/google/adk-python-community/compare/v0.3.1...v0.4.0) (2026-02-17)
 
 
