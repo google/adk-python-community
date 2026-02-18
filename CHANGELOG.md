@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/google/adk-python-community/compare/v0.4.0...v0.4.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* **release:** configure git identity from RELEASE_PAT in finalize ([#81](https://github.com/google/adk-python-community/issues/81)) ([2b0c576](https://github.com/google/adk-python-community/commit/2b0c5768ef0a6e43af392e8ddd42433229507b4b))
+* **release:** use last-release-sha instead of tags for release-please ([#78](https://github.com/google/adk-python-community/issues/78)) ([d2af60a](https://github.com/google/adk-python-community/commit/d2af60ab334d0bb44d27eaf0b88797f5fc5aa18f))
+
 ## [0.4.0](https://github.com/google/adk-python-community/compare/v0.3.1...v0.4.0) (2026-02-17)
 
 
