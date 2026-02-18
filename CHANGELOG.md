@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/google/adk-python-community/compare/v0.4.0...v0.4.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* **release:** use last-release-sha instead of tags for release-please ([#78](https://github.com/google/adk-python-community/issues/78)) ([d2af60a](https://github.com/google/adk-python-community/commit/d2af60ab334d0bb44d27eaf0b88797f5fc5aa18f))
+
 ## [0.4.0](https://github.com/google/adk-python-community/compare/v0.3.1...v0.4.0) (2026-02-17)
 
 
