@@ -44,6 +44,15 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
+      - name: Configure git identity from RELEASE_PAT
+        if: steps.check.outputs.is_release_pr == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          USER_JSON=$(gh api user)
+          git config user.name "$(echo "$USER_JSON" | jq -r '.login')"
+          git config user.email "$(echo "$USER_JSON" | jq -r '.id')+$(echo "$USER_JSON" | jq -r '.login')@users.noreply.github.com"
+
       - name: Record last-release-sha for release-please
         if: steps.check.outputs.is_release_pr == 'true'
         run: |
