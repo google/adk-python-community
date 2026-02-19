@@ -218,3 +218,56 @@ class TestLlmResiliencePlugin(IsolatedAsyncioTestCase):
     self.assertEqual(
         result.content.parts[0].text.strip(), "final response from mock"
     )
+
+  async def test_retry_on_custom_exception_with_fail_then_succeed_model(self):
+    """Test retry with a model that fails once then succeeds on custom exception."""
+
+    class MyCustomError(Exception):
+      pass
+
+    class CustomErrorModel(BaseLlm):
+      model: str = "custom-error-model"
+      call_count: int = 0
+
+      @classmethod
+      def supported_models(cls) -> list[str]:
+        return ["custom-error-model"]
+
+      async def generate_content_async(
+          self, llm_request: LlmRequest, stream: bool = False
+      ) -> AsyncGenerator[LlmResponse, None]:
+        CustomErrorModel.call_count += 1
+        if CustomErrorModel.call_count == 1:
+          raise MyCustomError("Custom error!")
+
+        yield LlmResponse(
+            content=types.Content(
+                role="model",
+                parts=[types.Part.from_text(text="Success!")],
+            ),
+            partial=False,
+        )
+
+    # Set call_count=1 to simulate the initial call already happened
+    # (which raised the error that triggered on_model_error_callback)
+    CustomErrorModel.call_count = 1
+    LLMRegistry.register(CustomErrorModel)
+
+    agent = LlmAgent(name="agent", model="custom-error-model")
+    invocation_context = await create_invocation_context(agent)
+    plugin = LlmResiliencePlugin(
+        max_retries=1,
+        retry_on_exceptions=(MyCustomError,),
+    )
+    llm_request = LlmRequest(contents=[])
+
+    # The plugin should catch MyCustomError and retry.
+    result = await plugin.on_model_error_callback(
+        callback_context=invocation_context,
+        llm_request=llm_request,
+        error=MyCustomError(),
+    )
+
+    self.assertIsNotNone(result)
+    self.assertEqual(result.content.parts[0].text, "Success!")
+    self.assertEqual(CustomErrorModel.call_count, 2)
