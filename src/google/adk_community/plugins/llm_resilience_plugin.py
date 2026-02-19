@@ -225,6 +225,25 @@ class LlmResiliencePlugin(BasePlugin):
       )
     return ic
 
+  def _is_sse_streaming(self, invocation_context: InvocationContext) -> bool:
+    """Check if SSE streaming mode is enabled.
+
+    Args:
+      invocation_context: The invocation context to check.
+
+    Returns:
+      True if SSE streaming is enabled, False otherwise.
+    """
+    streaming_mode = getattr(
+        invocation_context.run_config, "streaming_mode", None
+    )
+    try:
+      from google.adk.agents.run_config import StreamingMode
+
+      return streaming_mode == StreamingMode.SSE
+    except (ImportError, AttributeError):
+      return False
+
   async def _retry_same_model(
       self,
       *,
@@ -232,18 +251,7 @@ class LlmResiliencePlugin(BasePlugin):
       llm_request: LlmRequest,
   ) -> Optional[LlmResponse]:
     invocation_context = self._get_invocation_context(callback_context)
-    # Determine streaming mode
-    streaming_mode = getattr(
-        invocation_context.run_config, "streaming_mode", None
-    )
-    stream = False
-    try:
-      # Only SSE streaming is supported in generate_content_async
-      from google.adk.agents.run_config import StreamingMode
-
-      stream = streaming_mode == StreamingMode.SSE
-    except (ImportError, AttributeError):
-      pass
+    stream = self._is_sse_streaming(invocation_context)
 
     agent = invocation_context.agent
     llm = agent.canonical_model
@@ -283,17 +291,7 @@ class LlmResiliencePlugin(BasePlugin):
       llm_request: LlmRequest,
   ) -> Optional[LlmResponse]:
     invocation_context = self._get_invocation_context(callback_context)
-    # Determine streaming mode
-    streaming_mode = getattr(
-        invocation_context.run_config, "streaming_mode", None
-    )
-    stream = False
-    try:
-      from google.adk.agents.run_config import StreamingMode
-
-      stream = streaming_mode == StreamingMode.SSE
-    except (ImportError, AttributeError):
-      pass
+    stream = self._is_sse_streaming(invocation_context)
 
     for model_name in self.fallback_models:
       try:
