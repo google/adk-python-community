@@ -52,7 +52,7 @@ def _extract_status_code(err: Exception) -> Optional[int]:
     if isinstance(err, httpx.HTTPStatusError):
       try:
         return int(err.response.status_code)
-      except Exception:
+      except (AttributeError, ValueError, TypeError):
         return None
   # Fallback: look for nested response
   resp = getattr(err, "response", None)
