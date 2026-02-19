@@ -183,3 +183,38 @@ class TestLlmResiliencePlugin(IsolatedAsyncioTestCase):
         error=NonTransientError("boom"),
     )
     self.assertIsNone(result)
+
+  async def test_custom_retry_on_exceptions(self):
+    """Test that custom exception types in retry_on_exceptions trigger retry."""
+    agent = LlmAgent(name="agent", model=SimpleSuccessModel())
+    invocation_context = await create_invocation_context(agent)
+
+    class CustomError(Exception):
+      pass
+
+    # Plugin configured to retry on CustomError (which is NOT a transient error)
+    plugin = LlmResiliencePlugin(
+        max_retries=2,
+        retry_on_exceptions=(CustomError,),
+    )
+
+    llm_request = LlmRequest(
+        contents=[
+            types.Content(
+                role="user", parts=[types.Part.from_text(text="hello")]
+            )
+        ]
+    )
+
+    # CustomError should trigger retry even though it's not transient
+    result = await plugin.on_model_error_callback(
+        callback_context=invocation_context,
+        llm_request=llm_request,
+        error=CustomError("custom failure"),
+    )
+
+    self.assertIsNotNone(result)
+    self.assertIsInstance(result, LlmResponse)
+    self.assertEqual(
+        result.content.parts[0].text.strip(), "final response from mock"
+    )

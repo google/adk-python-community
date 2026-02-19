@@ -168,19 +168,14 @@ class LlmResiliencePlugin(BasePlugin):
       error: Exception,
   ) -> Optional[LlmResponse]:
     """Handle model errors with retry and fallback logic."""
-    # Decide whether to handle this error
-    if self.retry_on_exceptions is not None and not isinstance(
-        error, self.retry_on_exceptions
-    ):
-      # If user provided an explicit exception tuple and it doesn't match,
-      # optionally still retry on transient HTTP-ish errors.
-      if not _is_transient_error(error):
-        return None
-    else:
-      # If user did not provide explicit list, rely on our transient heuristic
-      if not _is_transient_error(error):
-        # Non-transient error → don't handle
-        return None
+    # Decide whether to handle this error:
+    # Retry if error is in retry_on_exceptions OR is a transient error
+    if self.retry_on_exceptions and isinstance(error, self.retry_on_exceptions):
+      # User explicitly wants to retry on this exception type.
+      pass
+    elif not _is_transient_error(error):
+      # Not an explicit exception and not a transient error, so don't handle.
+      return None
 
     # Attempt retries on the same model
     response = await self._retry_same_model(
