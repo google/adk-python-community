@@ -41,9 +41,13 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+bedrock = [
+    "boto3>=1.40.0",
+]
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "boto3>=1.40.0",
 ]
 
 
