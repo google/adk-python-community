@@ -20,18 +20,18 @@ import uuid
 
 
 def _json_serializer(obj):
-    """Fallback serializer to handle non-JSON-compatible types."""
-    if isinstance(obj, set):
-        return list(obj)
-    if isinstance(obj, bytes):
-        try:
-            return base64.b64encode(obj).decode("ascii")
-        except Exception:
-            return repr(obj)
-    if isinstance(obj, (datetime.datetime, datetime.date)):
-        return obj.isoformat()
-    if isinstance(obj, uuid.UUID):
-        return str(obj)
-    if isinstance(obj, Decimal):
-        return float(obj)
+  """Fallback serializer to handle non-JSON-compatible types."""
+  if isinstance(obj, set):
+    return list(obj)
+  if isinstance(obj, bytes):
+    try:
+      return base64.b64encode(obj).decode("ascii")
+    except Exception:
+      return repr(obj)
+  if isinstance(obj, (datetime.datetime, datetime.date)):
+    return obj.isoformat()
+  if isinstance(obj, uuid.UUID):
     return str(obj)
+  if isinstance(obj, Decimal):
+    return float(obj)
+  return str(obj)
