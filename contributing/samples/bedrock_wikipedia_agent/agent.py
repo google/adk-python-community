@@ -43,6 +43,7 @@ AWS credentials must be configured via one of:
 
 import argparse
 import asyncio
+from functools import lru_cache
 import os
 
 import wikipediaapi
@@ -61,6 +62,13 @@ _APP_NAME = "bedrock_wikipedia_agent"
 # ---------------------------------------------------------------------------
 
 
+@lru_cache
+def _get_wiki_client(language: str) -> wikipediaapi.Wikipedia:
+  return wikipediaapi.Wikipedia(
+    user_agent="google-adk-community-example/1.0", language=language
+  )
+
+
 def wikipedia_search(query: str, language: str = "en") -> dict:
   """Search Wikipedia and return a summary for the best-matching article.
 
@@ -73,9 +81,7 @@ def wikipedia_search(query: str, language: str = "en") -> dict:
     ``related`` articles. Returns a ``"no_results"`` status dict when no
     matching article is found.
   """
-  wiki = wikipediaapi.Wikipedia(
-    user_agent="google-adk-community-example/1.0", language=language
-  )
+  wiki = _get_wiki_client(language)
   page = wiki.page(query)
   if not page.exists():
     return {
@@ -109,6 +115,7 @@ def wikipedia_get_article(
   title: str,
   summary_only: bool = True,
   max_length: int = 3000,
+  language: str = "en",
 ) -> dict:
   """Retrieve content from a Wikipedia article by its exact title.
 
@@ -118,14 +125,13 @@ def wikipedia_get_article(
     summary_only: When ``True`` (default), return only the introductory
       summary. Set to ``False`` for the full article text.
     max_length: Maximum character length of full-text content (default 3000).
+    language: Wikipedia language code (default: ``"en"``).
 
   Returns:
     A dict containing ``title``, ``content``, ``url``, and ``categories``.
     Returns a ``"not_found"`` status dict when the article does not exist.
   """
-  wiki = wikipediaapi.Wikipedia(
-    user_agent="google-adk-community-example/1.0", language="en"
-  )
+  wiki = _get_wiki_client(language)
   page = wiki.page(title)
   if not page.exists():
     return {
