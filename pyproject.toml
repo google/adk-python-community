@@ -24,13 +24,12 @@ classifiers = [ # List of https://pypi.org/classifiers/
   "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-  # go/keep-sorted start
+  "aioboto3>=15.5.0", # For S3 Artifact Storage
   "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "google-adk", # Google ADK
   "httpx>=0.27.0, <1.0.0", # For OpenMemory service
-  "redis>=5.0.0, <6.0.0", # Redis for session storage
-  # go/keep-sorted end
   "orjson>=3.11.3",
+  "redis>=5.0.0, <6.0.0", # Redis for session storage
 ]
 dynamic = ["version"]
 
