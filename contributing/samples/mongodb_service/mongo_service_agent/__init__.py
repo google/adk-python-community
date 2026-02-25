@@ -12,9 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community session services for ADK."""
-
-from .mongo_session_service import MongoSessionService
-from .redis_session_service import RedisSessionService
-
-__all__ = ["MongoSessionService", "RedisSessionService"]
+from .agent import root_agent
