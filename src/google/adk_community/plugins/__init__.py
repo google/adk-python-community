@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import memory
-from . import plugins
-from . import sessions
-from . import version
-__version__ = version.__version__
+"""Community plugins for Google ADK."""
+
+from .llm_resilience_plugin import LlmResiliencePlugin
+
+__all__ = [
+    "LlmResiliencePlugin",
+]
