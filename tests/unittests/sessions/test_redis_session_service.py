@@ -22,6 +22,7 @@ from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 from google.adk.sessions.base_session_service import GetSessionConfig
 from google.adk_community.sessions.redis_session_service import RedisSessionService
+from google.adk.cli.fast_api import get_fast_api_app
 from google.genai import types
 
 
@@ -558,3 +559,37 @@ class TestRedisSessionService:
         assert session is not None
         assert session.app_name == app_name
         assert session.user_id == user_id
+
+    @pytest.mark.asyncio
+    async def test_get_fast_api_app_with_redis_uri(self, monkeypatch):
+        """Test get_fast_api_app integration with Redis URI."""
+        from google.adk.cli.service_registry import get_service_registry
+
+        def redis_session_factory(uri: str, **kwargs):
+            kwargs_copy = kwargs.copy()
+            kwargs_copy.pop("agents_dir", None)
+            return RedisSessionService(uri=uri, **kwargs_copy)
+
+        service_registry = get_service_registry()
+        monkeypatch.setitem(
+            service_registry._session_factories, "redis", redis_session_factory
+        )
+
+        with patch("redis.asyncio.Redis.from_url") as mock_redis:
+            mock_client = AsyncMock()
+            mock_client.ping = AsyncMock(return_value=True)
+            mock_redis.return_value = mock_client
+
+            redis_uri = "redis://localhost:6379"
+            app = get_fast_api_app(
+                agents_dir=".",
+                session_service_uri=redis_uri,
+                web=False,
+            )
+
+            assert app is not None
+            assert hasattr(app, "routes")
+
+            mock_redis.assert_called_once()
+            call_args = mock_redis.call_args
+            assert redis_uri in str(call_args)
