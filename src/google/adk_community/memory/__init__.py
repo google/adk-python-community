@@ -16,9 +16,12 @@
 
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
+from .redis_long_term_memory_service import RedisLongTermMemoryService
+from .redis_long_term_memory_service import RedisLongTermMemoryServiceConfig
 
 __all__ = [
     "OpenMemoryService",
     "OpenMemoryServiceConfig",
+    "RedisLongTermMemoryService",
+    "RedisLongTermMemoryServiceConfig",
 ]
-
