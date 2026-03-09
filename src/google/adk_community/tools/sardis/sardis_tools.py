@@ -18,7 +18,7 @@ These tools enable ADK agents to make policy-controlled payments through
 Sardis non-custodial MPC wallets.
 
 Installation:
-    pip install google-adk-community sardis-adk
+    pip install google-adk-community sardis
 
 Usage:
     from google.adk.agents import Agent
@@ -27,7 +27,7 @@ Usage:
     )
 
     agent = Agent(
-        model="gemini-2.0-flash",
+        model="gemini-2.0-flash-001",
         name="payment_agent",
         tools=[sardis_pay, sardis_check_balance, sardis_check_policy],
     )
