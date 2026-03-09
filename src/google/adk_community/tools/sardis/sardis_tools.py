@@ -22,12 +22,14 @@ Installation:
 
 Usage:
     from google.adk.agents import Agent
-    from google.adk_community.tools.sardis import sardis_pay, sardis_check_balance
+    from google.adk_community.tools.sardis import (
+        sardis_pay, sardis_check_balance, sardis_check_policy,
+    )
 
     agent = Agent(
         model="gemini-2.0-flash",
         name="payment_agent",
-        tools=[sardis_pay, sardis_check_balance],
+        tools=[sardis_pay, sardis_check_balance, sardis_check_policy],
     )
 """
 

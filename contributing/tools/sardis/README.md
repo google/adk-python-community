@@ -5,7 +5,7 @@ Policy-controlled payments for AI agents built with [Google Agent Development Ki
 ## Installation
 
 ```bash
-pip install sardis-adk
+pip install google-adk-community sardis
 ```
 
 ## Setup
@@ -21,7 +21,9 @@ export SARDIS_WALLET_ID="wal_..."
 
 ```python
 from google.adk.agents import Agent
-from tools.sardis import sardis_pay, sardis_check_balance, sardis_check_policy
+from google.adk_community.tools.sardis import (
+    sardis_pay, sardis_check_balance, sardis_check_policy,
+)
 
 agent = Agent(
     model="gemini-2.0-flash",
