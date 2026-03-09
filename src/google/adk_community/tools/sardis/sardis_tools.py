@@ -27,7 +27,7 @@ Usage:
     )
 
     agent = Agent(
-        model="gemini-2.0-flash-001",
+        model="gemini-2.0-flash",
         name="payment_agent",
         tools=[sardis_pay, sardis_check_balance, sardis_check_policy],
     )
