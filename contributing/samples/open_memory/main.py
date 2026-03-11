@@ -26,22 +26,37 @@ from google.adk_community.memory import OpenMemoryService
 # Load environment variables from .env file if it exists
 load_dotenv()
 
+def validate_environment():
+    """Ensures all required API keys are present before starting."""
+    missing_vars = []
+    if not os.getenv('OPENMEMORY_API_KEY'):
+        missing_vars.append('OPENMEMORY_API_KEY')
+    if not os.getenv('GOOGLE_API_KEY'):
+        missing_vars.append('GOOGLE_API_KEY')
+    
+    if missing_vars:
+        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}. Please check your .env file."
+        raise EnvironmentError(error_msg)
+
 # Register OpenMemory service factory for openmemory:// URI scheme
 def openmemory_factory(uri: str, **kwargs):
     parsed = urlparse(uri)
     location = parsed.netloc + parsed.path
     base_url = location if location.startswith(('http://', 'https://')) else f'http://{location}'
-    api_key = os.getenv('OPENMEMORY_API_KEY', '')
-    if not api_key:
-        raise ValueError("OpenMemory API key required. Set OPENMEMORY_API_KEY environment variable.")
+    
+    api_key = os.getenv('OPENMEMORY_API_KEY')
     return OpenMemoryService(base_url=base_url, api_key=api_key)
 
 get_service_registry().register_memory_service("openmemory", openmemory_factory)
 
-# Build OpenMemory URI from environment variables (API key comes from env var)
-base_url = os.getenv('OPENMEMORY_BASE_URL', 'http://localhost:8080').replace('http://', '').replace('https://', '')
-MEMORY_SERVICE_URI = f"openmemory://{base_url}"
+# Build OpenMemory URI from environment variables
+raw_base_url = os.getenv('OPENMEMORY_BASE_URL', 'localhost:8080')
+# Clean the URL to ensure it works with the URI scheme parser
+clean_base_url = raw_base_url.replace('http://', '').replace('https://', '')
+MEMORY_SERVICE_URI = f"openmemory://{clean_base_url}"
 
+# Run validation before creating the app
+validate_environment()
 
 # Create the FastAPI app using get_fast_api_app
 app: FastAPI = get_fast_api_app(
