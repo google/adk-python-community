@@ -25,12 +25,10 @@ classifiers = [ # List of https://pypi.org/classifiers/
 ]
 dependencies = [
   # go/keep-sorted start
-  "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "google-adk", # Google ADK
-  "httpx>=0.27.0, <1.0.0", # For OpenMemory service
-  "redis>=5.0.0, <6.0.0", # Redis for session storage
-  # go/keep-sorted end
+  "google-genai>=1.21.1, <2.0.0", # Google GenAI SDK
   "orjson>=3.11.3",
+  # go/keep-sorted end
 ]
 dynamic = ["version"]
 
@@ -41,9 +39,23 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+firestore = [
+  "google-cloud-firestore", # Firestore client library
+]
+redis = [
+  "redis>=5.0.0, <6.0.0", # Redis for session storage
+]
+openmemory = [
+  "httpx>=0.27.0, <1.0.0", # For OpenMemory service
+]
+all = [
+  "google-cloud-firestore", # Firestore client library
+  "httpx>=0.27.0, <1.0.0", # For OpenMemory service
+  "redis>=5.0.0, <6.0.0", # Redis for session storage
+]
 test = [
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.2.0",
+  "pytest>=8.4.2",
+  "pytest-asyncio>=1.2.0",
 ]
 
 
