@@ -14,11 +14,20 @@
 
 """Community memory services for ADK."""
 
+try:
+  from .database_memory_service import DatabaseMemoryService
+  from .memory_search_backend import KeywordSearchBackend
+  from .memory_search_backend import MemorySearchBackend
+except ImportError:
+  pass
+
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
 
 __all__ = [
-    "OpenMemoryService",
-    "OpenMemoryServiceConfig",
+    'DatabaseMemoryService',
+    'KeywordSearchBackend',
+    'MemorySearchBackend',
+    'OpenMemoryService',
+    'OpenMemoryServiceConfig',
 ]
-
