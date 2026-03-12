@@ -28,14 +28,12 @@ from typing_extensions import override
 def _get_db_memory_service(tool_context: ToolContext):
   """Return the DatabaseMemoryService from the invocation context, or raise."""
   # pylint: disable=g-import-not-at-top
-  from google.adk_community.memory.database_memory_service import (
-      DatabaseMemoryService,
-  )
+  from google.adk_community.memory.database_memory_service import DatabaseMemoryService
 
   svc = tool_context._invocation_context.memory_service
   if not isinstance(svc, DatabaseMemoryService):
     raise ValueError(
-        'Scratchpad tools require the agent\'s memory_service to be a '
+        "Scratchpad tools require the agent's memory_service to be a "
         f'DatabaseMemoryService, got: {type(svc).__name__}'
     )
   return svc

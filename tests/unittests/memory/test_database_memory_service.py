@@ -25,14 +25,13 @@ from google.adk.events.event import Event
 from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
 from google.adk.sessions.session import Session
-from google.adk_community.memory.database_memory_service import (
-    DatabaseMemoryService,
-)
-from google.adk_community.memory.memory_search_backend import MemorySearchBackend
-from google.adk_community.memory.schemas.memory_schema import StorageMemoryEntry
 from google.genai import types
 import pytest
 import pytest_asyncio
+
+from google.adk_community.memory.database_memory_service import DatabaseMemoryService
+from google.adk_community.memory.memory_search_backend import MemorySearchBackend
+from google.adk_community.memory.schemas.memory_schema import StorageMemoryEntry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -454,7 +453,7 @@ async def test_search_user_isolation(svc):
   resp = await svc.search_memory(
       app_name=_APP, user_id='user_b', query='secret'
   )
-  assert resp.memories == [], 'User B should not see user A\'s memories'
+  assert resp.memories == [], "User B should not see user A's memories"
 
 
 @pytest.mark.asyncio

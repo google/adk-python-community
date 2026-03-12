@@ -122,9 +122,7 @@ class StorageMemoryEntry(Base):
 
   __table_args__ = (
       Index('ix_memory_entries_app_user', 'app_name', 'user_id'),
-      Index(
-          'ix_memory_entries_session', 'app_name', 'user_id', 'session_id'
-      ),
+      Index('ix_memory_entries_session', 'app_name', 'user_id', 'session_id'),
   )
 
 
