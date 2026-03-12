@@ -32,6 +32,7 @@ dependencies = [
   # go/keep-sorted end
   "orjson>=3.11.3",
 ]
+
 dynamic = ["version"]
 
 [project.urls]
@@ -44,6 +45,11 @@ documentation = "https://google.github.io/adk-docs/"
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+]
+sqlalchemy = [
+    # Required for DatabaseMemoryService; aiosqlite enables SQLite async
+    "sqlalchemy[asyncio]>=2.0.0",
+    "aiosqlite>=0.19.0",
 ]
 
 
@@ -74,6 +80,8 @@ build-backend = "flit_core.buildapi"
 dev = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "aiosqlite>=0.19.0",
 ]
 
 
