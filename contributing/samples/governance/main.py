@@ -29,11 +29,10 @@ import logging
 from google.adk import Runner
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
-from google.adk_community.governance import (
-    GovernanceConfig,
-    VeronicaGovernancePlugin,
-)
+from google.adk_community.governance import GovernanceConfig
+from google.adk_community.governance import VeronicaGovernancePlugin
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -41,11 +40,11 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 def main():
   # Configure governance limits
   config = GovernanceConfig(
-      max_cost_usd=0.50,           # org-level: 50 cents
-      agent_max_cost_usd=0.25,     # per-agent: 25 cents
-      failure_threshold=3,          # circuit breaker after 3 failures
+      max_cost_usd=0.50,  # org-level: 50 cents
+      agent_max_cost_usd=0.25,  # per-agent: 25 cents
+      failure_threshold=3,  # circuit breaker after 3 failures
       recovery_timeout_s=30.0,
-      degradation_threshold=0.7,    # degrade at 70% budget
+      degradation_threshold=0.7,  # degrade at 70% budget
       fallback_model="gemini-2.0-flash-lite",
       blocked_tools=["shell_exec"],
       disable_tools_on_degrade=["web_search"],
@@ -67,8 +66,7 @@ def main():
       model="gemini-2.5-flash",
       name="summarizer",
       instruction=(
-          "You summarize text provided to you. Keep summaries to 2-3"
-          " sentences."
+          "You summarize text provided to you. Keep summaries to 2-3 sentences."
       ),
   )
 
@@ -97,8 +95,6 @@ def main():
         app_name="governance_demo",
         user_id="demo_user",
     )
-
-    from google.genai import types
 
     user_message = types.Content(
         role="user",

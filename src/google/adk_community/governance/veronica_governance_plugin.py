@@ -28,7 +28,6 @@ import time
 from typing import Any
 from typing import Optional
 
-from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.models.llm_request import LlmRequest
