@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import governance
-from . import memory
-from . import sessions
-from . import version
-__version__ = version.__version__
+"""Community governance plugins for ADK."""
+
+from .veronica_governance_plugin import GovernanceConfig
+from .veronica_governance_plugin import VeronicaGovernancePlugin
+
+__all__ = [
+    "GovernanceConfig",
+    "VeronicaGovernancePlugin",
+]
