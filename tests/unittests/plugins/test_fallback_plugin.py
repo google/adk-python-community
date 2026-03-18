@@ -52,9 +52,8 @@ class TestFallbackPlugin:
             callback_context=mock_context, llm_request=mock_request
         )
 
-        context_id = id(mock_context)
-        assert context_id in plugin._fallback_attempts
-        assert plugin._fallback_attempts[context_id] == 0
+        assert mock_context in plugin._fallback_attempts
+        assert plugin._fallback_attempts[mock_context] == 0
 
     @pytest.mark.asyncio
     async def test_before_model_callback_resets_model(self):
@@ -76,8 +75,7 @@ class TestFallbackPlugin:
         mock_context = MagicMock()
         mock_request = MagicMock(model="fallback-model")
 
-        context_id = id(mock_context)
-        plugin._fallback_attempts[context_id] = 1
+        plugin._fallback_attempts[mock_context] = 1
 
         await plugin.before_model_callback(
             callback_context=mock_context, llm_request=mock_request
@@ -138,29 +136,27 @@ class TestFallbackPlugin:
         assert "fallback_triggered" not in mock_response.custom_metadata
 
     @pytest.mark.asyncio
-    async def test_after_model_callback_prunes_dict(self):
-        """Test that after_model_callback prunes the tracking dict when it exceeds max size."""
+    async def test_after_model_callback_automatic_pruning(self):
+        """Test that after_model_callback entries are automatically pruned when context is GC'd."""
+        import gc
         plugin = FallbackPlugin()
         
-        # Use a large number of context IDs to trigger pruning
-        # The limit is 100, prune 50.
-        for i in range(101):
-            plugin._fallback_attempts[i] = 1
-
-        assert len(plugin._fallback_attempts) == 101
-
-        mock_context = MagicMock()
+        class CustomContext:
+            pass
+            
+        context = CustomContext()
         mock_response = MagicMock()
-        # Trigger an error to enter the prune condition check
         mock_response.error_code = 429
         mock_response.error_message = "Rate limit"
         mock_response.custom_metadata = {}
 
         await plugin.after_model_callback(
-            callback_context=mock_context, llm_response=mock_response
+            callback_context=context, llm_response=mock_response
         )
 
-        # After prune, it should be 102 (if context was new) - 50 = 52
-        # Or if context was old, it just prunes 50.
-        # In any case, it should be <= 100.
-        assert len(plugin._fallback_attempts) <= 100
+        assert context in plugin._fallback_attempts
+        
+        del context
+        gc.collect() # Force GC
+        
+        assert len(plugin._fallback_attempts) == 0

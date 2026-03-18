@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import Optional
 
 from opentelemetry import trace
@@ -93,8 +94,8 @@ class FallbackPlugin(BasePlugin):
     self.error_status = error_status if error_status is not None else [429, 504]
     self._error_status_set = {str(s) for s in self.error_status}
 
-    # Maps id(callback_context) -> number of fallback attempts for that context.
-    self._fallback_attempts: dict[int, int] = {}
+    # Maps callback_context -> number of fallback attempts for that context.
+    self._fallback_attempts: weakref.WeakKeyDictionary[CallbackContext, int] = weakref.WeakKeyDictionary()
 
   async def before_model_callback(
       self,
@@ -118,14 +119,12 @@ class FallbackPlugin(BasePlugin):
     Returns:
       ``None`` always, so that normal LLM processing continues.
     """
-    context_id = id(callback_context)
-
     # Initialise the attempt counter for this context on first contact.
-    if context_id not in self._fallback_attempts:
-      self._fallback_attempts[context_id] = 0
+    if callback_context not in self._fallback_attempts:
+      self._fallback_attempts[callback_context] = 0
 
     # Only reset to root_model when we are NOT mid-fallback.
-    if self.root_model and self._fallback_attempts.get(context_id, 0) == 0:
+    if self.root_model and self._fallback_attempts.get(callback_context, 0) == 0:
       if hasattr(llm_request, "model") and llm_request.model != self.root_model:
         logger.info(
             "Resetting model from %s to root model: %s",
@@ -170,8 +169,6 @@ class FallbackPlugin(BasePlugin):
     Returns:
       ``None`` always, so that normal post-model processing continues.
     """
-    context_id = id(callback_context)
-
     if llm_response.error_code and str(llm_response.error_code) in self._error_status_set:
       logger.warning(
           "Model call failed with error code %s. Error message: %s",
@@ -179,8 +176,8 @@ class FallbackPlugin(BasePlugin):
           llm_response.error_message,
       )
 
-      self._fallback_attempts[context_id] = (
-          self._fallback_attempts.get(context_id, 0) + 1
+      self._fallback_attempts[callback_context] = (
+          self._fallback_attempts.get(callback_context, 0) + 1
       )
 
       if self.fallback_model:
@@ -188,7 +185,7 @@ class FallbackPlugin(BasePlugin):
             "Fallback triggered: %s -> %s (attempt %d)",
             self.root_model,
             self.fallback_model,
-            self._fallback_attempts[context_id],
+            self._fallback_attempts[callback_context],
         )
         if not llm_response.custom_metadata:
           llm_response.custom_metadata = {}
@@ -196,17 +193,13 @@ class FallbackPlugin(BasePlugin):
         llm_response.custom_metadata["original_model"] = self.root_model
         llm_response.custom_metadata["fallback_model"] = self.fallback_model
         llm_response.custom_metadata["fallback_attempt"] = (
-            self._fallback_attempts[context_id]
+            self._fallback_attempts[callback_context]
         )
         llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
       else:
         logger.warning("No fallback model configured, cannot retry.")
 
-    # Prune the tracking dict to avoid unbounded memory growth.
-    if len(self._fallback_attempts) > _FALLBACK_ATTEMPTS_MAX_SIZE:
-      oldest_keys = list(self._fallback_attempts.keys())[:_FALLBACK_ATTEMPTS_PRUNE_COUNT]
-      for key in oldest_keys:
-        del self._fallback_attempts[key]
+
 
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
