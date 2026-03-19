@@ -170,5 +170,3 @@ class TestFallbackPlugin:
         
         assert len(plugin._fallback_attempts) == 0
         assert len(plugin._original_models) == 0
-
-    
