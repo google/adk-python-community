@@ -201,10 +201,8 @@ class FallbackPlugin(BasePlugin):
     else:
       # On success or non-retriable error, the fallback sequence is complete.
       # Clear the state to ensure the next request for this context is fresh.
-      if callback_context in self._fallback_attempts:
-        del self._fallback_attempts[callback_context]
-      if callback_context in self._original_models:
-        del self._original_models[callback_context]
+      self._fallback_attempts.pop(callback_context, None)
+      self._original_models.pop(callback_context, None)
 
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
