@@ -153,7 +153,7 @@ class FallbackPlugin(BasePlugin):
     following keys into ``llm_response.custom_metadata``:
 
     - ``fallback_triggered`` (``bool``): Always ``True``.
-    - ``original_model`` (``str``): The value of ``root_model``.
+    - ``original_model`` (``str``): The model used for the initial request.
     - ``fallback_model`` (``str``): The value of ``fallback_model``.
     - ``fallback_attempt`` (``int``): The cumulative attempt count for this
       context.
