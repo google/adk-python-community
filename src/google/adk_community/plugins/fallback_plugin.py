@@ -29,9 +29,6 @@ from google.adk.plugins.base_plugin import BasePlugin
 logger: logging.Logger = logging.getLogger("google_adk." + __name__)
 tracer = trace.get_tracer("google.adk.plugins.fallback_plugin", __version__)
 
-_FALLBACK_ATTEMPTS_MAX_SIZE = 100
-_FALLBACK_ATTEMPTS_PRUNE_COUNT = 50
-
 
 class FallbackPlugin(BasePlugin):
   """Plugin that implements transparent model fallback on specific HTTP errors.
@@ -51,8 +48,8 @@ class FallbackPlugin(BasePlugin):
   - Detecting error responses whose ``error_code`` is in ``error_status`` and
     annotating the ``LlmResponse`` with structured fallback metadata so that
     the caller or the model layer can take remedial action.
-  - Tracking the number of fallback attempts per request context and
-    pruning the tracking dictionary to avoid unbounded memory growth.
+  - Tracking the number of fallback attempts per request context using
+    weak references to prevent unbounded memory growth.
 
   Example:
       >>> from google.adk.plugins.fallback_plugin import FallbackPlugin
@@ -157,8 +154,8 @@ class FallbackPlugin(BasePlugin):
       context.
     - ``error_code`` (``str``): The string representation of the error code.
 
-    The tracking dictionary is pruned to at most 50 entries whenever its size
-    exceeds 100, to prevent unbounded memory growth in long-running processes.
+    The tracking dictionary uses weak references and is pruned automatically
+    when contexts are garbage collected, preventing unbounded memory growth.
 
     Args:
       callback_context: The context for the current agent call. Used as the key
