@@ -69,7 +69,7 @@ class FallbackPlugin(BasePlugin):
       name: str = "fallback_plugin",
       root_model: Optional[str] = None,
       fallback_model: Optional[str] = None,
-      error_status: Optional[list[int]] = None,  # noqa: B006
+      error_status: Optional[list[int]] = None,
   ) -> None:
     """Initializes the FallbackPlugin.
 
@@ -120,7 +120,7 @@ class FallbackPlugin(BasePlugin):
 
     # Only reset to root_model when we are NOT mid-fallback.
     if self.root_model and attempt_count == 0:
-      if hasattr(llm_request, "model") and llm_request.model != self.root_model:
+      if llm_request.model != self.root_model:
         logger.info(
             "Resetting model from %s to root model: %s",
             llm_request.model,
@@ -182,7 +182,7 @@ class FallbackPlugin(BasePlugin):
             self.fallback_model,
             self._fallback_attempts[callback_context],
         )
-        if not llm_response.custom_metadata:
+        if llm_response.custom_metadata is None:
           llm_response.custom_metadata = {}
         llm_response.custom_metadata["fallback_triggered"] = True
         llm_response.custom_metadata["original_model"] = self.root_model
@@ -193,9 +193,7 @@ class FallbackPlugin(BasePlugin):
         llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
       else:
         logger.warning("No fallback model configured, cannot retry.")
-
-
-
+        
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
     )
