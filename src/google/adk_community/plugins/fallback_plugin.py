@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import weakref
-from typing import Optional
+from typing import Optional, Sequence
 
 from opentelemetry import trace
 
