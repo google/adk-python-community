@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import pytest
 from unittest.mock import MagicMock
 
@@ -138,7 +139,6 @@ class TestFallbackPlugin:
     @pytest.mark.asyncio
     async def test_after_model_callback_automatic_pruning(self):
         """Test that after_model_callback entries are automatically pruned when context is GC'd."""
-        import gc
         plugin = FallbackPlugin()
         
         class CustomContext:
