@@ -89,11 +89,15 @@ class TestFallbackPlugin:
         """Test that after_model_callback annotates response on error status."""
         plugin = FallbackPlugin(root_model="root-model", fallback_model="fallback-model")
         mock_context = MagicMock()
+        mock_request = MagicMock(model="any-model")
         mock_response = MagicMock()
         mock_response.error_code = 429
         mock_response.error_message = "Rate limit"
         mock_response.custom_metadata = {}
 
+        await plugin.before_model_callback(
+            callback_context=mock_context, llm_request=mock_request
+        )
         await plugin.after_model_callback(
             callback_context=mock_context, llm_response=mock_response
         )
