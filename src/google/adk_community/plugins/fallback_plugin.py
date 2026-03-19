@@ -203,5 +203,3 @@ class FallbackPlugin(BasePlugin):
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
     )
-
-  
