@@ -93,6 +93,8 @@ class FallbackPlugin(BasePlugin):
 
     # Maps callback_context -> number of fallback attempts for that context.
     self._fallback_attempts: weakref.WeakKeyDictionary[CallbackContext, int] = weakref.WeakKeyDictionary()
+    # Maps callback_context -> original model for that context's request chain.
+    self._original_models: weakref.WeakKeyDictionary[CallbackContext, str] = weakref.WeakKeyDictionary()
 
   async def before_model_callback(
       self,
@@ -117,6 +119,11 @@ class FallbackPlugin(BasePlugin):
       ``None`` always, so that normal LLM processing continues.
     """
     attempt_count = self._fallback_attempts.setdefault(callback_context, 0)
+
+    if attempt_count == 0:
+      # First attempt for this context. Record the original model for the chain.
+      original_model = self.root_model or llm_request.model
+      self._original_models[callback_context] = original_model
 
     # Only reset to root_model when we are NOT mid-fallback.
     if self.root_model and attempt_count == 0:
@@ -184,7 +191,7 @@ class FallbackPlugin(BasePlugin):
         if llm_response.custom_metadata is None:
           llm_response.custom_metadata = {}
         llm_response.custom_metadata["fallback_triggered"] = True
-        llm_response.custom_metadata["original_model"] = self.root_model
+        llm_response.custom_metadata["original_model"] = self._original_models.get(callback_context)
         llm_response.custom_metadata["fallback_model"] = self.fallback_model
         llm_response.custom_metadata["fallback_attempt"] = attempt_count
         llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
