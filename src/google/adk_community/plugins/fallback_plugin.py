@@ -116,12 +116,10 @@ class FallbackPlugin(BasePlugin):
     Returns:
       ``None`` always, so that normal LLM processing continues.
     """
-    # Initialise the attempt counter for this context on first contact.
-    if callback_context not in self._fallback_attempts:
-      self._fallback_attempts[callback_context] = 0
+    attempt_count = self._fallback_attempts.setdefault(callback_context, 0)
 
     # Only reset to root_model when we are NOT mid-fallback.
-    if self.root_model and self._fallback_attempts.get(callback_context, 0) == 0:
+    if self.root_model and attempt_count == 0:
       if hasattr(llm_request, "model") and llm_request.model != self.root_model:
         logger.info(
             "Resetting model from %s to root model: %s",
