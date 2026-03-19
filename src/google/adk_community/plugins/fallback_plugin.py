@@ -190,11 +190,13 @@ class FallbackPlugin(BasePlugin):
         )
         if llm_response.custom_metadata is None:
           llm_response.custom_metadata = {}
-        llm_response.custom_metadata["fallback_triggered"] = True
-        llm_response.custom_metadata["original_model"] = self._original_models.get(callback_context)
-        llm_response.custom_metadata["fallback_model"] = self.fallback_model
-        llm_response.custom_metadata["fallback_attempt"] = attempt_count
-        llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
+        llm_response.custom_metadata.update({
+            "fallback_triggered": True,
+            "original_model": self._original_models.get(callback_context),
+            "fallback_model": self.fallback_model,
+            "fallback_attempt": attempt_count,
+            "error_code": str(llm_response.error_code),
+        })
       else:
         logger.warning("No fallback model configured, cannot retry.")
 
