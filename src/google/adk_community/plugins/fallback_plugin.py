@@ -125,9 +125,8 @@ class FallbackPlugin(BasePlugin):
       original_model = self.root_model or llm_request.model
       self._original_models[callback_context] = original_model
 
-    # Only reset to root_model when we are NOT mid-fallback.
-    if self.root_model and attempt_count == 0:
-      if llm_request.model != self.root_model:
+      # Reset to root_model if it's not already set.
+      if self.root_model and llm_request.model != self.root_model:
         logger.info(
             "Resetting model from %s to root model: %s",
             llm_request.model,
