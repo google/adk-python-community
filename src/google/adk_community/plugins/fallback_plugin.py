@@ -69,7 +69,7 @@ class FallbackPlugin(BasePlugin):
       name: str = "fallback_plugin",
       root_model: Optional[str] = None,
       fallback_model: Optional[str] = None,
-      error_status: Optional[list[int]] = None,
+      error_status: Optional[Sequence[int]] = None,
   ) -> None:
     """Initializes the FallbackPlugin.
 
