@@ -198,6 +198,13 @@ class FallbackPlugin(BasePlugin):
         })
       else:
         logger.warning("No fallback model configured, cannot retry.")
+    else:
+      # On success or non-retriable error, the fallback sequence is complete.
+      # Clear the state to ensure the next request for this context is fresh.
+      if callback_context in self._fallback_attempts:
+        del self._fallback_attempts[callback_context]
+      if callback_context in self._original_models:
+        del self._original_models[callback_context]
 
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
