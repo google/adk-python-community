@@ -193,7 +193,8 @@ class FallbackPlugin(BasePlugin):
         llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
       else:
         logger.warning("No fallback model configured, cannot retry.")
-        
+
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
     )
+    
