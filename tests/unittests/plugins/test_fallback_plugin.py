@@ -160,4 +160,5 @@ class TestFallbackPlugin:
         gc.collect() # Force GC
         
         assert len(plugin._fallback_attempts) == 0
-        
+
+    

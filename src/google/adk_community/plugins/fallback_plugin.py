@@ -23,7 +23,7 @@ from opentelemetry import trace
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
-from ..version import __version__
+from google.adk_community.version import __version__
 from google.adk.plugins.base_plugin import BasePlugin
 
 logger: logging.Logger = logging.getLogger("google_adk." + __name__)
@@ -171,25 +171,22 @@ class FallbackPlugin(BasePlugin):
           llm_response.error_message,
       )
 
-      self._fallback_attempts[callback_context] = (
-          self._fallback_attempts.get(callback_context, 0) + 1
-      )
+      attempt_count = self._fallback_attempts.get(callback_context, 0) + 1
+      self._fallback_attempts[callback_context] = attempt_count
 
       if self.fallback_model:
         logger.info(
             "Fallback triggered: %s -> %s (attempt %d)",
             self.root_model,
             self.fallback_model,
-            self._fallback_attempts[callback_context],
+            attempt_count,
         )
         if llm_response.custom_metadata is None:
           llm_response.custom_metadata = {}
         llm_response.custom_metadata["fallback_triggered"] = True
         llm_response.custom_metadata["original_model"] = self.root_model
         llm_response.custom_metadata["fallback_model"] = self.fallback_model
-        llm_response.custom_metadata["fallback_attempt"] = (
-            self._fallback_attempts[callback_context]
-        )
+        llm_response.custom_metadata["fallback_attempt"] = attempt_count
         llm_response.custom_metadata["error_code"] = str(llm_response.error_code)
       else:
         logger.warning("No fallback model configured, cannot retry.")
@@ -197,4 +194,5 @@ class FallbackPlugin(BasePlugin):
     return await super().after_model_callback(
         callback_context=callback_context, llm_response=llm_response
     )
-    
+
+  
