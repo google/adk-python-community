@@ -149,20 +149,26 @@ class TestFallbackPlugin:
             pass
             
         context = CustomContext()
+        mock_request = MagicMock(model="any-model")
         mock_response = MagicMock()
         mock_response.error_code = 429
         mock_response.error_message = "Rate limit"
         mock_response.custom_metadata = {}
 
+        await plugin.before_model_callback(
+            callback_context=context, llm_request=mock_request
+        )
         await plugin.after_model_callback(
             callback_context=context, llm_response=mock_response
         )
 
         assert context in plugin._fallback_attempts
+        assert context in plugin._original_models
         
         del context
         gc.collect() # Force GC
         
         assert len(plugin._fallback_attempts) == 0
+        assert len(plugin._original_models) == 0
 
     
