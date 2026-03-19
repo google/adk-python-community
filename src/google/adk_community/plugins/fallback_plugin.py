@@ -184,7 +184,7 @@ class FallbackPlugin(BasePlugin):
       if self.fallback_model:
         logger.info(
             "Fallback triggered: %s -> %s (attempt %d)",
-            self.root_model,
+            self._original_models.get(callback_context),
             self.fallback_model,
             attempt_count,
         )
