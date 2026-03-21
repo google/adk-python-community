@@ -14,6 +14,7 @@
 
 """Community session services for ADK."""
 
+from .firestore_session_service import FirestoreSessionService
 from .redis_session_service import RedisSessionService
 
-__all__ = ["RedisSessionService"]
+__all__ = ["FirestoreSessionService", "RedisSessionService"]

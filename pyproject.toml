@@ -41,6 +41,9 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+firestore = [
+    "google-cloud-firestore>=2.16.0",
+]
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
