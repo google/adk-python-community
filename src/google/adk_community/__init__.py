@@ -15,4 +15,9 @@
 from . import memory
 from . import sessions
 from . import version
+
+try:
+  from . import sdc_agents
+except ImportError:
+  pass  # Optional: pip install google-adk-community[sdc-agents]
 __version__ = version.__version__
