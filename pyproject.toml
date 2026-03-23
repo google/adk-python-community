@@ -45,6 +45,9 @@ test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+sdc-agents = [
+    "sdc-agents>=4.2.0",
+]
 
 
 [tool.pyink]
