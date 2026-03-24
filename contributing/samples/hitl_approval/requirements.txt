@@ -1,0 +1,14 @@
+# Sample-specific dependencies for the HITL Approval demo.
+# Install into the repo virtualenv after `uv sync --all-extras`:
+#
+#   uv pip install -r contributing/samples/hitl_approval/requirements.txt
+#
+# The core package (google-adk-community) and its deps (google-adk, httpx)
+# are already installed by `uv sync`. Only the service and dashboard extras
+# are listed here.
+
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+streamlit>=1.35.0
