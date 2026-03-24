@@ -25,7 +25,7 @@ STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
 STREAMLIT_PID=$!
 
 echo "Starting ADK Web Chat (:8080)..."
-.venv/bin/adk web contributing/samples/hitl_approval --port 8080 --enable_features=TOOL_CONFIRMATION &
+.venv/bin/adk web contributing/samples/hitl_approval --port 8080 &
 ADK_PID=$!
 
 echo ""

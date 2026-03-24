@@ -82,26 +82,38 @@ def hitl_tool(
                 resp.raise_for_status()
                 request_id = resp.json()["id"]
 
-            status = await _poll_for_decision(
+            decision_data = await _poll_for_decision(
                 api_base, request_id, poll_interval, timeout
             )
+            
+            if not decision_data:
+                raise TimeoutError(
+                    f"No decision received for '{fn.__name__}' within {timeout}s."
+                )
+
+            status = decision_data["status"]
+            notes = decision_data.get("decision_notes", "No notes provided.")
 
             if status == "approved":
                 if inspect.iscoroutinefunction(fn):
-                    return await fn(*args, **kwargs)
+                    result = await fn(*args, **kwargs)
                 else:
-                    return fn(*args, **kwargs)
+                    result = fn(*args, **kwargs)
+                
+                # We inject the supervisor's decision into the return payload
+                # so the LLM explicitly sees and references the supervisor's approval!
+                return {
+                    "supervisor_decision": "APPROVED",
+                    "supervisor_notes": notes,
+                    "action_result": result
+                }
             elif status == "rejected":
                 raise PermissionError(
-                    f"Tool '{fn.__name__}' was rejected by a supervisor."
+                    f"Tool '{fn.__name__}' was rejected by a supervisor. Notes: {notes}"
                 )
             elif status == "escalated":
                 raise PermissionError(
-                    f"Tool '{fn.__name__}' was escalated — awaiting further review."
-                )
-            else:
-                raise TimeoutError(
-                    f"No decision received for '{fn.__name__}' within {timeout}s."
+                    f"Tool '{fn.__name__}' was escalated — awaiting further review. Notes: {notes}"
                 )
 
         return wrapper
@@ -117,7 +129,7 @@ async def _poll_for_decision(
     request_id: str,
     interval: float,
     timeout: float,
-) -> Optional[str]:
+) -> Optional[dict]:
     deadline = asyncio.get_event_loop().time() + timeout
     async with httpx.AsyncClient(base_url=api_base) as client:
         while asyncio.get_event_loop().time() < deadline:
@@ -125,7 +137,7 @@ async def _poll_for_decision(
             resp.raise_for_status()
             data = resp.json()
             if data["status"] != "pending":
-                return data["status"]
+                return data
             await asyncio.sleep(interval)
     return None
 
