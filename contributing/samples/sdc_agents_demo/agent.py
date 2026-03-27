@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Minimal SDC Agents demo -- catalog search + data introspection.
+"""SDC Agents demo -- full data governance pipeline.
 
-Composes CatalogToolset and IntrospectToolset into a single LlmAgent
-that can discover published SDC4 schemas and introspect datasource
-structure.
+Composes five SDC Agents toolsets into a single LlmAgent that can
+introspect datasources, discover matching catalog components, map
+columns to schemas, and assemble validated data models.
 
 Prerequisites:
     pip install google-adk-community[sdc-agents]
@@ -31,6 +31,9 @@ from google.adk.agents import LlmAgent
 from google.adk_community.sdc_agents import (
     CatalogToolset,
     IntrospectToolset,
+    MappingToolset,
+    AssemblyToolset,
+    ValidationToolset,
     SDCAgentsConfig,
 )
 
@@ -53,16 +56,24 @@ root_agent = LlmAgent(
     name="sdc_demo_agent",
     model="gemini-2.0-flash",
     description=(
-        "Discovers SDC4 schemas and introspects datasource structure."
+        "Full data governance pipeline: introspect, discover, map,"
+        " and assemble SDC4 data models."
     ),
     instruction=(
-        "You help data engineers govern their data.\n"
-        "1. Use catalog tools to search for published SDC4 schemas\n"
-        "2. Use introspect tools to analyze datasource columns and types\n"
-        "3. Summarize findings clearly"
+        "You help data engineers govern their data. Follow this workflow:\n"
+        "1. Introspect the datasource to discover columns and types\n"
+        "2. Search the SDC4 catalog for matching published schemas\n"
+        "3. Discover catalog components that match the datasource structure\n"
+        "4. Map unmatched columns to schema components by similarity\n"
+        "5. Propose a cluster hierarchy for the data model\n"
+        "6. Assemble the final data model via the Assembly API\n"
+        "7. Validate the generated artifacts"
     ),
     tools=[
-        CatalogToolset(config=config),
         IntrospectToolset(config=config),
+        CatalogToolset(config=config),
+        MappingToolset(config=config),
+        AssemblyToolset(config=config),
+        ValidationToolset(config=config),
     ],
 )
