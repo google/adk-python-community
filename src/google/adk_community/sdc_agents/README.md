@@ -49,10 +49,10 @@ agent = LlmAgent(
 
 | Toolset | Description |
 |---------|-------------|
-| **CatalogToolset** | Discover published SDC4 schemas, download artifacts (XSD, RDF, JSON-LD), check wallet balance |
-| **IntrospectToolset** | Analyze datasource structure -- infer column types and constraints from SQL, CSV, JSON, MongoDB |
-| **MappingToolset** | Match datasource columns to schema components by type compatibility and name similarity |
-| **AssemblyToolset** | Compose data models from catalog components -- reuse existing or mint new, with wallet billing |
+| **CatalogToolset** | Discover published SDC4 schemas, download artifacts (XSD, RDF, JSON-LD) |
+| **IntrospectToolset** | Analyze datasource structure -- infer column types and constraints from SQL, CSV, JSON, MongoDB with sidecar metadata support |
+| **MappingToolset** | Match datasource columns to schema components by type compatibility and name similarity, persist mapping configs with schema and datasource context |
+| **AssemblyToolset** | Compose data models from catalog components -- reuse existing or mint new, with catalog-first discovery and structured unmatched column reporting |
 | **GeneratorToolset** | Generate validated XML instances, batch processing, and preview |
 | **ValidationToolset** | Validate XML instances against schemas, digitally sign via VaaS API |
 | **DistributionToolset** | Deliver RDF triples to Fuseki, Neo4j, GraphDB, or REST endpoints |

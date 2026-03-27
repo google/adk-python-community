@@ -20,6 +20,8 @@ structured audit trails and enforced agent isolation boundaries.
 
 Install: pip install google-adk-community[sdc-agents]
 Docs: https://github.com/SemanticDataCharter/SDC_Agents
+
+Requires sdc-agents >= 4.3.3.
 """
 
 from sdc_agents.common.config import load_config

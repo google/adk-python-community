@@ -46,7 +46,7 @@ test = [
     "pytest-asyncio>=1.2.0",
 ]
 sdc-agents = [
-    "sdc-agents>=4.2.0",
+    "sdc-agents>=4.3.3",
 ]
 
 
