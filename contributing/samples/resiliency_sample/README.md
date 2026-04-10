@@ -100,7 +100,7 @@ resiliency_sample/
 ├── agent.py               # Agent definitions with resilience patterns
 ├── test_helpers.py        # Test utilities for simulating timeouts and failures
 ├── test_example.py        # Example script demonstrating how to test the sample
-├── __Init__.py            # Package initialization
+├── __init__.py            # Package initialization
 └── README.md              # This file
 ```
 
