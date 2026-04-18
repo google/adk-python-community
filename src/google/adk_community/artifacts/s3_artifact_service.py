@@ -12,21 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An artifact service implementation using Amazon S3.
-
-The object key format depends on whether the filename has a user namespace:
-  - For files with user namespace (starting with "user:"):
-    {app_name}/{user_id}/user/{filename}/{version}
-  - For regular session-scoped files:
-    {app_name}/{user_id}/{session_id}/{filename}/{version}
-
-Uses aioboto3 for native async I/O and atomic versioning via
-S3's ``IfNoneMatch`` condition to prevent race conditions.
-
-Install S3 support with::
-
-    pip install google-adk-community[s3]
-"""
+"""Artifact service implementation using Amazon S3."""
 from __future__ import annotations
 
 import asyncio
@@ -45,21 +31,7 @@ logger = logging.getLogger("google_adk_community." + __name__)
 
 
 class S3ArtifactService(BaseArtifactService):
-  """An artifact service implementation using Amazon S3.
-
-  Uses ``aioboto3`` for native async I/O instead of wrapping synchronous
-  calls with ``asyncio.to_thread``.  Artifact saves are atomic: a
-  ``IfNoneMatch="*"`` condition on ``put_object`` prevents race conditions
-  when two writers try to create the same version concurrently.
-
-  Args:
-      bucket_name: The name of the S3 bucket to use.
-      aws_configs: Extra keyword arguments forwarded to
-          ``aioboto3.Session().client("s3", ...)``.  Use this to pass
-          ``region_name``, ``endpoint_url`` (for MinIO / Spaces), etc.
-      save_max_retries: Maximum retries on version conflict.
-          ``-1`` means retry indefinitely.
-  """
+  """An S3-backed implementation of the artifact service."""
 
   def __init__(
       self,
@@ -67,6 +39,15 @@ class S3ArtifactService(BaseArtifactService):
       aws_configs: Optional[dict[str, Any]] = None,
       save_max_retries: int = -1,
   ):
+    """Initializes the S3 artifact service.
+
+    Args:
+        bucket_name: The name of the S3 bucket to use.
+        aws_configs: Extra kwargs forwarded to the aioboto3 S3 client.
+            Use this to pass region_name, endpoint_url (for MinIO), etc.
+        save_max_retries: Maximum retries on version conflict. -1 means
+            retry indefinitely.
+    """
     try:
       import aioboto3  # noqa: F401
     except ImportError as exc:
@@ -80,9 +61,7 @@ class S3ArtifactService(BaseArtifactService):
     self.save_max_retries = save_max_retries
     self._session = None
 
-  # ------------------------------------------------------------------ #
-  # S3 client helpers
-  # ------------------------------------------------------------------ #
+
 
   async def _get_session(self):
     import aioboto3
@@ -99,20 +78,16 @@ class S3ArtifactService(BaseArtifactService):
     ) as s3:
       yield s3
 
-  # ------------------------------------------------------------------ #
-  # Metadata serialisation
-  # ------------------------------------------------------------------ #
-
   @staticmethod
   def _flatten_metadata(metadata: Optional[dict[str, Any]]) -> dict[str, str]:
-    """JSON-encode metadata values for S3 user-metadata (strings only)."""
+    """JSON-encode metadata values for S3 user-metadata."""
     if not metadata:
       return {}
     return {str(k): json.dumps(v) for k, v in metadata.items()}
 
   @staticmethod
   def _unflatten_metadata(metadata: Optional[dict[str, str]]) -> dict[str, Any]:
-    """Decode JSON metadata back to Python objects."""
+    """Decode JSON metadata back to native Python objects."""
     results: dict[str, Any] = {}
     for k, v in (metadata or {}).items():
       try:
@@ -123,10 +98,6 @@ class S3ArtifactService(BaseArtifactService):
         )
         results[k] = v
     return results
-
-  # ------------------------------------------------------------------ #
-  # Key helpers
-  # ------------------------------------------------------------------ #
 
   @staticmethod
   def _file_has_user_namespace(filename: str) -> bool:
@@ -160,10 +131,6 @@ class S3ArtifactService(BaseArtifactService):
         f"/{version}"
     )
 
-  # ------------------------------------------------------------------ #
-  # Public API
-  # ------------------------------------------------------------------ #
-
   @override
   async def save_artifact(
       self,
@@ -175,12 +142,7 @@ class S3ArtifactService(BaseArtifactService):
       session_id: Optional[str] = None,
       custom_metadata: Optional[dict[str, Any]] = None,
   ) -> int:
-    """Save an artifact with atomic versioning via ``IfNoneMatch``.
-
-    If two concurrent callers race to create the same version, S3
-    will reject the second ``put_object`` with a ``PreconditionFailed``
-    error and this method will transparently retry.
-    """
+    """Save an artifact with atomic versioning via IfNoneMatch."""
     from botocore.exceptions import ClientError
 
     if self.save_max_retries < 0:
@@ -200,7 +162,6 @@ class S3ArtifactService(BaseArtifactService):
           app_name, user_id, session_id, filename, version
       )
 
-      # Prepare data and content type
       if artifact.inline_data:
         body = artifact.inline_data.data
         content_type = (
@@ -257,7 +218,7 @@ class S3ArtifactService(BaseArtifactService):
       session_id: Optional[str] = None,
       version: Optional[int] = None,
   ) -> Optional[types.Part]:
-    """Load a specific version (or latest) of an artifact from S3."""
+    """Load a specific version of an artifact, or the latest."""
     from botocore.exceptions import ClientError
 
     if version is None:
@@ -299,7 +260,7 @@ class S3ArtifactService(BaseArtifactService):
   async def list_artifact_keys(
       self, *, app_name: str, user_id: str, session_id: Optional[str] = None
   ) -> list[str]:
-    """List all artifact keys for a user, optionally scoped to a session."""
+    """List all artifact keys for a user, optionally filtered by session."""
     keys: set[str] = set()
     prefixes = [
         f"{app_name}/{user_id}/{session_id}/" if session_id else None,
@@ -313,11 +274,9 @@ class S3ArtifactService(BaseArtifactService):
         ):
           for obj in page.get("Contents", []):
             relative = obj["Key"][len(prefix):]
-            # relative is "{filename}/{version}" — strip version part
             parts = relative.rsplit("/", 1)
             if len(parts) >= 2:
               raw_filename = parts[0]
-              # Re-add "user:" prefix for user-scoped artifacts
               if prefix.endswith("/user/"):
                 keys.add(f"user:{raw_filename}")
               else:
@@ -333,7 +292,7 @@ class S3ArtifactService(BaseArtifactService):
       filename: str,
       session_id: Optional[str] = None,
   ) -> None:
-    """Delete all versions of an artifact using S3 batch delete."""
+    """Delete all versions of an artifact."""
     versions = await self.list_versions(
         app_name=app_name,
         user_id=user_id,
@@ -352,7 +311,6 @@ class S3ArtifactService(BaseArtifactService):
         for v in versions
     ]
     async with self._client() as s3:
-      # S3 batch delete supports up to 1000 keys per request
       for i in range(0, len(keys_to_delete), 1000):
         batch = keys_to_delete[i : i + 1000]
         await s3.delete_objects(
@@ -368,7 +326,7 @@ class S3ArtifactService(BaseArtifactService):
       filename: str,
       session_id: Optional[str] = None,
   ) -> list[int]:
-    """List all available version numbers for an artifact."""
+    """List all available versions of an artifact."""
     prefix = (
         self._get_blob_prefix(app_name, user_id, session_id, filename) + "/"
     )
@@ -395,7 +353,7 @@ class S3ArtifactService(BaseArtifactService):
       filename: str,
       session_id: Optional[str] = None,
   ) -> list[ArtifactVersion]:
-    """List all versions with metadata, using parallel head_object calls."""
+    """List all versions with metadata."""
     prefix = (
         self._get_blob_prefix(app_name, user_id, session_id, filename) + "/"
     )
@@ -409,7 +367,6 @@ class S3ArtifactService(BaseArtifactService):
         if not page_objects:
           continue
 
-        # Parallelise head_object calls for each page
         head_tasks = [
             s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
             for obj in page_objects
@@ -445,7 +402,7 @@ class S3ArtifactService(BaseArtifactService):
       session_id: Optional[str] = None,
       version: Optional[int] = None,
   ) -> Optional[ArtifactVersion]:
-    """Retrieve metadata for a specific version (or the latest)."""
+    """Retrieve metadata for a specific version, or the latest."""
     from botocore.exceptions import ClientError
 
     if version is None:

@@ -28,9 +28,7 @@ from google.adk_community.artifacts import S3ArtifactService
 from google.genai import types
 import pytest
 
-# --------------------------------------------------------------------------- #
-# Mock infrastructure
-# --------------------------------------------------------------------------- #
+
 
 FIXED_DATETIME = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -89,7 +87,7 @@ class MockS3Client:
   async def __aexit__(self, *args):
     pass
 
-  # --- S3 operations ---------------------------------------------------- #
+
 
   async def head_bucket(self, Bucket: str):
     if Bucket not in self.buckets:
@@ -110,7 +108,7 @@ class MockS3Client:
       self.buckets[Bucket] = MockS3Bucket(Bucket)
     bucket = self.buckets[Bucket]
 
-    # Simulate atomic IfNoneMatch="*" — reject if key already exists
+    # Reject if key already exists (atomic IfNoneMatch)
     if IfNoneMatch == "*" and Key in bucket.objects and bucket.objects[Key].data is not None:
       from botocore.exceptions import ClientError
 
@@ -229,9 +227,7 @@ class MockS3Session:
     return self._client
 
 
-# --------------------------------------------------------------------------- #
-# Fixtures
-# --------------------------------------------------------------------------- #
+
 
 @pytest.fixture
 def mock_s3_service():
@@ -241,14 +237,12 @@ def mock_s3_service():
 
   with mock.patch("aioboto3.Session", return_value=mock_session):
     service = S3ArtifactService(bucket_name="test_bucket")
-    # Ensure the mock session is used
     service._session = mock_session
     return service
 
 
-# --------------------------------------------------------------------------- #
-# Tests
-# --------------------------------------------------------------------------- #
+
+
 
 @pytest.mark.asyncio
 async def test_load_empty(mock_s3_service):
