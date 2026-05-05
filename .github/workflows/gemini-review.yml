@@ -39,7 +39,7 @@ jobs:
           permission-pull-requests: 'write'
 
       - name: 'Checkout repository'
-        uses: 'actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8' # ratchet:actions/checkout@v6
+        uses: 'actions/checkout@v4' # ratchet:exclude
 
       - name: 'Run Gemini pull request review'
         uses: 'google-github-actions/run-gemini-cli@v0' # ratchet:exclude
@@ -67,7 +67,7 @@ jobs:
           upload_artifacts: '${{ vars.UPLOAD_ARTIFACTS }}'
           workflow_name: 'gemini-review'
           # Explicitly set the PR number to handle `issue_comment` triggers (which GitHub treats as issues, not PRs)
-          github_pr_number: '${{ github.event.pull_request.number }}'
+          github_pr_number: '${{ github.event.pull_request.number || github.event.issue.number }}'
           settings: |-
             {
               "model": {
@@ -109,8 +109,4 @@ jobs:
                 ]
               }
             }
-          extensions: |
-            [
-              "https://github.com/gemini-cli-extensions/code-review"
-            ]
-          prompt: '/pr-code-review'
+          prompt: 'Please use the pull_request_read tool to read this PR. Analyze the code for bugs, security issues, and best practices. Then, use the add_comment_to_pending_review and pull_request_review_write tools to post your review directly.'
