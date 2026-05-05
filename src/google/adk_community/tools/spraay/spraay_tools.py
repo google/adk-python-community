@@ -87,14 +87,19 @@ def _get_contract_address() -> str:
 
 def _validate_recipients(recipients: list[str]) -> list[str]:
     """Validate and checksum recipient addresses."""
-    from web3 import Web3
-
     if not recipients:
         raise ValueError("Recipients list cannot be empty.")
     if len(recipients) > MAX_RECIPIENTS:
         raise ValueError(
             f"Maximum {MAX_RECIPIENTS} recipients per transaction. "
             f"Got {len(recipients)}."
+        )
+
+    try:
+        from web3 import Web3
+    except ImportError:
+        raise ImportError(
+            "web3 is required for Spraay tools. Install with: pip install web3"
         )
 
     checksummed = []
