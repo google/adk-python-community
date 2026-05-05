@@ -193,6 +193,11 @@ class RedisSessionService(BaseSessionService):
   @override
   async def append_event(self, session: Session, event: Event) -> Event:
     await super().append_event(session=session, event=event)
+    session.state = {
+        key: value
+        for key, value in session.state.items()
+        if not key.startswith(State.TEMP_PREFIX)
+    }
     session.last_update_time = event.timestamp
 
     async with self.cache.pipeline(transaction=False) as pipe:
