@@ -45,6 +45,12 @@ test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+templating = [
+    "jinja2>=3.1.0",     # For Jinja2InstructionProvider
+    "Mako>=1.3.0",       # For MakoInstructionProvider
+    "chevron>=0.14.0",   # For MustacheInstructionProvider (Mustache templates)
+    "Django>=4.0.0",     # For DjangoInstructionProvider
+]
 
 
 [tool.pyink]
@@ -72,6 +78,8 @@ build-backend = "flit_core.buildapi"
 
 [dependency-groups]
 dev = [
+    "isort>=6.1.0",
+    "pyink>=24.10.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
