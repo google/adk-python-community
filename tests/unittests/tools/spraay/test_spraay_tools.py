@@ -18,6 +18,7 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
+from google.adk_community.tools.spraay import spraay_tools as spraay_module
 from google.adk_community.tools.spraay.constants import (
     BASE_CHAIN_ID,
     MAX_RECIPIENTS,
@@ -47,6 +48,14 @@ def _make_mock_w3():
     return mock_w3
 
 
+def _make_mock_web3_module():
+    """Create a mock web3 module with Web3 class."""
+    mock_web3_mod = MagicMock()
+    mock_web3_mod.Web3.is_address.return_value = True
+    mock_web3_mod.Web3.to_checksum_address.side_effect = lambda x: x
+    return mock_web3_mod
+
+
 class TestValidateRecipients(unittest.TestCase):
     """Tests for recipient address validation."""
 
@@ -61,19 +70,24 @@ class TestValidateRecipients(unittest.TestCase):
         with self.assertRaises(ValueError):
             _validate_recipients(addresses)
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._validate_recipients")
-    def test_valid_addresses(self, mock_validate):
+    def test_valid_addresses(self):
         """Valid addresses should be checksummed and returned."""
-        mock_validate.return_value = [ADDR_1, ADDR_2]
-        result = _validate_recipients([ADDR_1, ADDR_2])
-        self.assertEqual(len(result), 2)
+        import sys
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._validate_recipients")
-    def test_invalid_address(self, mock_validate):
+        mock_web3_mod = _make_mock_web3_module()
+        with patch.dict(sys.modules, {"web3": mock_web3_mod}):
+            result = _validate_recipients([ADDR_1, ADDR_2])
+            self.assertEqual(len(result), 2)
+
+    def test_invalid_address(self):
         """Invalid address should raise ValueError."""
-        mock_validate.side_effect = ValueError("Invalid Ethereum address")
-        with self.assertRaises(ValueError):
-            _validate_recipients(["not_an_address"])
+        import sys
+
+        mock_web3_mod = MagicMock()
+        mock_web3_mod.Web3.is_address.return_value = False
+        with patch.dict(sys.modules, {"web3": mock_web3_mod}):
+            with self.assertRaises(ValueError):
+                _validate_recipients(["not_an_address"])
 
 
 class TestCalculateFee(unittest.TestCase):
@@ -99,8 +113,8 @@ class TestCalculateFee(unittest.TestCase):
 class TestSpraayBatchEth(unittest.TestCase):
     """Tests for spraay_batch_eth function."""
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_account")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_web3")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
     def test_missing_private_key(self, mock_web3, mock_account):
         """Should return error if SPRAAY_PRIVATE_KEY is not set."""
         mock_w3 = _make_mock_w3()
@@ -113,9 +127,9 @@ class TestSpraayBatchEth(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertIn("SPRAAY_PRIVATE_KEY", result["error"])
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._validate_recipients")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_account")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_web3")
+    @patch.object(spraay_module, "_validate_recipients")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
     def test_zero_amount_returns_error(self, mock_web3, mock_account, mock_validate):
         """Zero ETH amount should return error."""
         mock_w3 = _make_mock_w3()
@@ -132,9 +146,9 @@ class TestSpraayBatchEth(unittest.TestCase):
 class TestSpraayBatchEthVariable(unittest.TestCase):
     """Tests for spraay_batch_eth_variable function."""
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._validate_recipients")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_account")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_web3")
+    @patch.object(spraay_module, "_validate_recipients")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
     def test_mismatched_lengths(self, mock_web3, mock_account, mock_validate):
         """Recipients and amounts must have same length."""
         mock_w3 = _make_mock_w3()
@@ -153,8 +167,8 @@ class TestSpraayBatchEthVariable(unittest.TestCase):
 class TestSpraayBatchToken(unittest.TestCase):
     """Tests for spraay_batch_token function."""
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_account")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_web3")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
     def test_missing_private_key(self, mock_web3, mock_account):
         """Should return error if SPRAAY_PRIVATE_KEY is not set."""
         mock_w3 = _make_mock_w3()
@@ -171,8 +185,8 @@ class TestSpraayBatchToken(unittest.TestCase):
 class TestSpraayBatchTokenVariable(unittest.TestCase):
     """Tests for spraay_batch_token_variable function."""
 
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_account")
-    @patch("google.adk_community.tools.spraay.spraay_tools._get_web3")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
     def test_missing_private_key(self, mock_web3, mock_account):
         """Should return error if SPRAAY_PRIVATE_KEY is not set."""
         mock_w3 = _make_mock_w3()
