@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
+import uuid, json
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+import json     
 
 
 class ApprovalStatus:
@@ -36,6 +37,7 @@ class RiskLevel:
 
 
 class ApprovalRequest(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     # Identity
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -58,14 +60,48 @@ class ApprovalRequest(BaseModel):
 
     # Status tracking
     status: str = ApprovalStatus.PENDING
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
     decided_at: Optional[datetime] = None
     decided_by: Optional[str] = None
     decision_notes: Optional[str] = None
-
     # Escalation
     escalated_to: Optional[str] = None
+    
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_json_strings(cls, values):
+        """
+        When constructing from an ORM object, SQLite stores payload
+        and response_schema as JSON strings. Parse them to dicts
+        for Pydantic without mutating the original ORM object.
+        """
+        # Handle dict input (normal Pydantic construction)
+        if isinstance(values, dict):
+            for field in ("payload", "response_schema"):
+                val = values.get(field)
+                if isinstance(val, str):
+                    try:
+                        values[field] = json.loads(val)
+                    except (ValueError, TypeError):
+                        values[field] = {}
+            return values
 
+        # Handle ORM object input (from_attributes path)
+        # Build a plain dict from the ORM object attributes
+        # so we never mutate the SQLAlchemy-tracked object
+        data = {}
+        for column in values.__table__.columns:
+            val = getattr(values, column.name, None)
+            if column.name in ("payload", "response_schema") and isinstance(val, str):
+                try:
+                    data[column.name] = json.loads(val)
+                except (ValueError, TypeError):
+                    data[column.name] = {}
+            else:
+                data[column.name] = val
+        return data
 
 class ApprovalDecision(BaseModel):
     decision: str  # approved / rejected / escalated

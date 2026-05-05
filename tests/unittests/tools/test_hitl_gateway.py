@@ -84,7 +84,9 @@ async def test_approved_tool_runs(mock_client_cls):
         return a + b
 
     result = await add(2, 3)
-    assert result == 5
+    assert result["action_result"] == 5
+    assert result["supervisor_decision"] == "APPROVED"
+    assert result["supervisor_notes"] == "No notes provided."
 
 
 @pytest.mark.asyncio

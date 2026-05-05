@@ -138,25 +138,4 @@ async def _get_or_404(request_id: str, db: AsyncSession) -> ApprovalRequestDB:
 
 
 def _to_pydantic(db_item: ApprovalRequestDB) -> ApprovalRequest:
-    return ApprovalRequest(
-        id=db_item.id,
-        session_id=db_item.session_id,
-        invocation_id=db_item.invocation_id,
-        function_call_id=db_item.function_call_id,
-        app_name=db_item.app_name,
-        user_id=db_item.user_id,
-        agent_name=db_item.agent_name,
-        tool_name=db_item.tool_name,
-        message=db_item.message,
-        payload=json.loads(db_item.payload) if db_item.payload else {},
-        response_schema=json.loads(db_item.response_schema)
-        if db_item.response_schema
-        else {},
-        risk_level=db_item.risk_level,
-        status=db_item.status,
-        created_at=db_item.created_at,
-        decided_at=db_item.decided_at,
-        decided_by=db_item.decided_by,
-        decision_notes=db_item.decision_notes,
-        escalated_to=db_item.escalated_to,
-    )
+    return ApprovalRequest.model_validate(db_item)

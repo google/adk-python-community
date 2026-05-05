@@ -37,10 +37,13 @@ import uuid
 from typing import Any, Callable, Optional
 
 import httpx
+import os
+import random
 
-API_BASE_URL = "http://localhost:8000"
-POLL_INTERVAL_S = 2.0
-POLL_TIMEOUT_S = 300.0  # 5 minutes
+API_BASE_URL = os.getenv("ADK_HITL_API_URL", "http://localhost:8000")
+POLL_INTERVAL_S = float(os.getenv("ADK_HITL_POLL_INTERVAL_S", "2.0"))
+POLL_JITTER_S = 1.0
+POLL_TIMEOUT_S = 300.0  # ← this one was likely removed accidentally
 
 
 def hitl_tool(
@@ -138,7 +141,7 @@ async def _poll_for_decision(
             data = resp.json()
             if data["status"] != "pending":
                 return data
-            await asyncio.sleep(interval)
+            await asyncio.sleep(POLL_INTERVAL_S + random.uniform(0, POLL_JITTER_S))
     return None
 
 
