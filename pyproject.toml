@@ -45,6 +45,7 @@ test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
+spraay = ["web3>=6.0.0"]
 
 
 [tool.pyink]

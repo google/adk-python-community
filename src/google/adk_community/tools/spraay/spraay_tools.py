@@ -29,6 +29,7 @@ Dependencies:
 
 import logging
 import os
+from decimal import Decimal
 from typing import Optional
 
 from google.adk_community.tools.spraay.constants import (
@@ -134,8 +135,20 @@ def spraay_batch_eth(
         account = _get_account()
         contract_address = _get_contract_address()
 
+        # Verify chain ID to avoid sending to wrong network
+        connected_chain_id = w3.eth.chain_id
+        if connected_chain_id != BASE_CHAIN_ID:
+            return {
+                "status": "error",
+                "error": (
+                    f"Chain ID mismatch: connected to {connected_chain_id}, "
+                    f"expected {BASE_CHAIN_ID} (Base). "
+                    "Check your RPC configuration."
+                ),
+            }
+
         checksummed = _validate_recipients(recipients)
-        amount_wei = w3.to_wei(amount_per_recipient_eth, "ether")
+        amount_wei = w3.to_wei(Decimal(amount_per_recipient_eth), "ether")
 
         if amount_wei <= 0:
             return {"status": "error", "error": "Amount must be greater than 0."}
@@ -161,7 +174,8 @@ def spraay_batch_eth(
             }
         )
 
-        tx["gas"] = w3.eth.estimate_gas(tx)
+        # Add 10% gas buffer to prevent 'out of gas' errors
+        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -214,12 +228,26 @@ def spraay_batch_token(
         account = _get_account()
         contract_address = _get_contract_address()
 
+        # Verify chain ID to avoid sending to wrong network
+        connected_chain_id = w3.eth.chain_id
+        if connected_chain_id != BASE_CHAIN_ID:
+            return {
+                "status": "error",
+                "error": (
+                    f"Chain ID mismatch: connected to {connected_chain_id}, "
+                    f"expected {BASE_CHAIN_ID} (Base). "
+                    "Check your RPC configuration."
+                ),
+            }
+
         checksummed = _validate_recipients(recipients)
         token_addr = w3.to_checksum_address(token_address)
         spraay_addr = w3.to_checksum_address(contract_address)
 
-        # Convert human-readable amount to token units
-        amount_units = int(float(amount_per_recipient) * (10**token_decimals))
+        # Use Decimal for precise token amount conversion
+        amount_units = int(
+            Decimal(amount_per_recipient) * Decimal(10**token_decimals)
+        )
         if amount_units <= 0:
             return {"status": "error", "error": "Amount must be greater than 0."}
 
@@ -246,7 +274,8 @@ def spraay_batch_token(
                     "gas": 0,
                 }
             )
-            approve_tx["gas"] = w3.eth.estimate_gas(approve_tx)
+            # Add 10% gas buffer
+            approve_tx["gas"] = int(w3.eth.estimate_gas(approve_tx) * 1.1)
             signed_approve = account.sign_transaction(approve_tx)
             approve_hash = w3.eth.send_raw_transaction(
                 signed_approve.raw_transaction
@@ -268,7 +297,8 @@ def spraay_batch_token(
                 "gas": 0,
             }
         )
-        tx["gas"] = w3.eth.estimate_gas(tx)
+        # Add 10% gas buffer
+        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -318,6 +348,18 @@ def spraay_batch_eth_variable(
         account = _get_account()
         contract_address = _get_contract_address()
 
+        # Verify chain ID to avoid sending to wrong network
+        connected_chain_id = w3.eth.chain_id
+        if connected_chain_id != BASE_CHAIN_ID:
+            return {
+                "status": "error",
+                "error": (
+                    f"Chain ID mismatch: connected to {connected_chain_id}, "
+                    f"expected {BASE_CHAIN_ID} (Base). "
+                    "Check your RPC configuration."
+                ),
+            }
+
         checksummed = _validate_recipients(recipients)
 
         if len(amounts_eth) != len(checksummed):
@@ -329,7 +371,7 @@ def spraay_batch_eth_variable(
                 ),
             }
 
-        amounts_wei = [w3.to_wei(a, "ether") for a in amounts_eth]
+        amounts_wei = [w3.to_wei(Decimal(a), "ether") for a in amounts_eth]
         if any(a <= 0 for a in amounts_wei):
             return {"status": "error", "error": "All amounts must be greater than 0."}
 
@@ -353,7 +395,8 @@ def spraay_batch_eth_variable(
                 "gas": 0,
             }
         )
-        tx["gas"] = w3.eth.estimate_gas(tx)
+        # Add 10% gas buffer
+        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -404,6 +447,18 @@ def spraay_batch_token_variable(
         account = _get_account()
         contract_address = _get_contract_address()
 
+        # Verify chain ID to avoid sending to wrong network
+        connected_chain_id = w3.eth.chain_id
+        if connected_chain_id != BASE_CHAIN_ID:
+            return {
+                "status": "error",
+                "error": (
+                    f"Chain ID mismatch: connected to {connected_chain_id}, "
+                    f"expected {BASE_CHAIN_ID} (Base). "
+                    "Check your RPC configuration."
+                ),
+            }
+
         checksummed = _validate_recipients(recipients)
         token_addr = w3.to_checksum_address(token_address)
         spraay_addr = w3.to_checksum_address(contract_address)
@@ -417,8 +472,9 @@ def spraay_batch_token_variable(
                 ),
             }
 
+        # Use Decimal for precise token amount conversion
         amounts_units = [
-            int(float(a) * (10**token_decimals)) for a in amounts
+            int(Decimal(a) * Decimal(10**token_decimals)) for a in amounts
         ]
         if any(a <= 0 for a in amounts_units):
             return {"status": "error", "error": "All amounts must be greater than 0."}
@@ -446,7 +502,8 @@ def spraay_batch_token_variable(
                     "gas": 0,
                 }
             )
-            approve_tx["gas"] = w3.eth.estimate_gas(approve_tx)
+            # Add 10% gas buffer
+            approve_tx["gas"] = int(w3.eth.estimate_gas(approve_tx) * 1.1)
             signed_approve = account.sign_transaction(approve_tx)
             approve_hash = w3.eth.send_raw_transaction(
                 signed_approve.raw_transaction
@@ -468,7 +525,8 @@ def spraay_batch_token_variable(
                 "gas": 0,
             }
         )
-        tx["gas"] = w3.eth.estimate_gas(tx)
+        # Add 10% gas buffer
+        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
