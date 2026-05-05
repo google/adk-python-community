@@ -78,3 +78,9 @@ Thumbs.db
 *.bak
 *.tmp
 *.temp
+
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json
