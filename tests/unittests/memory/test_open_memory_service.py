@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
 from unittest.mock import patch
 
 from google.adk.events.event import Event
-from google.adk_community.memory.open_memory_service import (
-    OpenMemoryService,
-    OpenMemoryServiceConfig,
-)
 from google.adk.sessions.session import Session
 from google.genai import types
 import pytest
+
+from google.adk_community.memory.open_memory_service import OpenMemoryService
+from google.adk_community.memory.open_memory_service import OpenMemoryServiceConfig
 
 MOCK_APP_NAME = 'test-app'
 MOCK_USER_ID = 'test-user'
@@ -39,7 +39,9 @@ MOCK_SESSION = Session(
             invocation_id='inv-1',
             author='user',
             timestamp=12345,
-            content=types.Content(parts=[types.Part(text='Hello, I like Python.')]),
+            content=types.Content(
+                parts=[types.Part(text='Hello, I like Python.')]
+            ),
         ),
         Event(
             id='event-2',
@@ -47,7 +49,9 @@ MOCK_SESSION = Session(
             author='model',
             timestamp=12346,
             content=types.Content(
-                parts=[types.Part(text='Python is a great programming language.')]
+                parts=[
+                    types.Part(text='Python is a great programming language.')
+                ]
             ),
         ),
         # Empty event, should be ignored
@@ -85,10 +89,12 @@ MOCK_SESSION_WITH_EMPTY_EVENTS = Session(
 @pytest.fixture
 def mock_httpx_client():
   """Mock httpx.AsyncClient for testing."""
-  with patch('google.adk_community.memory.open_memory_service.httpx.AsyncClient') as mock_client_class:
+  with patch(
+      'google.adk_community.memory.open_memory_service.httpx.AsyncClient'
+  ) as mock_client_class:
     mock_client = MagicMock()
     mock_response = MagicMock()
-    mock_response.json.return_value = {"matches": []}
+    mock_response.json.return_value = {'matches': []}
     mock_response.raise_for_status = MagicMock()
     mock_client.post = AsyncMock(return_value=mock_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -107,14 +113,10 @@ def memory_service(mock_httpx_client):
 def memory_service_with_config(mock_httpx_client):
   """Create OpenMemoryService with custom config."""
   config = OpenMemoryServiceConfig(
-      search_top_k=5,
-      user_content_salience=0.9,
-      model_content_salience=0.6
+      search_top_k=5, user_content_salience=0.9, model_content_salience=0.6
   )
   return OpenMemoryService(
-      base_url='http://localhost:3000',
-      api_key='test-key',
-      config=config
+      base_url='http://localhost:3000', api_key='test-key', config=config
   )
 
 
@@ -139,7 +141,7 @@ class TestOpenMemoryServiceConfig:
         user_content_salience=0.9,
         model_content_salience=0.75,
         default_salience=0.5,
-        enable_metadata_tags=False
+        enable_metadata_tags=False,
     )
     assert config.search_top_k == 20
     assert config.timeout == 10.0
@@ -158,18 +160,20 @@ class TestOpenMemoryServiceConfig:
 
   def test_api_key_required(self):
     """Test that API key is required."""
-    with pytest.raises(ValueError, match="api_key is required"):
-      OpenMemoryService(base_url="http://localhost:3000", api_key="")
-    
-    with pytest.raises(ValueError, match="api_key is required"):
-      OpenMemoryService(base_url="http://localhost:3000")
+    with pytest.raises(ValueError, match='api_key is required'):
+      OpenMemoryService(base_url='http://localhost:3000', api_key='')
+
+    with pytest.raises(ValueError, match='api_key is required'):
+      OpenMemoryService(base_url='http://localhost:3000')
 
 
 class TestOpenMemoryService:
   """Tests for OpenMemoryService."""
 
   @pytest.mark.asyncio
-  async def test_add_session_to_memory_success(self, memory_service, mock_httpx_client):
+  async def test_add_session_to_memory_success(
+      self, memory_service, mock_httpx_client
+  ):
     """Test successful addition of session memories."""
     await memory_service.add_session_to_memory(MOCK_SESSION)
 
@@ -220,9 +224,7 @@ class TestOpenMemoryService:
     assert request_data['salience'] == 0.6  # Custom model salience
 
   @pytest.mark.asyncio
-  async def test_add_session_without_metadata_tags(
-      self, mock_httpx_client
-  ):
+  async def test_add_session_without_metadata_tags(self, mock_httpx_client):
     """Test adding memories without metadata tags."""
     config = OpenMemoryServiceConfig(enable_metadata_tags=False)
     memory_service = OpenMemoryService(
@@ -236,7 +238,9 @@ class TestOpenMemoryService:
     assert request_data.get('tags', []) == []
 
   @pytest.mark.asyncio
-  async def test_add_session_error_handling(self, memory_service, mock_httpx_client):
+  async def test_add_session_error_handling(
+      self, memory_service, mock_httpx_client
+  ):
     """Test error handling during memory addition."""
     mock_httpx_client.post.side_effect = Exception('API Error')
 
@@ -254,20 +258,23 @@ class TestOpenMemoryService:
     mock_response.json.return_value = {
         'matches': [
             {
-                'content': '[Author: user, Time: 2025-01-01T00:00:00] Python is great',
+                'content': (
+                    '[Author: user, Time: 2025-01-01T00:00:00] Python is great'
+                ),
             },
             {
-                'content': '[Author: model, Time: 2025-01-01T00:01:00] I like programming',
-            }
+                'content': (
+                    '[Author: model, Time: 2025-01-01T00:01:00] I like'
+                    ' programming'
+                ),
+            },
         ]
     }
     mock_response.raise_for_status = MagicMock()
     mock_httpx_client.post = AsyncMock(return_value=mock_response)
 
     result = await memory_service.search_memory(
-        app_name=MOCK_APP_NAME,
-        user_id=MOCK_USER_ID,
-        query='Python programming'
+        app_name=MOCK_APP_NAME, user_id=MOCK_USER_ID, query='Python programming'
     )
 
     # Verify API call
@@ -276,7 +283,7 @@ class TestOpenMemoryService:
     assert request_data['query'] == 'Python programming'
     assert request_data['k'] == 10
     assert request_data['filter']['user_id'] == MOCK_USER_ID
-    assert f"app:{MOCK_APP_NAME}" in request_data['filter']['tags']
+    assert f'app:{MOCK_APP_NAME}' in request_data['filter']['tags']
 
     # Verify results (content should be cleaned of metadata prefix)
     assert len(result.memories) == 2
@@ -293,26 +300,24 @@ class TestOpenMemoryService:
     # Mock response - server-side filtering ensures only matching results
     mock_response = MagicMock()
     mock_response.json.return_value = {
-        'matches': [
-            {
-                'content': '[Author: model, Time: 2025-01-01T00:01:00] I like programming',
-            }
-        ]
+        'matches': [{
+            'content': (
+                '[Author: model, Time: 2025-01-01T00:01:00] I like programming'
+            ),
+        }]
     }
     mock_response.raise_for_status = MagicMock()
     mock_httpx_client.post = AsyncMock(return_value=mock_response)
 
     result = await memory_service.search_memory(
-        app_name=MOCK_APP_NAME,
-        user_id=MOCK_USER_ID,
-        query='test query'
+        app_name=MOCK_APP_NAME, user_id=MOCK_USER_ID, query='test query'
     )
 
     # Verify filters were passed correctly
     call_args = mock_httpx_client.post.call_args
     request_data = call_args.kwargs['json']
     assert request_data['filter']['user_id'] == MOCK_USER_ID
-    assert f"app:{MOCK_APP_NAME}" in request_data['filter']['tags']
+    assert f'app:{MOCK_APP_NAME}' in request_data['filter']['tags']
 
     # Should return filtered results
     assert len(result.memories) == 1
@@ -329,9 +334,7 @@ class TestOpenMemoryService:
     mock_httpx_client.post = AsyncMock(return_value=mock_response)
 
     await memory_service_with_config.search_memory(
-        app_name=MOCK_APP_NAME,
-        user_id=MOCK_USER_ID,
-        query='test query'
+        app_name=MOCK_APP_NAME, user_id=MOCK_USER_ID, query='test query'
     )
 
     call_args = mock_httpx_client.post.call_args
@@ -346,11 +349,8 @@ class TestOpenMemoryService:
     mock_httpx_client.post.side_effect = Exception('API Error')
 
     result = await memory_service.search_memory(
-        app_name=MOCK_APP_NAME,
-        user_id=MOCK_USER_ID,
-        query='test query'
+        app_name=MOCK_APP_NAME, user_id=MOCK_USER_ID, query='test query'
     )
 
     # Should return empty results on error
     assert len(result.memories) == 0
-
