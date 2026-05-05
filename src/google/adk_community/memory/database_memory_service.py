@@ -33,7 +33,11 @@ from google.adk.memory.base_memory_service import SearchMemoryResponse
 from google.adk.memory.memory_entry import MemoryEntry
 from google.genai import types
 from sqlalchemy import delete
+from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -57,6 +61,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger('google_adk.' + __name__)
 
 _SQLITE_DIALECT = 'sqlite'
+_MYSQL_DIALECTS = frozenset({'mysql', 'mariadb'})
 
 
 def _format_timestamp(timestamp: float) -> str:
@@ -378,21 +383,43 @@ class DatabaseMemoryService(BaseMemoryService):
     """
     await self._prepare_tables()
     async with self._session() as sql:
-      existing = await sql.get(
-          StorageScratchpadKV, (app_name, user_id, session_id, key)
-      )
-      if existing is not None:
-        existing.value_json = value
-      else:
-        sql.add(
-            StorageScratchpadKV(
-                app_name=app_name,
-                user_id=user_id,
-                session_id=session_id,
-                key=key,
-                value_json=value,
-            )
+      values = {
+          'app_name': app_name,
+          'user_id': user_id,
+          'session_id': session_id,
+          'key': key,
+          'value_json': value,
+      }
+      dialect_name = sql.get_bind().dialect.name
+      if dialect_name == 'postgresql':
+        stmt = postgresql_insert(StorageScratchpadKV).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['app_name', 'user_id', 'session_id', 'key'],
+            set_={
+                'value_json': stmt.excluded.value_json,
+                'updated_at': func.now(),
+            },
         )
+        await sql.execute(stmt)
+      elif dialect_name == _SQLITE_DIALECT:
+        stmt = sqlite_insert(StorageScratchpadKV).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['app_name', 'user_id', 'session_id', 'key'],
+            set_={
+                'value_json': stmt.excluded.value_json,
+                'updated_at': func.now(),
+            },
+        )
+        await sql.execute(stmt)
+      elif dialect_name in _MYSQL_DIALECTS:
+        stmt = mysql_insert(StorageScratchpadKV).values(**values)
+        stmt = stmt.on_duplicate_key_update(
+            value_json=stmt.inserted.value_json,
+            updated_at=func.now(),
+        )
+        await sql.execute(stmt)
+      else:
+        await sql.merge(StorageScratchpadKV(**values))
 
   async def get_scratchpad(
       self,

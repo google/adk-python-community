@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 import time
 from typing import Any
@@ -276,6 +277,28 @@ async def test_scratchpad_kv_overwrite(svc):
       app_name=_APP, user_id=_USER, session_id=_SESSION, key='k2'
   )
   assert val == 'new'
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_kv_concurrent_set_same_new_key(tmp_path):
+  db_path = tmp_path / 'scratchpad.db'
+  svc = DatabaseMemoryService(f'sqlite+aiosqlite:///{db_path}')
+
+  await asyncio.gather(*[
+      svc.set_scratchpad(
+          app_name=_APP,
+          user_id=_USER,
+          session_id=_SESSION,
+          key='shared',
+          value=i,
+      )
+      for i in range(10)
+  ])
+
+  val = await svc.get_scratchpad(
+      app_name=_APP, user_id=_USER, session_id=_SESSION, key='shared'
+  )
+  assert val in range(10)
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ from .schemas.memory_schema import StorageMemoryEntry
 if TYPE_CHECKING:
   from sqlalchemy.ext.asyncio import AsyncSession
 
-_ILIKE_DIALECTS = frozenset({'postgresql', 'mysql', 'mariadb'})
+_ILIKE_DIALECTS = frozenset({'postgresql'})
 
 
 class MemorySearchBackend(ABC):
@@ -68,8 +68,8 @@ class KeywordSearchBackend(MemorySearchBackend):
     2. Try an AND predicate (all tokens must appear) — return if found.
     3. Fall back to OR (any token matches) if AND yields nothing.
 
-  Uses ILIKE on PostgreSQL/MySQL/MariaDB and LIKE on SQLite
-  (case-insensitive by default collation).
+  Uses ILIKE on PostgreSQL and LIKE on other dialects
+  (case-insensitive by default for common SQLite/MySQL/MariaDB collations).
   """
 
   async def search(
@@ -88,9 +88,7 @@ class KeywordSearchBackend(MemorySearchBackend):
     tokens = [
         cleaned
         for raw in query.split()
-        if raw.strip()
-        for cleaned in [re.sub(r'[^\w]', '', raw).lower()]
-        if cleaned
+        if (cleaned := re.sub(r'[^\w]', '', raw).lower())
     ]
     if not tokens:
       return []
