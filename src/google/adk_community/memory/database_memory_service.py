@@ -68,6 +68,26 @@ def _format_timestamp(timestamp: float) -> str:
   return datetime.fromtimestamp(timestamp).isoformat()
 
 
+def _memory_entry_attr(
+    entry: MemoryEntry, name: str, default: Any = None
+) -> Any:
+  if hasattr(entry, name):
+    return getattr(entry, name)
+  extra = getattr(entry, 'model_extra', None)
+  if isinstance(extra, Mapping):
+    return extra.get(name, default)
+  return default
+
+
+def _set_memory_entry_attr(entry: MemoryEntry, name: str, value: Any) -> None:
+  if hasattr(entry, name):
+    return
+  try:
+    object.__setattr__(entry, name, value)
+  except Exception:  # pylint: disable=broad-except
+    logger.debug('Unable to attach %s to MemoryEntry', name, exc_info=True)
+
+
 class DatabaseMemoryService(BaseMemoryService):
   """A durable, SQL-backed memory service for any SQLAlchemy-supported DB.
 
@@ -294,8 +314,9 @@ class DatabaseMemoryService(BaseMemoryService):
     meta = dict(custom_metadata) if custom_metadata else {}
     async with self._session() as sql:
       for entry in memories:
-        entry_id = entry.id or str(uuid.uuid4())
+        entry_id = _memory_entry_attr(entry, 'id') or str(uuid.uuid4())
         content_dict = entry.content.model_dump(mode='json', exclude_none=True)
+        entry_meta = _memory_entry_attr(entry, 'custom_metadata', {}) or {}
         sql.add(
             StorageMemoryEntry(
                 id=entry_id,
@@ -303,11 +324,11 @@ class DatabaseMemoryService(BaseMemoryService):
                 user_id=user_id,
                 session_id=None,
                 event_id=None,
-                author=entry.author,
-                timestamp=entry.timestamp,
+                author=_memory_entry_attr(entry, 'author'),
+                timestamp=_memory_entry_attr(entry, 'timestamp'),
                 content_json=content_dict,
                 search_text=self._extract_search_text(entry.content),
-                custom_metadata={**entry.custom_metadata, **meta},
+                custom_metadata={**entry_meta, **meta},
             )
         )
 
@@ -346,15 +367,20 @@ class DatabaseMemoryService(BaseMemoryService):
               'Skipping memory entry %s: invalid content JSON', row.id
           )
           continue
-        memories.append(
-            MemoryEntry(
-                id=row.id,
-                content=content,
-                author=row.author,
-                timestamp=row.timestamp,
-                custom_metadata=row.custom_metadata or {},
-            )
+        memory_entry = MemoryEntry(
+            id=row.id,
+            content=content,
+            author=row.author,
+            timestamp=row.timestamp,
+            custom_metadata=row.custom_metadata or {},
         )
+        _set_memory_entry_attr(memory_entry, 'id', row.id)
+        _set_memory_entry_attr(memory_entry, 'author', row.author)
+        _set_memory_entry_attr(memory_entry, 'timestamp', row.timestamp)
+        _set_memory_entry_attr(
+            memory_entry, 'custom_metadata', row.custom_metadata or {}
+        )
+        memories.append(memory_entry)
     return SearchMemoryResponse(memories=memories)
 
   # ---------------------------------------------------------------------------
