@@ -197,6 +197,13 @@ class RedisSessionService(BaseSessionService):
         await super().append_event(session=session, event=event)
         session.last_update_time = event.timestamp
 
+        # Defensively strip temp state so it is never persisted to Redis.
+        temp_keys = [
+            k for k in session.state if k.startswith(State.TEMP_PREFIX)
+        ]
+        for k in temp_keys:
+            del session.state[k]
+
         async with self.cache.pipeline(transaction=False) as pipe:
             user_sessions_key = RedisKeys.user_sessions(
                 session.app_name, session.user_id
