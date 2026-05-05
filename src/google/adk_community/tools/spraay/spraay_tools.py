@@ -64,7 +64,12 @@ def _get_web3():
 
 def _get_account():
     """Get the signing account from environment."""
-    from web3 import Account
+    try:
+        from web3 import Account
+    except ImportError:
+        raise ImportError(
+            "web3 is required for Spraay tools. Install with: pip install web3"
+        )
 
     private_key = os.environ.get("SPRAAY_PRIVATE_KEY")
     if not private_key:
@@ -105,6 +110,21 @@ def _calculate_fee(total_wei: int) -> int:
     return (total_wei * SPRAAY_FEE_BPS) // 10000
 
 
+def _verify_chain_id(w3) -> None:
+    """Verify the connected chain ID matches Base.
+
+    Raises:
+        ValueError: If chain ID doesn't match BASE_CHAIN_ID.
+    """
+    connected_chain_id = w3.eth.chain_id
+    if connected_chain_id != BASE_CHAIN_ID:
+        raise ValueError(
+            f"Chain ID mismatch: connected to {connected_chain_id}, "
+            f"expected {BASE_CHAIN_ID} (Base). "
+            "Check your RPC configuration."
+        )
+
+
 def spraay_batch_eth(
     recipients: list[str],
     amount_per_recipient_eth: str,
@@ -135,17 +155,7 @@ def spraay_batch_eth(
         account = _get_account()
         contract_address = _get_contract_address()
 
-        # Verify chain ID to avoid sending to wrong network
-        connected_chain_id = w3.eth.chain_id
-        if connected_chain_id != BASE_CHAIN_ID:
-            return {
-                "status": "error",
-                "error": (
-                    f"Chain ID mismatch: connected to {connected_chain_id}, "
-                    f"expected {BASE_CHAIN_ID} (Base). "
-                    "Check your RPC configuration."
-                ),
-            }
+        _verify_chain_id(w3)
 
         checksummed = _validate_recipients(recipients)
         amount_wei = w3.to_wei(Decimal(amount_per_recipient_eth), "ether")
@@ -228,17 +238,7 @@ def spraay_batch_token(
         account = _get_account()
         contract_address = _get_contract_address()
 
-        # Verify chain ID to avoid sending to wrong network
-        connected_chain_id = w3.eth.chain_id
-        if connected_chain_id != BASE_CHAIN_ID:
-            return {
-                "status": "error",
-                "error": (
-                    f"Chain ID mismatch: connected to {connected_chain_id}, "
-                    f"expected {BASE_CHAIN_ID} (Base). "
-                    "Check your RPC configuration."
-                ),
-            }
+        _verify_chain_id(w3)
 
         checksummed = _validate_recipients(recipients)
         token_addr = w3.to_checksum_address(token_address)
@@ -348,17 +348,7 @@ def spraay_batch_eth_variable(
         account = _get_account()
         contract_address = _get_contract_address()
 
-        # Verify chain ID to avoid sending to wrong network
-        connected_chain_id = w3.eth.chain_id
-        if connected_chain_id != BASE_CHAIN_ID:
-            return {
-                "status": "error",
-                "error": (
-                    f"Chain ID mismatch: connected to {connected_chain_id}, "
-                    f"expected {BASE_CHAIN_ID} (Base). "
-                    "Check your RPC configuration."
-                ),
-            }
+        _verify_chain_id(w3)
 
         checksummed = _validate_recipients(recipients)
 
@@ -447,17 +437,7 @@ def spraay_batch_token_variable(
         account = _get_account()
         contract_address = _get_contract_address()
 
-        # Verify chain ID to avoid sending to wrong network
-        connected_chain_id = w3.eth.chain_id
-        if connected_chain_id != BASE_CHAIN_ID:
-            return {
-                "status": "error",
-                "error": (
-                    f"Chain ID mismatch: connected to {connected_chain_id}, "
-                    f"expected {BASE_CHAIN_ID} (Base). "
-                    "Check your RPC configuration."
-                ),
-            }
+        _verify_chain_id(w3)
 
         checksummed = _validate_recipients(recipients)
         token_addr = w3.to_checksum_address(token_address)
