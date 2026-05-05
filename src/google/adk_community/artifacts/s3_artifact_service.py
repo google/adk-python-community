@@ -60,14 +60,14 @@ class S3ArtifactService(BaseArtifactService):
     self.aws_configs: dict[str, Any] = aws_configs or {}
     self.save_max_retries = save_max_retries
     self._session = None
-
-
+    self._session_lock = asyncio.Lock()
 
   async def _get_session(self):
     import aioboto3
 
-    if self._session is None:
-      self._session = aioboto3.Session()
+    async with self._session_lock:
+      if self._session is None:
+        self._session = aioboto3.Session()
     return self._session
 
   @asynccontextmanager
@@ -78,12 +78,27 @@ class S3ArtifactService(BaseArtifactService):
     ) as s3:
       yield s3
 
+  # S3 user-defined metadata is limited to 2 KB total.
+  _S3_METADATA_MAX_BYTES = 2048
+
   @staticmethod
   def _flatten_metadata(metadata: Optional[dict[str, Any]]) -> dict[str, str]:
-    """JSON-encode metadata values for S3 user-metadata."""
+    """JSON-encode metadata values for S3 user-metadata.
+
+    Raises:
+        ValueError: If the encoded metadata exceeds the S3 2 KB limit.
+    """
     if not metadata:
       return {}
-    return {str(k): json.dumps(v) for k, v in metadata.items()}
+    flat = {str(k): json.dumps(v) for k, v in metadata.items()}
+    total = sum(len(k.encode()) + len(v.encode()) for k, v in flat.items())
+    if total > S3ArtifactService._S3_METADATA_MAX_BYTES:
+      raise ValueError(
+          f"Custom metadata ({total} bytes) exceeds the S3 "
+          f"user-metadata limit of "
+          f"{S3ArtifactService._S3_METADATA_MAX_BYTES} bytes."
+      )
+    return flat
 
   @staticmethod
   def _unflatten_metadata(metadata: Optional[dict[str, str]]) -> dict[str, Any]:
@@ -358,7 +373,15 @@ class S3ArtifactService(BaseArtifactService):
         self._get_blob_prefix(app_name, user_id, session_id, filename) + "/"
     )
     results: list[ArtifactVersion] = []
+    # Limit concurrent head_object calls to avoid S3 rate-limiting.
+    sem = asyncio.Semaphore(10)
+
     async with self._client() as s3:
+
+      async def _head(key: str):
+        async with sem:
+          return await s3.head_object(Bucket=self.bucket_name, Key=key)
+
       paginator = s3.get_paginator("list_objects_v2")
       async for page in paginator.paginate(
           Bucket=self.bucket_name, Prefix=prefix
@@ -367,10 +390,7 @@ class S3ArtifactService(BaseArtifactService):
         if not page_objects:
           continue
 
-        head_tasks = [
-            s3.head_object(Bucket=self.bucket_name, Key=obj["Key"])
-            for obj in page_objects
-        ]
+        head_tasks = [_head(obj["Key"]) for obj in page_objects]
         heads = await asyncio.gather(*head_tasks)
 
         for obj, head in zip(page_objects, heads):
