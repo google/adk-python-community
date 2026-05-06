@@ -69,9 +69,13 @@ def _make_session(events: list[Event], session_id: str = _SESSION) -> Session:
   )
 
 
-@pytest.fixture
-def svc() -> DatabaseMemoryService:
-  return DatabaseMemoryService(_DB_URL)
+@pytest_asyncio.fixture
+async def svc() -> DatabaseMemoryService:
+  service = DatabaseMemoryService(_DB_URL)
+  try:
+    yield service
+  finally:
+    await service.db_engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -286,21 +290,24 @@ async def test_scratchpad_kv_concurrent_set_same_new_key(tmp_path):
   db_path = tmp_path / 'scratchpad.db'
   svc = DatabaseMemoryService(f'sqlite+aiosqlite:///{db_path}')
 
-  await asyncio.gather(*[
-      svc.set_scratchpad(
-          app_name=_APP,
-          user_id=_USER,
-          session_id=_SESSION,
-          key='shared',
-          value=i,
-      )
-      for i in range(10)
-  ])
+  try:
+    await asyncio.gather(*[
+        svc.set_scratchpad(
+            app_name=_APP,
+            user_id=_USER,
+            session_id=_SESSION,
+            key='shared',
+            value=i,
+        )
+        for i in range(10)
+    ])
 
-  val = await svc.get_scratchpad(
-      app_name=_APP, user_id=_USER, session_id=_SESSION, key='shared'
-  )
-  assert val in range(10)
+    val = await svc.get_scratchpad(
+        app_name=_APP, user_id=_USER, session_id=_SESSION, key='shared'
+    )
+    assert val in range(10)
+  finally:
+    await svc.db_engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -442,10 +449,15 @@ class _AlwaysReturnOneBackend(MemorySearchBackend):
 @pytest.mark.asyncio
 async def test_custom_search_backend():
   svc = DatabaseMemoryService(_DB_URL, search_backend=_AlwaysReturnOneBackend())
-  resp = await svc.search_memory(app_name=_APP, user_id=_USER, query='anything')
-  assert len(resp.memories) == 1
-  assert resp.memories[0].id == 'stub-id'
-  assert resp.memories[0].author == 'stub'
+  try:
+    resp = await svc.search_memory(
+        app_name=_APP, user_id=_USER, query='anything'
+    )
+    assert len(resp.memories) == 1
+    assert resp.memories[0].id == 'stub-id'
+    assert resp.memories[0].author == 'stub'
+  finally:
+    await svc.db_engine.dispose()
 
 
 # ---------------------------------------------------------------------------
