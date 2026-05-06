@@ -255,7 +255,7 @@ class TestRedisSessionService:
         assert session.state.get("app:key") == "app_value"
         assert session.state.get("user:key1") == "user_value"
         assert session.state.get("initial_key") == "updated_value"
-        assert session.state.get("temp:key") is None  # Temp state filtered
+        assert session.state.get("temp:key") == "temp_value"  # Ephemeral state kept in memory
 
         pipeline_mock = redis_service.cache.pipeline.return_value
         pipe_mock = await pipeline_mock.__aenter__()
@@ -263,6 +263,19 @@ class TestRedisSessionService:
         pipe_mock.hset.assert_any_call(
             "user:test_app:test_user", "key1", orjson.dumps("user_value")
         )
+
+        # Verify temp state was filtered out from the serialized session saved to Redis
+        set_calls = pipe_mock.set.call_args_list
+        session_bytes = None
+        for call in set_calls:
+            args = call[0]
+            if args[0].startswith("session:"):
+                session_bytes = args[1]
+                break
+
+        assert session_bytes is not None
+        stored_session = orjson.loads(session_bytes)
+        assert "temp:key" not in stored_session.get("state", {})
 
     @pytest.mark.asyncio
     async def test_append_event_with_bytes(self, redis_service):

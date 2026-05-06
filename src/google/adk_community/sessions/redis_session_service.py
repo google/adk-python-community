@@ -43,7 +43,13 @@ DEFAULT_EXPIRATION = 60 * 60  # 1 hour
 
 def _session_serializer(obj: Session) -> bytes:
     """Serialize ADK Session to JSON bytes."""
-    return orjson.dumps(obj.model_dump(), default=_json_serializer)
+    data = obj.model_dump()
+    if "state" in data:
+        data["state"] = {
+            k: v for k, v in data["state"].items()
+            if not k.startswith(State.TEMP_PREFIX)
+        }
+    return orjson.dumps(data, default=_json_serializer)
 
 
 class RedisKeys:
