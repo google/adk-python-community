@@ -78,8 +78,11 @@ class S3ArtifactService(BaseArtifactService):
     ) as s3:
       yield s3
 
-  # S3 user-defined metadata is limited to 2 KB total.
+  # S3 user-defined metadata is limited to 2 KB total.  S3 prefixes each
+  # key with ``x-amz-meta-`` (11 bytes) in the header, so we include that
+  # overhead per key when computing the total size.
   _S3_METADATA_MAX_BYTES = 2048
+  _S3_META_PREFIX_LEN = len("x-amz-meta-")
 
   @staticmethod
   def _flatten_metadata(metadata: Optional[dict[str, Any]]) -> dict[str, str]:
@@ -91,11 +94,17 @@ class S3ArtifactService(BaseArtifactService):
     if not metadata:
       return {}
     flat = {str(k): json.dumps(v) for k, v in metadata.items()}
-    total = sum(len(k.encode()) + len(v.encode()) for k, v in flat.items())
+    # Include the x-amz-meta- prefix overhead that S3 adds per key.
+    total = sum(
+        S3ArtifactService._S3_META_PREFIX_LEN
+        + len(k.encode())
+        + len(v.encode())
+        for k, v in flat.items()
+    )
     if total > S3ArtifactService._S3_METADATA_MAX_BYTES:
       raise ValueError(
-          f"Custom metadata ({total} bytes) exceeds the S3 "
-          f"user-metadata limit of "
+          f"Custom metadata ({total} bytes including S3 header "
+          f"overhead) exceeds the S3 user-metadata limit of "
           f"{S3ArtifactService._S3_METADATA_MAX_BYTES} bytes."
       )
     return flat
@@ -160,12 +169,11 @@ class S3ArtifactService(BaseArtifactService):
     """Save an artifact with atomic versioning via IfNoneMatch."""
     from botocore.exceptions import ClientError
 
-    if self.save_max_retries < 0:
-      retry_iter = iter(int, 1)  # infinite iterator
-    else:
-      retry_iter = range(self.save_max_retries + 1)
+    attempt = 0
+    while True:
+      if self.save_max_retries >= 0 and attempt > self.save_max_retries:
+        break
 
-    for _ in retry_iter:
       versions = await self.list_versions(
           app_name=app_name,
           user_id=user_id,
@@ -211,16 +219,23 @@ class S3ArtifactService(BaseArtifactService):
         except ClientError as e:
           code = e.response.get("Error", {}).get("Code", "")
           if code in ("PreconditionFailed", "ObjectAlreadyExists"):
+            attempt += 1
+            backoff = min(0.1 * (2 ** (attempt - 1)), 5.0)
             logger.debug(
-                "Version conflict for %s version %d, retrying…",
+                "Version conflict for %s version %d, retrying in "
+                "%.2fs (attempt %d)…",
                 filename,
                 version,
+                backoff,
+                attempt,
             )
+            await asyncio.sleep(backoff)
             continue
           raise
 
     raise RuntimeError(
-        "Failed to save artifact due to version conflicts after retries."
+        "Failed to save artifact due to version conflicts after "
+        f"{self.save_max_retries} retries."
     )
 
   @override
@@ -269,13 +284,23 @@ class S3ArtifactService(BaseArtifactService):
         self.bucket_name,
         key,
     )
+    # Return Part.from_text for text content types so consumers can
+    # check ``part.text`` consistently.  Fall back to from_bytes for
+    # binary content.
+    if content_type.startswith("text/"):
+      return types.Part.from_text(text=data.decode("utf-8"))
     return types.Part.from_bytes(data=data, mime_type=content_type)
 
   @override
   async def list_artifact_keys(
       self, *, app_name: str, user_id: str, session_id: Optional[str] = None
   ) -> list[str]:
-    """List all artifact keys for a user, optionally filtered by session."""
+    """List all artifact keys for a user, optionally filtered by session.
+
+    Uses S3 ``Delimiter='/'`` with ``CommonPrefixes`` to retrieve only
+    unique artifact names without listing every individual version
+    object.
+    """
     keys: set[str] = set()
     prefixes = [
         f"{app_name}/{user_id}/{session_id}/" if session_id else None,
@@ -285,17 +310,21 @@ class S3ArtifactService(BaseArtifactService):
       for prefix in filter(None, prefixes):
         paginator = s3.get_paginator("list_objects_v2")
         async for page in paginator.paginate(
-            Bucket=self.bucket_name, Prefix=prefix
+            Bucket=self.bucket_name,
+            Prefix=prefix,
+            Delimiter="/",
         ):
-          for obj in page.get("Contents", []):
-            relative = obj["Key"][len(prefix):]
-            parts = relative.rsplit("/", 1)
-            if len(parts) >= 2:
-              raw_filename = parts[0]
-              if prefix.endswith("/user/"):
-                keys.add(f"user:{raw_filename}")
-              else:
-                keys.add(raw_filename)
+          for cp in page.get("CommonPrefixes", []):
+            # CommonPrefixes entries look like
+            # "<prefix><artifact_name>/" — strip the prefix and
+            # trailing slash to get the raw filename.
+            raw_filename = cp["Prefix"][len(prefix):].rstrip("/")
+            if not raw_filename:
+              continue
+            if prefix.endswith("/user/"):
+              keys.add(f"user:{raw_filename}")
+            else:
+              keys.add(raw_filename)
     return sorted(keys)
 
   @override

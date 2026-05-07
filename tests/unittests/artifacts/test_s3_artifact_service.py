@@ -178,17 +178,26 @@ class MockS3Paginator:
     self.client = client
     self.operation_name = operation_name
 
-  def paginate(self, Bucket: str, Prefix: str = ""):
-    return MockS3PaginateResult(self.client, Bucket, Prefix)
+  def paginate(self, Bucket: str, Prefix: str = "", Delimiter: str = ""):
+    return MockS3PaginateResult(
+        self.client, Bucket, Prefix, Delimiter
+    )
 
 
 class MockS3PaginateResult:
   """Async iterator that yields a single page of list_objects_v2 results."""
 
-  def __init__(self, client: MockS3Client, bucket: str, prefix: str):
+  def __init__(
+      self,
+      client: MockS3Client,
+      bucket: str,
+      prefix: str,
+      delimiter: str = "",
+  ):
     self.client = client
     self.bucket_name = bucket
     self.prefix = prefix
+    self.delimiter = delimiter
     self._yielded = False
 
   def __aiter__(self):
@@ -204,13 +213,33 @@ class MockS3PaginateResult:
     if not bucket:
       return {}
 
+    matching_keys = [
+        key
+        for key, obj in bucket.objects.items()
+        if key.startswith(self.prefix) and obj.data is not None
+    ]
+
+    # When Delimiter is set, return CommonPrefixes instead of Contents
+    # to simulate S3's virtual directory grouping.
+    if self.delimiter:
+      prefixes: set[str] = set()
+      for key in matching_keys:
+        relative = key[len(self.prefix):]
+        idx = relative.find(self.delimiter)
+        if idx >= 0:
+          prefixes.add(self.prefix + relative[: idx + 1])
+      if prefixes:
+        return {
+            "CommonPrefixes": [{"Prefix": p} for p in sorted(prefixes)]
+        }
+      return {}
+
     contents = []
-    for key, obj in bucket.objects.items():
-      if key.startswith(self.prefix) and obj.data is not None:
-        contents.append({
-            "Key": key,
-            "LastModified": obj.last_modified,
-        })
+    for key in matching_keys:
+      contents.append({
+          "Key": key,
+          "LastModified": bucket.objects[key].last_modified,
+      })
 
     if contents:
       return {"Contents": contents}
@@ -259,7 +288,7 @@ async def test_load_empty(mock_s3_service):
 @pytest.mark.asyncio
 async def test_save_load_delete(mock_s3_service):
   """Full CRUD cycle: save, load, load-missing-version, delete."""
-  artifact = types.Part.from_bytes(data=b"test_data", mime_type="text/plain")
+  artifact = types.Part.from_bytes(data=b"test_data", mime_type="application/octet-stream")
   app_name = "app0"
   user_id = "user0"
   session_id = "123"
@@ -542,8 +571,8 @@ async def test_empty_artifact(mock_s3_service):
       filename="empty.txt",
   )
   assert loaded is not None
-  assert loaded.inline_data is not None
-  assert loaded.inline_data.data == b""
+  # Empty text/plain content returns Part.from_text with empty string.
+  assert loaded.text == ""
 
 
 @pytest.mark.asyncio
@@ -575,7 +604,7 @@ async def test_custom_metadata(mock_s3_service):
 
 @pytest.mark.asyncio
 async def test_text_artifact_roundtrip(mock_s3_service):
-  """Text artifacts are encoded to UTF-8 bytes on save and loaded as bytes."""
+  """Text artifacts are encoded to UTF-8 bytes on save and returned via Part.from_text on load."""
   artifact = types.Part.from_text(text="Hello, world! 🌍")
 
   version = await mock_s3_service.save_artifact(
@@ -594,8 +623,9 @@ async def test_text_artifact_roundtrip(mock_s3_service):
       filename="greeting.txt",
   )
   assert loaded is not None
-  assert loaded.inline_data is not None
-  assert loaded.inline_data.data == "Hello, world! 🌍".encode("utf-8")
+  # Text artifacts are now returned via Part.from_text, so consumers
+  # can check ``part.text`` directly.
+  assert loaded.text == "Hello, world! 🌍"
 
 
 @pytest.mark.asyncio
