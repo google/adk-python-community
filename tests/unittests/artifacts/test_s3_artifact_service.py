@@ -28,6 +28,8 @@ from google.adk_community.artifacts import S3ArtifactService
 from google.genai import types
 import pytest
 
+pytest.importorskip("aioboto3")
+pytest.importorskip("botocore")
 
 
 FIXED_DATETIME = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
