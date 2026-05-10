@@ -21,10 +21,13 @@ columns to schemas, and assemble validated data models.
 Prerequisites:
     pip install google-adk-community[sdc-agents]
     export SDC_API_KEY="your-sdcstudio-api-key"
+    export SDC_BASE_URL="https://sdcstudio.axius-sdc.com"  # optional; this is the default
 
 Usage:
     adk run .
 """
+
+import os
 
 from google.adk.agents import LlmAgent
 
@@ -39,8 +42,8 @@ from google.adk_community.sdc_agents import (
 
 config = SDCAgentsConfig(
     sdcstudio={
-        "base_url": "https://sdcstudio.com",
-        "api_key": "${SDC_API_KEY}",
+        "base_url": os.environ.get("SDC_BASE_URL", "https://sdcstudio.axius-sdc.com"),
+        "api_key": os.environ.get("SDC_API_KEY", ""),
     },
     datasources={
         "sample": {
