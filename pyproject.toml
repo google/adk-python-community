@@ -41,7 +41,12 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+langextract = [
+    "langextract>=0.1.0",
+]
+
 test = [
+    "langextract>=0.1.0",  # For LangExtractTool tests
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]
