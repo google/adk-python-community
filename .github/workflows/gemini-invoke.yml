@@ -120,4 +120,6 @@ jobs:
                 ]
               }
             }
-          prompt: '/gemini-invoke'
+          prompt: |-
+            /gemini-invoke
+            [IMPORTANT] When you need to call tools to read GitHub information, please use names like `issue_read` and `pull_request_read` directly. Do NOT add any prefixes like `github:` or `mcp_github_`!
