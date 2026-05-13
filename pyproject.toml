@@ -46,7 +46,7 @@ test = [
     "pytest-asyncio>=1.2.0",
 ]
 sdc-agents = [
-    "sdc-agents>=4.3.3",
+    "sdc-agents>=4.3.3; python_version >= '3.11'",
 ]
 spraay = ["web3>=6.0.0"]
 

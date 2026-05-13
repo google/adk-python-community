@@ -40,10 +40,18 @@ from google.adk_community.sdc_agents import (
     SDCAgentsConfig,
 )
 
+api_key = os.environ.get("SDC_API_KEY")
+if not api_key:
+    raise ValueError(
+        "SDC_API_KEY environment variable is required. "
+        "Get an API key from https://sdcstudio.axius-sdc.com and set it via: "
+        "export SDC_API_KEY=\"your-key\""
+    )
+
 config = SDCAgentsConfig(
     sdcstudio={
         "base_url": os.environ.get("SDC_BASE_URL", "https://sdcstudio.axius-sdc.com"),
-        "api_key": os.environ.get("SDC_API_KEY", ""),
+        "api_key": api_key,
     },
     datasources={
         "sample": {

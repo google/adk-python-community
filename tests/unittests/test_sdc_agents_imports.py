@@ -15,8 +15,14 @@
 """Verify that all SDC Agents re-exports resolve correctly."""
 
 import importlib
+import sys
 
 import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="sdc-agents requires Python 3.11+",
+)
 
 
 @pytest.fixture(autouse=True)
