@@ -83,18 +83,24 @@ jobs:
         env:
           EVENT_TYPE: '${{ github.event_name }}.${{ github.event.action }}'
           REQUEST: '${{ github.event.comment.body || github.event.review.body || github.event.issue.body }}'
+          IS_PR: '${{ !!(github.event.pull_request || github.event.issue.pull_request) }}'
         with:
           script: |
             const eventType = process.env.EVENT_TYPE;
             const request = process.env.REQUEST;
+            const isPr = process.env.IS_PR === 'true';
             core.setOutput('request', request);
 
             if (eventType === 'pull_request.opened') {
               core.setOutput('command', 'review');
             } else if (request.startsWith("@gemini-cli /review")) {
-              core.setOutput('command', 'review');
-              const additionalContext = request.replace(/^@gemini-cli \/review/, '').trim();
-              core.setOutput('additional_context', additionalContext);
+              if (isPr) {
+                core.setOutput('command', 'review');
+                const additionalContext = request.replace(/^@gemini-cli \/review/, '').trim();
+                core.setOutput('additional_context', additionalContext);
+              } else {
+                core.setOutput('command', 'fallthrough');
+              }
             } else if (request.startsWith("@gemini-cli")) {
               const additionalContext = request.replace(/^@gemini-cli/, '').trim();
               core.setOutput('command', 'invoke');
