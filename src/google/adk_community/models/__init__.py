@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import memory
-from . import models
-from . import sessions
-from . import version
+from google.adk.models.registry import LLMRegistry
 
-__version__ = version.__version__
+from .bedrock_model import BedrockModel
+
+LLMRegistry.register(BedrockModel)
+
+__all__ = ["BedrockModel"]
