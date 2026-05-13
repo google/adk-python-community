@@ -92,34 +92,10 @@ jobs:
                     "GITHUB_PERSONAL_ACCESS_TOKEN",
                     "ghcr.io/github/github-mcp-server:v0.27.0"
                   ],
-                  "includeTools": [
-                    "add_issue_comment",
-                    "issue_read",
-                    "list_issues",
-                    "search_issues",
-                    "pull_request_read",
-                    "list_pull_requests",
-                    "search_pull_requests",
-                    "get_commit",
-                    "get_file_contents",
-                    "list_commits",
-                    "search_code"
-                  ],
                   "env": {
                     "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
                   }
                 }
-              },
-              "tools": {
-                "core": [
-                  "run_shell_command(cat)",
-                  "run_shell_command(echo)",
-                  "run_shell_command(grep)",
-                  "run_shell_command(head)",
-                  "run_shell_command(tail)"
-                ]
               }
             }
-          prompt: |-
-            /gemini-invoke
-            [IMPORTANT] When you need to call tools to read GitHub information, please use names like `issue_read` and `pull_request_read` directly. Do NOT add any prefixes like `github:` or `mcp_github_`!
+          prompt: '/gemini-invoke'
