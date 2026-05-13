@@ -98,4 +98,6 @@ jobs:
                 }
               }
             }
-          prompt: '/gemini-invoke'
+          prompt: |-
+            /gemini-invoke
+            [IMPORTANT] Do not generate execution plans and do not ask for approval (such as suggesting `@gemini-cli /approve`). Perform the requested task or answer the question directly and immediately.
