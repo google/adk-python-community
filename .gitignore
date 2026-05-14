@@ -85,3 +85,8 @@ Thumbs.db
 *.db
 *.sqlite
 hitl.db
+# gemini-cli settings
+.gemini/
+
+# GitHub App credentials
+gha-creds-*.json
