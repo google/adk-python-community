@@ -17,7 +17,7 @@ pip install google-adk-community[sdc-agents]
 
 ```python
 from google.adk.agents import LlmAgent
-from google.adk_community.sdc_agents import (
+from google.adk_community.tools.sdc_agents import (
     load_config,
     CatalogToolset,
     IntrospectToolset,

@@ -35,16 +35,16 @@ class TestSDCAgentsImports:
   """Validate that the community re-export module exposes all toolsets."""
 
   def test_module_importable(self):
-    mod = importlib.import_module("google.adk_community.sdc_agents")
+    mod = importlib.import_module("google.adk_community.tools.sdc_agents")
     assert mod is not None
 
   def test_load_config_exported(self):
-    from google.adk_community.sdc_agents import load_config
+    from google.adk_community.tools.sdc_agents import load_config
 
     assert callable(load_config)
 
   def test_sdc_agents_config_exported(self):
-    from google.adk_community.sdc_agents import SDCAgentsConfig
+    from google.adk_community.tools.sdc_agents import SDCAgentsConfig
 
     assert SDCAgentsConfig is not None
 
@@ -62,12 +62,12 @@ class TestSDCAgentsImports:
       ],
   )
   def test_toolset_exported(self, name: str):
-    mod = importlib.import_module("google.adk_community.sdc_agents")
+    mod = importlib.import_module("google.adk_community.tools.sdc_agents")
     cls = getattr(mod, name, None)
     assert cls is not None, f"{name} not found in sdc_agents module"
 
   def test_all_list_complete(self):
-    from google.adk_community import sdc_agents
+    from google.adk_community.tools import sdc_agents
 
     expected = {
         "load_config",
