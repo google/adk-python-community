@@ -78,3 +78,10 @@ Thumbs.db
 *.bak
 *.tmp
 *.temp
+
+
+# ADK local dev artifacts
+.adk/
+*.db
+*.sqlite
+hitl.db
