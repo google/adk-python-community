@@ -15,7 +15,7 @@
 """SDC Agents demo -- full data governance pipeline.
 
 Composes five SDC Agents toolsets into a single LlmAgent that can
-introspect datasources, discover matching catalog components, map
+introspect a datasource, discover matching catalog components, map
 columns to schemas, and assemble validated data models.
 
 Prerequisites:
