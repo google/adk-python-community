@@ -35,11 +35,37 @@ Usage:
 
 from __future__ import annotations
 
+from decimal import Decimal
+from decimal import InvalidOperation
 import logging
 import os
 from typing import Optional
 
 logger = logging.getLogger("google_adk." + __name__)
+
+
+def _parse_amount(amount: str) -> Decimal:
+  try:
+    value = Decimal(amount)
+  except (InvalidOperation, ValueError) as exc:
+    raise ValueError(f"amount must be a decimal string, got {amount!r}") from exc
+  if not value.is_finite() or value <= Decimal("0"):
+    raise ValueError(f"amount must be a positive finite decimal, got {amount!r}")
+  return value
+
+
+def _sardis_exception_types() -> tuple[type[Exception], ...]:
+  try:
+    from sardis import AuthenticationError
+    from sardis import InsufficientBalanceError
+    from sardis import PolicyViolationError
+  except (ImportError, AttributeError):
+    return ()
+  return (AuthenticationError, InsufficientBalanceError, PolicyViolationError)
+
+
+def _sardis_error_response(exc: Exception) -> dict:
+  return {"status": "error", "error": str(exc)}
 
 
 def sardis_pay(
@@ -83,11 +109,23 @@ def sardis_pay(
         "error": "SARDIS_WALLET_ID environment variable not set.",
     }
 
+  try:
+    amount_value = _parse_amount(amount)
+  except ValueError as exc:
+    return _sardis_error_response(exc)
+
   client = SardisClient(api_key=api_key)
-  result = client.payments.send(
-      wallet_id, to=recipient, amount=float(amount), token=token,
-      purpose=memo or "Payment",
-  )
+  try:
+    result = client.payments.send(
+        wallet_id,
+        to=recipient,
+        amount=amount_value,
+        token=token,
+        chain=chain,
+        purpose=memo or "Payment",
+    )
+  except _sardis_exception_types() as exc:
+    return _sardis_error_response(exc)
   return {
       "status": "APPROVED" if result.success else "BLOCKED",
       "transaction_id": getattr(result, "tx_id", ""),
@@ -120,7 +158,10 @@ def sardis_check_balance(
     return {"status": "error", "error": "SARDIS_API_KEY and SARDIS_WALLET_ID required."}
 
   client = SardisClient(api_key=api_key)
-  balance = client.wallets.get_balance(wallet_id, token=token)
+  try:
+    balance = client.wallets.get_balance(wallet_id, token=token)
+  except _sardis_exception_types() as exc:
+    return _sardis_error_response(exc)
   return {
       "balance": str(balance.balance),
       "remaining": str(balance.remaining),
@@ -151,20 +192,30 @@ def sardis_check_policy(
   if not api_key or not wallet_id:
     return {"status": "error", "error": "SARDIS_API_KEY and SARDIS_WALLET_ID required."}
 
+  try:
+    amount_value = _parse_amount(amount)
+  except ValueError as exc:
+    return _sardis_error_response(exc)
+
   client = SardisClient(api_key=api_key)
-  balance = client.wallets.get_balance(wallet_id)
-  amt = float(amount)
-  if amt > balance.remaining:
+  try:
+    balance = client.wallets.get_balance(wallet_id)
+  except _sardis_exception_types() as exc:
+    return _sardis_error_response(exc)
+  if amount_value > Decimal(str(balance.remaining)):
     return {
         "allowed": False,
-        "reason": f"Amount ${amt} exceeds remaining limit ${balance.remaining}",
+        "reason": (
+            f"Amount ${amount_value} exceeds remaining limit "
+            f"${balance.remaining}"
+        ),
     }
-  if amt > balance.balance:
+  if amount_value > Decimal(str(balance.balance)):
     return {
         "allowed": False,
-        "reason": f"Amount ${amt} exceeds balance ${balance.balance}",
+        "reason": f"Amount ${amount_value} exceeds balance ${balance.balance}",
     }
   return {
       "allowed": True,
-      "reason": f"Payment of ${amt} to {merchant} would be allowed",
+      "reason": f"Payment of ${amount_value} to {merchant} would be allowed",
   }
