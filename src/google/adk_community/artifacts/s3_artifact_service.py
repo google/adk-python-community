@@ -37,7 +37,7 @@ class S3ArtifactService(BaseArtifactService):
       self,
       bucket_name: str,
       aws_configs: Optional[dict[str, Any]] = None,
-      save_max_retries: int = -1,
+      save_max_retries: int = 10,
   ):
     """Initializes the S3 artifact service.
 
@@ -45,16 +45,17 @@ class S3ArtifactService(BaseArtifactService):
         bucket_name: The name of the S3 bucket to use.
         aws_configs: Extra kwargs forwarded to the aioboto3 S3 client.
             Use this to pass region_name, endpoint_url (for MinIO), etc.
-        save_max_retries: Maximum retries on version conflict. -1 means
-            retry indefinitely.
+        save_max_retries: Maximum retries on version conflict. Defaults
+            to 10. Pass -1 to retry indefinitely.
     """
     try:
-      import aioboto3  # noqa: F401
+      import aioboto3
     except ImportError as exc:
       raise ImportError(
           "aioboto3 is required to use S3ArtifactService. "
           "Install it with: pip install google-adk-community[s3]"
       ) from exc
+    self._aioboto3 = aioboto3
 
     self.bucket_name = bucket_name
     self.aws_configs: dict[str, Any] = aws_configs or {}
@@ -63,11 +64,9 @@ class S3ArtifactService(BaseArtifactService):
     self._session_lock = asyncio.Lock()
 
   async def _get_session(self):
-    import aioboto3
-
     async with self._session_lock:
       if self._session is None:
-        self._session = aioboto3.Session()
+        self._session = self._aioboto3.Session()
     return self._session
 
   @asynccontextmanager
@@ -93,7 +92,18 @@ class S3ArtifactService(BaseArtifactService):
     """
     if not metadata:
       return {}
-    flat = {str(k): json.dumps(v) for k, v in metadata.items()}
+    # S3 user-metadata keys are case-insensitive; normalise to
+    # lowercase to avoid silent collisions.
+    flat: dict[str, str] = {}
+    for k, v in metadata.items():
+      lower_key = str(k).lower()
+      if lower_key in flat:
+        logger.warning(
+            "Metadata key collision after case-normalisation: %r "
+            "overwrites a previous key.",
+            k,
+        )
+      flat[lower_key] = json.dumps(v)
     # Include the x-amz-meta- prefix overhead that S3 adds per key.
     total = sum(
         S3ArtifactService._S3_META_PREFIX_LEN
@@ -408,8 +418,21 @@ class S3ArtifactService(BaseArtifactService):
     async with self._client() as s3:
 
       async def _head(key: str):
+        """Return head_object result, or None if the object was deleted."""
+        from botocore.exceptions import ClientError
+
         async with sem:
-          return await s3.head_object(Bucket=self.bucket_name, Key=key)
+          try:
+            return await s3.head_object(Bucket=self.bucket_name, Key=key)
+          except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("NoSuchKey", "404"):
+              logger.debug(
+                  "Object %s deleted between list and head; skipping.",
+                  key,
+              )
+              return None
+            raise
 
       paginator = s3.get_paginator("list_objects_v2")
       async for page in paginator.paginate(
@@ -423,6 +446,8 @@ class S3ArtifactService(BaseArtifactService):
         heads = await asyncio.gather(*head_tasks)
 
         for obj, head in zip(page_objects, heads):
+          if head is None:
+            continue
           version_str = obj["Key"].split("/")[-1]
           try:
             version = int(version_str)
