@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import artifacts
-from . import memory
-from . import sessions
-from . import version
+from .s3_artifact_service import S3ArtifactService
 
-__version__ = version.__version__
+__all__ = [
+    'S3ArtifactService',
+]
