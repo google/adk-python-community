@@ -206,7 +206,7 @@ class TypesenseSessionService(BaseSessionService):
       try:
         self._client.collections[col_name].retrieve()
       except self._ObjectNotFound:
-        schema = dict(schema_template)
+        schema = copy.deepcopy(schema_template)
         schema['name'] = col_name
         self._client.collections.create(schema)
 
