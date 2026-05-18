@@ -73,6 +73,14 @@ _USER_STATES_SCHEMA = {
 }
 
 
+def _validate_no_sep(*values: str) -> None:
+  for v in values:
+    if _SEP in v:
+      raise ValueError(
+          f'app_name, user_id, and session_id must not contain {_SEP!r}.'
+      )
+
+
 def _session_doc_id(app_name: str, user_id: str, session_id: str) -> str:
   return f'{app_name}{_SEP}{user_id}{_SEP}{session_id}'
 
@@ -116,21 +124,27 @@ def _merge_state(
 
 
 class TypesenseSessionService(BaseSessionService):
-  """A session service that uses Typesense for persistent storage.
+  """Persistent session storage backed by Typesense.
 
-  Requires the ``typesense`` extra::
-
-      pip install google-adk-community[typesense]
-
-  Four Typesense collections are managed automatically (created on first use):
+  Stores sessions, events, and shared app/user state in four Typesense
+  collections that are created automatically on first use:
 
   * ``{prefix}_sessions``
   * ``{prefix}_events``
   * ``{prefix}_app_states``
   * ``{prefix}_user_states``
 
-  Note: ``app_name``, ``user_id``, and ``session_id`` must not contain the
-  string ``'||'`` which is used as an internal document-ID separator.
+  **Installation**::
+
+      pip install google-adk-community[typesense]
+
+  **Constraints**
+
+  * ``app_name``, ``user_id``, and ``session_id`` must not contain ``'||'``
+    (used as an internal document-ID separator).
+  * App and user state updates are serialized per-key within a single process.
+    Multi-process deployments sharing the same Typesense instance may still
+    lose concurrent state updates because Typesense has no native transactions.
   """
 
   def __init__(
@@ -141,6 +155,7 @@ class TypesenseSessionService(BaseSessionService):
       protocol: str = 'http',
       api_key: str,
       collection_prefix: str = 'adk',
+      connection_timeout_seconds: int = 5,
   ):
     try:
       import typesense
@@ -157,17 +172,18 @@ class TypesenseSessionService(BaseSessionService):
     self._client = typesense.Client({
         'nodes': [{'host': host, 'port': str(port), 'protocol': protocol}],
         'api_key': api_key,
-        'connection_timeout_seconds': 5,
+        'connection_timeout_seconds': connection_timeout_seconds,
     })
 
-    p = collection_prefix
-    self._sessions_col = f'{p}_sessions'
-    self._events_col = f'{p}_events'
-    self._app_states_col = f'{p}_app_states'
-    self._user_states_col = f'{p}_user_states'
+    self._sessions_col = f'{collection_prefix}_sessions'
+    self._events_col = f'{collection_prefix}_events'
+    self._app_states_col = f'{collection_prefix}_app_states'
+    self._user_states_col = f'{collection_prefix}_user_states'
 
     self._collections_ready = False
     self._collections_lock = asyncio.Lock()
+    self._app_state_locks: dict[str, asyncio.Lock] = {}
+    self._user_state_locks: dict[str, asyncio.Lock] = {}
 
   async def _ensure_collections(self) -> None:
     if self._collections_ready:
@@ -246,33 +262,38 @@ class TypesenseSessionService(BaseSessionService):
   async def _upsert_app_state(
       self, app_name: str, delta: dict[str, Any], now: float
   ) -> None:
-    existing = await self._get_app_state(app_name)
-    merged = existing | delta
-    await asyncio.to_thread(
-        self._client.collections[self._app_states_col].documents.upsert,
-        {
-            'id': app_name,
-            'app_name': app_name,
-            'state': json.dumps(merged),
-            'update_time': now,
-        },
-    )
+    lock = self._app_state_locks.setdefault(app_name, asyncio.Lock())
+    async with lock:
+      existing = await self._get_app_state(app_name)
+      merged = existing | delta
+      await asyncio.to_thread(
+          self._client.collections[self._app_states_col].documents.upsert,
+          {
+              'id': app_name,
+              'app_name': app_name,
+              'state': json.dumps(merged),
+              'update_time': now,
+          },
+      )
 
   async def _upsert_user_state(
       self, app_name: str, user_id: str, delta: dict[str, Any], now: float
   ) -> None:
-    existing = await self._get_user_state(app_name, user_id)
-    merged = existing | delta
-    await asyncio.to_thread(
-        self._client.collections[self._user_states_col].documents.upsert,
-        {
-            'id': _user_state_doc_id(app_name, user_id),
-            'app_name': app_name,
-            'user_id': user_id,
-            'state': json.dumps(merged),
-            'update_time': now,
-        },
-    )
+    key = _user_state_doc_id(app_name, user_id)
+    lock = self._user_state_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+      existing = await self._get_user_state(app_name, user_id)
+      merged = existing | delta
+      await asyncio.to_thread(
+          self._client.collections[self._user_states_col].documents.upsert,
+          {
+              'id': key,
+              'app_name': app_name,
+              'user_id': user_id,
+              'state': json.dumps(merged),
+              'update_time': now,
+          },
+      )
 
   @override
   async def create_session(
@@ -284,6 +305,7 @@ class TypesenseSessionService(BaseSessionService):
       session_id: Optional[str] = None,
   ) -> Session:
     await self._ensure_collections()
+    _validate_no_sep(app_name, user_id)
 
     session_id = (session_id or '').strip() or str(uuid.uuid4())
     now = time.time()
@@ -342,6 +364,7 @@ class TypesenseSessionService(BaseSessionService):
       config: Optional[GetSessionConfig] = None,
   ) -> Optional[Session]:
     await self._ensure_collections()
+    _validate_no_sep(app_name, user_id, session_id)
 
     doc_id = _session_doc_id(app_name, user_id, session_id)
     session_doc = await asyncio.to_thread(
@@ -364,19 +387,28 @@ class TypesenseSessionService(BaseSessionService):
         filter_by += f' && timestamp:>={config.after_timestamp}'
 
       if config and config.num_recent_events is not None:
-        params: dict[str, Any] = {
-            'q': '*',
-            'query_by': 'app_name',
-            'filter_by': filter_by,
-            'sort_by': 'timestamp:desc',
-            'per_page': min(config.num_recent_events, 250),
-            'page': 1,
-        }
-        result = await asyncio.to_thread(
-            self._client.collections[self._events_col].documents.search,
-            params,
-        )
-        event_docs = [hit['document'] for hit in result.get('hits', [])]
+        event_docs = []
+        page = 1
+        remaining = config.num_recent_events
+        while remaining > 0:
+          params: dict[str, Any] = {
+              'q': '*',
+              'query_by': 'app_name',
+              'filter_by': filter_by,
+              'sort_by': 'timestamp:desc',
+              'per_page': min(remaining, 250),
+              'page': page,
+          }
+          result = await asyncio.to_thread(
+              self._client.collections[self._events_col].documents.search,
+              params,
+          )
+          hits = result.get('hits', [])
+          event_docs.extend(hit['document'] for hit in hits)
+          if len(hits) < min(remaining, 250):
+            break
+          remaining -= len(hits)
+          page += 1
       else:
         event_docs = await self._search_all(
             self._events_col,
@@ -407,6 +439,7 @@ class TypesenseSessionService(BaseSessionService):
       self, *, app_name: str, user_id: Optional[str] = None
   ) -> ListSessionsResponse:
     await self._ensure_collections()
+    _validate_no_sep(app_name, *(([user_id]) if user_id else []))
 
     filter_by = f'app_name:={app_name}'
     if user_id:
@@ -450,6 +483,7 @@ class TypesenseSessionService(BaseSessionService):
       self, *, app_name: str, user_id: str, session_id: str
   ) -> None:
     await self._ensure_collections()
+    _validate_no_sep(app_name, user_id, session_id)
 
     events_filter = (
         f'app_name:={app_name}'

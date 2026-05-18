@@ -55,6 +55,8 @@ def _make_service(mock_ts, mock_client, ObjectNotFound):
   svc._user_states_col = 'adk_user_states'
   svc._collections_ready = True  # skip bootstrap in unit tests
   svc._collections_lock = asyncio.Lock()
+  svc._app_state_locks = {}
+  svc._user_state_locks = {}
   return svc
 
 
