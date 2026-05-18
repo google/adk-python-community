@@ -159,10 +159,12 @@ class TypesenseSessionService(BaseSessionService):
   ):
     try:
       import typesense
+      from typesense.exceptions import ObjectAlreadyExists
       from typesense.exceptions import ObjectNotFound
 
       self._typesense = typesense
       self._ObjectNotFound = ObjectNotFound
+      self._ObjectAlreadyExists = ObjectAlreadyExists
     except ImportError as e:
       raise ImportError(
           'TypesenseSessionService requires the typesense package.'
@@ -305,9 +307,9 @@ class TypesenseSessionService(BaseSessionService):
       session_id: Optional[str] = None,
   ) -> Session:
     await self._ensure_collections()
-    _validate_no_sep(app_name, user_id)
 
     session_id = (session_id or '').strip() or str(uuid.uuid4())
+    _validate_no_sep(app_name, user_id, session_id)
     now = time.time()
     doc_id = _session_doc_id(app_name, user_id, session_id)
 
@@ -330,17 +332,20 @@ class TypesenseSessionService(BaseSessionService):
     storage_app_state = await self._get_app_state(app_name)
     storage_user_state = await self._get_user_state(app_name, user_id)
 
-    await asyncio.to_thread(
-        self._client.collections[self._sessions_col].documents.create,
-        {
-            'id': doc_id,
-            'app_name': app_name,
-            'user_id': user_id,
-            'session_id': session_id,
-            'state': json.dumps(session_state),
-            'update_time': now,
-        },
-    )
+    try:
+      await asyncio.to_thread(
+          self._client.collections[self._sessions_col].documents.create,
+          {
+              'id': doc_id,
+              'app_name': app_name,
+              'user_id': user_id,
+              'session_id': session_id,
+              'state': json.dumps(session_state),
+              'update_time': now,
+          },
+      )
+    except self._ObjectAlreadyExists:
+      raise AlreadyExistsError(f'Session with id {session_id} already exists.')
 
     merged_state = _merge_state(
         storage_app_state, storage_user_state, session_state
