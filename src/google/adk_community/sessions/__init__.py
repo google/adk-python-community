@@ -16,4 +16,12 @@
 
 from .redis_session_service import RedisSessionService
 
-__all__ = ["RedisSessionService"]
+__all__ = ["RedisSessionService", "TypesenseSessionService"]
+
+
+def __getattr__(name: str):
+  if name == "TypesenseSessionService":
+    from .typesense_session_service import TypesenseSessionService
+
+    return TypesenseSessionService
+  raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
