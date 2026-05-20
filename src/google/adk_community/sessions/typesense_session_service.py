@@ -448,7 +448,9 @@ class TypesenseSessionService(BaseSessionService):
       self, *, app_name: str, user_id: Optional[str] = None
   ) -> ListSessionsResponse:
     await self._ensure_collections()
-    _validate_no_sep(app_name, *(([user_id]) if user_id else []))
+    _validate_no_sep(app_name)
+    if user_id:
+      _validate_no_sep(user_id)
 
     filter_by = f'app_name:={app_name}'
     if user_id:
