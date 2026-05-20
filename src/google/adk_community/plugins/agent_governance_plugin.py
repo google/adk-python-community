@@ -23,6 +23,8 @@ Requires: ``pip install agentmesh-platform``
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -53,10 +55,15 @@ class AgentGovernancePlugin(BasePlugin):
         fail_open: If ``True``, tool calls proceed when ``agentmesh-platform``
             is not installed (logs a warning). If ``False`` (default), raises
             ``ImportError`` at construction time.
+        strict: If ``True``, raises on policy load errors instead of
+            skipping the file. Useful when every policy file is
+            security-critical and a partial load is unacceptable.
+            Defaults to ``False``.
 
     Raises:
         ImportError: If ``agentmesh-platform`` is not installed and
             ``fail_open`` is False.
+        RuntimeError: If ``strict`` is True and a policy file fails to load.
 
     Example::
 
@@ -73,15 +80,16 @@ class AgentGovernancePlugin(BasePlugin):
         policy_dir: str | Path,
         agent_did: str = "did:mesh:adk-agent",
         fail_open: bool = False,
+        strict: bool = False,
     ) -> None:
         super().__init__(name="agent_governance")
         self._policy_dir = Path(policy_dir).resolve()
         self._agent_did = agent_did
         self._engine = None
         self._audit = None
-        self._setup(fail_open=fail_open)
+        self._setup(fail_open=fail_open, strict=strict)
 
-    def _setup(self, *, fail_open: bool) -> None:
+    def _setup(self, *, fail_open: bool, strict: bool) -> None:
         """Initialize AGT policy engine and audit service."""
         try:
             from agentmesh.governance.policy import PolicyEngine
@@ -96,6 +104,10 @@ class AgentGovernancePlugin(BasePlugin):
                         self._engine.load_yaml(f.read_text())
                         logger.info("Loaded policy: %s", f.name)
                     except Exception as exc:
+                        if strict:
+                            raise RuntimeError(
+                                f"Failed to load policy {f.name}: {exc}"
+                            ) from exc
                         logger.warning("Skipped %s: %s", f.name, exc)
             else:
                 logger.warning(
@@ -138,9 +150,14 @@ class AgentGovernancePlugin(BasePlugin):
             "tool_args": tool_args,
         }
 
-        result = self._engine.evaluate(
-            agent_did=self._agent_did,
-            context=context,
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._engine.evaluate,
+                agent_did=self._agent_did,
+                context=context,
+            ),
         )
 
         if self._audit:

@@ -61,6 +61,19 @@ If `agentmesh-platform` is not installed, the plugin raises `ImportError`
 at construction time. Pass `fail_open=True` to degrade gracefully instead
 (all calls pass through with a logged warning).
 
+## Strict mode
+
+By default, the plugin skips policy files that fail to parse and logs a
+warning. Pass `strict=True` to raise a `RuntimeError` instead, which is
+recommended when every policy file is security-critical:
+
+```python
+plugin = AgentGovernancePlugin(
+    policy_dir=Path(__file__).parent / "policies",
+    strict=True,  # abort if any policy fails to load
+)
+```
+
 ## Links
 
 - [Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit)

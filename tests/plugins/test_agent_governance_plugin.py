@@ -297,3 +297,83 @@ class TestAgentGovernancePlugin:
             agent_did="did:mesh:custom-agent",
         )
         assert plugin._agent_did == "did:mesh:custom-agent"
+
+    def test_strict_mode_raises_on_bad_policy(self, tmp_path: Path):
+        """With strict=True, plugin raises RuntimeError on policy load failure."""
+        _install_fake_agentmesh()
+
+        # Patch _FakePolicyEngine.load_yaml to raise on bad content
+        original_load = _FakePolicyEngine.load_yaml
+
+        def failing_load(self, text):
+            if "INVALID" in text:
+                raise ValueError("invalid YAML syntax")
+            original_load(self, text)
+
+        _FakePolicyEngine.load_yaml = failing_load
+
+        policies = tmp_path / "policies"
+        policies.mkdir()
+        (policies / "bad.yaml").write_text("INVALID policy content")
+
+        try:
+            with pytest.raises(RuntimeError, match="Failed to load policy"):
+                AgentGovernancePlugin(policy_dir=policies, strict=True)
+        finally:
+            _FakePolicyEngine.load_yaml = original_load
+
+    def test_non_strict_skips_bad_policy(self, tmp_path: Path):
+        """Without strict mode, bad policies are skipped with a warning."""
+        _install_fake_agentmesh()
+
+        original_load = _FakePolicyEngine.load_yaml
+
+        def failing_load(self, text):
+            if "INVALID" in text:
+                raise ValueError("invalid YAML syntax")
+            original_load(self, text)
+
+        _FakePolicyEngine.load_yaml = failing_load
+
+        policies = tmp_path / "policies"
+        policies.mkdir()
+        (policies / "good.yaml").write_text("valid policy")
+        (policies / "bad.yaml").write_text("INVALID policy content")
+
+        try:
+            plugin = AgentGovernancePlugin(policy_dir=policies)
+            # Good policy loaded, bad one skipped
+            assert len(plugin._engine._policies) == 1
+        finally:
+            _FakePolicyEngine.load_yaml = original_load
+
+    @pytest.mark.asyncio
+    async def test_evaluate_runs_in_thread_pool(self, policy_dir: Path):
+        """Policy evaluation is offloaded to a thread pool executor."""
+        import asyncio
+
+        _install_fake_agentmesh()
+        plugin = AgentGovernancePlugin(policy_dir=policy_dir)
+
+        # Track which thread evaluate() runs on
+        import threading
+
+        eval_thread = None
+        original_evaluate = plugin._engine.evaluate
+
+        def tracking_evaluate(**kwargs):
+            nonlocal eval_thread
+            eval_thread = threading.current_thread()
+            return original_evaluate(**kwargs)
+
+        plugin._engine.evaluate = tracking_evaluate
+        main_thread = threading.current_thread()
+
+        await plugin.before_tool_callback(
+            tool=_FakeBaseTool("web_search"),
+            tool_args={"query": "test"},
+            tool_context=_FakeToolContext(),
+        )
+
+        assert eval_thread is not None
+        assert eval_thread != main_thread
