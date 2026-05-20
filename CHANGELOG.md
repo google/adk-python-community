@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/google/adk-python-community/compare/v0.4.1...v0.5.0) (2026-05-20)
+
+
+### Features
+
+* add AgentGovernancePlugin for tool-call governance ([#141](https://github.com/google/adk-python-community/issues/141)) ([f9bfa20](https://github.com/google/adk-python-community/commit/f9bfa2043bbf8aa32d3c9734245cb83aa5175c94))
+* add S3ArtifactService with native async and atomic versioning ([#115](https://github.com/google/adk-python-community/issues/115)) ([d07ad02](https://github.com/google/adk-python-community/commit/d07ad02fd592f47ef84aaf7f94ac1bd7505c6ec0))
+* **ci:** add GEMINI_CLI_TRUST_WORKSPACE setting to gemini-review workflow ([#122](https://github.com/google/adk-python-community/issues/122)) ([6acdb23](https://github.com/google/adk-python-community/commit/6acdb2398021e9431c5a0bfc00a391333e35ea99))
+* **ci:** bulletproof gemini-review workflow by removing tools whitelists and using default toolbox ([#123](https://github.com/google/adk-python-community/issues/123)) ([1a824e0](https://github.com/google/adk-python-community/commit/1a824e0c79f57ee59a64c3cdbfcb460a79410683))
+* **ci:** bulletproof gemini-review workflow by removing tools whitelists and using default toolbox ([#124](https://github.com/google/adk-python-community/issues/124)) ([57df5aa](https://github.com/google/adk-python-community/commit/57df5aaec4204bd89c91d37ba9f06a43903c77a3))
+* **spraay:** Add Spraay batch payment tools for Base ([#95](https://github.com/google/adk-python-community/issues/95)) ([8172fd3](https://github.com/google/adk-python-community/commit/8172fd397603b282ef710673b35ce0be68b2d511))
+
+
+### Bug Fixes
+
+* **ci:** correct github_pr_number fallback and action versions in gemini-review workflow ([#120](https://github.com/google/adk-python-community/issues/120)) ([0ad6813](https://github.com/google/adk-python-community/commit/0ad68137469ab7fb3573b50483e189c473b59086))
+* resolve CI test failures for Redis temp state and S3 deps ([#125](https://github.com/google/adk-python-community/issues/125)) ([0624450](https://github.com/google/adk-python-community/commit/0624450abb3dbe412e327ab2c42b433033c6de7e))
+
 ## [0.4.1](https://github.com/google/adk-python-community/compare/v0.4.0...v0.4.1) (2026-02-18)
 
 
