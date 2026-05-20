@@ -145,6 +145,10 @@ class TypesenseSessionService(BaseSessionService):
   * App and user state updates are serialized per-key within a single process.
     Multi-process deployments sharing the same Typesense instance may still
     lose concurrent state updates because Typesense has no native transactions.
+  * Per-key asyncio locks are retained for the lifetime of the service
+    instance and are not evicted. For workloads with a bounded set of
+    apps and users this is fine; if the process sees an unbounded stream
+    of unique IDs without restarts, the dicts grow monotonically.
   """
 
   def __init__(
@@ -454,14 +458,9 @@ class TypesenseSessionService(BaseSessionService):
     app_state = await self._get_app_state(app_name)
 
     user_states_map: dict[str, dict[str, Any]] = {}
-    if user_id:
-      user_states_map[user_id] = await self._get_user_state(app_name, user_id)
-    else:
-      us_docs = await self._search_all(
-          self._user_states_col, f'app_name:={app_name}'
-      )
-      for doc in us_docs:
-        user_states_map[doc['user_id']] = json.loads(doc['state'])
+    unique_user_ids = {doc['user_id'] for doc in session_docs}
+    for uid in unique_user_ids:
+      user_states_map[uid] = await self._get_user_state(app_name, uid)
 
     sessions = []
     for doc in session_docs:
