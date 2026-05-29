@@ -42,7 +42,11 @@ documentation = "https://google.github.io/adk-docs/"
 s3 = [
     "aioboto3>=13.0.0",  # For S3ArtifactService
 ]
+openai = [
+    "openai>=1.106.1",
+]
 test = [
+    "openai>=1.106.1",
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
 ]

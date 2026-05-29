@@ -42,6 +42,8 @@ services: Integrations with external services, like databases, vector stores, or
 
 tools: Standalone tools that can be used by agents.
 
+models: Model adapters for third-party model APIs.
+
 deployment: Scripts and configurations to help you deploy your ADK agents to various platforms.
 
 # We Welcome Your Contributions!
