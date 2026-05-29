@@ -18,44 +18,41 @@ from __future__ import annotations
 
 import base64
 import copy
-from functools import cached_property
 import inspect
 import json
 import logging
 import os
 import re
-from typing import Any
-from typing import AsyncGenerator
-from typing import Callable
-from typing import cast
-from typing import Mapping
+from functools import cached_property
+from typing import Any, AsyncGenerator, Callable, Mapping, cast
 
 from google.genai import types
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 from typing_extensions import override
 
 try:
   from openai import AsyncOpenAI
-  from openai.types.responses import EasyInputMessageParam
-  from openai.types.responses import FunctionToolParam
-  from openai.types.responses import Response
-  from openai.types.responses import ResponseFunctionToolCall
-  from openai.types.responses import ResponseFunctionToolCallParam
-  from openai.types.responses import ResponseInputContentParam
-  from openai.types.responses import ResponseInputFileParam
-  from openai.types.responses import ResponseInputImageParam
-  from openai.types.responses import ResponseInputItemParam
-  from openai.types.responses import ResponseInputTextParam
-  from openai.types.responses import ResponseOutputItem
-  from openai.types.responses import ResponseOutputMessage
-  from openai.types.responses import ResponseOutputRefusal
-  from openai.types.responses import ResponseOutputText
-  from openai.types.responses import ResponseReasoningItem
-  from openai.types.responses import ResponseReasoningItemParam
-  from openai.types.responses import ResponseStreamEvent
-  from openai.types.responses import ResponseUsage
-  from openai.types.responses import ToolParam
+  from openai.types.responses import (
+    EasyInputMessageParam,
+    FunctionToolParam,
+    Response,
+    ResponseFunctionToolCall,
+    ResponseFunctionToolCallParam,
+    ResponseInputContentParam,
+    ResponseInputFileParam,
+    ResponseInputImageParam,
+    ResponseInputItemParam,
+    ResponseInputTextParam,
+    ResponseOutputItem,
+    ResponseOutputMessage,
+    ResponseOutputRefusal,
+    ResponseOutputText,
+    ResponseReasoningItem,
+    ResponseReasoningItemParam,
+    ResponseStreamEvent,
+    ResponseUsage,
+    ToolParam,
+  )
   from openai.types.responses.response_input_item_param import FunctionCallOutput
   from openai.types.shared_params.reasoning import Reasoning as OpenAIReasoning
 except ImportError as e:
@@ -1095,7 +1092,7 @@ class OpenAIResponsesLlm(BaseLlm):
   parallel_tool_calls: bool | None = None
   truncation: str | None = None
   service_tier: str | None = None
-  include_response_metadata: bool = True
+  include_response_metadata: bool = False
   extra_request_args: dict[str, Any] = Field(default_factory=dict)
 
   @classmethod
