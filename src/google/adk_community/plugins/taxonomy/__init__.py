@@ -12,21 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from google.adk_community.plugins.agent_governance_plugin import (
-    AgentGovernancePlugin,
-)
-from google.adk_community.plugins.taxonomy import (
-    DefaultSkillPolicy,
-    SkillPolicy,
-    TaxonomyPipeline,
-    TaxonomyPlugin,
-    TaxonomyRegistry,
-    TaxonomyResolver,
-    TaxonomyTerm,
-)
+"""Pluggable Policy & Taxonomy Security Engine for ADK Community."""
+
+from .policy import DefaultSkillPolicy
+from .policy import SkillPolicy
+from .policy import TaxonomyPipeline
+from .policy import TaxonomyResolver
+from .taxonomy_config import TaxonomyRegistry
+from .taxonomy_config import TaxonomyTerm
+from .taxonomy_plugin import TaxonomyPlugin
 
 __all__ = [
-    "AgentGovernancePlugin",
     "DefaultSkillPolicy",
     "SkillPolicy",
     "TaxonomyPipeline",
