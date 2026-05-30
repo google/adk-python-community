@@ -25,14 +25,12 @@ try:
         genai_types.AvatarConfig = AvatarConfig
 except Exception:
     try:
-        genai_module = ModuleType("google.genai")
-        sys.modules["google.genai"] = genai_module
+        sys.modules["google.genai"] = ModuleType("google.genai")
         
         from pydantic import BaseModel
-        genai_types = ModuleType("google.genai.types")
         class AvatarConfig(BaseModel):
             pass
+        genai_types = sys.modules["google.genai.types"] = ModuleType("google.genai.types")
         genai_types.AvatarConfig = AvatarConfig
-        sys.modules["google.genai.types"] = genai_types
     except Exception:
         pass
