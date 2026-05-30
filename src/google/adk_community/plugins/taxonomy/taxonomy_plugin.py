@@ -75,6 +75,19 @@ class TaxonomyPlugin(BasePlugin):
     logger.debug(
         "[%s] Resolved active taxonomies: %s", self.name, active_taxonomies
     )
+
+    if self.policy:
+      orig_instructions = llm_request.config.system_instruction or ""
+      shaped_instructions = self.policy.shape_system_instruction(
+          callback_context, active_taxonomies, orig_instructions
+      )
+      if shaped_instructions != orig_instructions:
+        logger.debug(
+            "[%s] Active taxonomy dynamic system prompt shaping applied.",
+            self.name,
+        )
+        llm_request.config.system_instruction = shaped_instructions
+
     return None
 
   async def before_tool_callback(
@@ -164,13 +177,36 @@ class TaxonomyPlugin(BasePlugin):
         if self.policy.is_skill_allowed(skill, tool_context, active_taxonomies)
     ]
 
+    # Reorder and prioritize skills dynamically
+    prioritized_skills = self.policy.prioritize_skills(
+        allowed_skills, tool_context, active_taxonomies
+    )
+
+    from google.adk.skills.models import Skill, Frontmatter
+
+    shaped_skills = []
+    for skill in prioritized_skills:
+      original_desc = skill.frontmatter.description or ""
+      shaped_desc = self.policy.shape_description(skill, tool_context, original_desc)
+      extra = getattr(skill.frontmatter, "model_extra", None) or {}
+      new_skill = Skill(
+          frontmatter=Frontmatter(
+              name=skill.frontmatter.name,
+              description=shaped_desc,
+              **extra
+          ),
+          instructions=skill.instructions
+      )
+      shaped_skills.append(new_skill)
+
     logger.debug(
         "[%s] Filtered skills: %d/%d visible",
         self.name,
-        len(allowed_skills),
+        len(shaped_skills),
         len(all_skills),
     )
-    return {"result": prompt.format_skills_as_xml(allowed_skills)}
+    return {"result": prompt.format_skills_as_xml(shaped_skills)}
+
 
   async def after_tool_callback(
       self,
