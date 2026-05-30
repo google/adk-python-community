@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the Pluggable Policy & Taxonomy Security Engine in Community."""
+"""Unit tests for the Pluggable Policy & Taxonomy Security Engine in Community.
+
+This test suite covers taxonomy classification data loading formats, resolver aggregation,
+access-control authorization filtering, path validation/traversal prevention, and
+cognitive steering/behavioral shaping mechanisms.
+"""
 
 from unittest import mock
 import pytest
@@ -30,7 +35,11 @@ from google.adk.skills.models import Skill
 
 
 def test_taxonomy_term():
-  """Tests TaxonomyTerm model instantiation and defaults."""
+  """Tests TaxonomyTerm model instantiation and defaults.
+  
+  Ensures taxonomy term instances hold core metadata and instantiate with standard
+  defaults (like empty alternate labels and no parents).
+  """
   term = TaxonomyTerm(id="tech", name="Technology", definition="Tech domain")
   assert term.id == "tech"
   assert term.name == "Technology"
@@ -40,7 +49,11 @@ def test_taxonomy_term():
 
 
 def test_registry_flat_json():
-  """Tests parsing flat JSON structure into TaxonomyRegistry."""
+  """Tests parsing flat JSON structure into TaxonomyRegistry.
+  
+  Verifies that a plain list of objects defining IDs and parent IDs are correctly
+  loaded and indexed into hierarchical parent-child relationships.
+  """
   data = [
       {
           "id": "eng",
@@ -71,7 +84,11 @@ def test_registry_flat_json():
 
 
 def test_registry_json_ld():
-  """Tests parsing JSON-LD SKOS structure into TaxonomyRegistry."""
+  """Tests parsing JSON-LD SKOS structure into TaxonomyRegistry.
+  
+  Validates SKOS standard structure imports, including URI mapping, prefLabel
+  mapping, altLabel array conversions, and broader relation parsing.
+  """
   data = [
       {
           "@context": "http://w3.org",
@@ -102,7 +119,11 @@ def test_registry_json_ld():
 
 @pytest.mark.asyncio
 async def test_taxonomy_pipeline():
-  """Tests pipeline resolution chaining multiple resolvers."""
+  """Tests pipeline resolution chaining multiple resolvers.
+  
+  Ensures that the composite pipeline runs each individual resolver and merges
+  their outputs into a unique, aggregated active taxonomy list.
+  """
 
   class SimpleResolver(TaxonomyResolver):
 
@@ -121,7 +142,11 @@ async def test_taxonomy_pipeline():
 
 
 def test_default_skill_policy():
-  """Tests DefaultSkillPolicy filter mechanism."""
+  """Tests DefaultSkillPolicy filter mechanism.
+  
+  Checks that the default intersection policy correctly authorizes matching skills,
+  blocks skills with non-overlapping binds, and always allows unrestricted skills.
+  """
   policy = DefaultSkillPolicy()
 
   skill_eng = Skill(
@@ -157,7 +182,11 @@ def test_default_skill_policy():
 
 @pytest.mark.asyncio
 async def test_taxonomy_plugin_list_skills():
-  """Tests TaxonomyPlugin intercepts and filters skill lists correctly."""
+  """Tests TaxonomyPlugin intercepts and filters skill lists correctly.
+  
+  Verifies that list_skills tool calls are intercepted in before_tool_callback
+  and that the return payload contains only the policy-allowed skills in valid XML format.
+  """
 
   class RestrictedPolicy(SkillPolicy):
 
@@ -197,6 +226,7 @@ async def test_taxonomy_plugin_list_skills():
   mock_tool.name = "list_skills"
   mock_tool._toolset._list_skills.return_value = list(skills.values())
 
+  # Patch XML formatter to focus purely on verifying taxonomy filtration behavior
   with mock.patch("google.adk_community.plugins.taxonomy.taxonomy_plugin.prompt.format_skills_as_xml") as mock_format:
     mock_format.return_value = "<skills><skill name=\"skill-1\"/></skills>"
 
@@ -214,7 +244,12 @@ async def test_taxonomy_plugin_list_skills():
 
 @pytest.mark.asyncio
 async def test_taxonomy_steering_capabilities():
-  """Tests prioritizing/sorting skills and injecting global system prompts."""
+  """Tests prioritizing/sorting skills and injecting global system prompts.
+  
+  Verifies cognitive steering hooks:
+  1. System Instruction Shaping (injecting dynamic instructions into LLM system prompts).
+  2. Skill Prioritization (reordering skills in list_skills results).
+  """
 
   class SteeringPolicy(SkillPolicy):
 
