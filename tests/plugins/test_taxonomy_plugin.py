@@ -210,3 +210,64 @@ async def test_taxonomy_plugin_list_skills():
     assert "result" in result
     assert "skill-1" in result["result"]
     assert "skill-2" not in result["result"]
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_steering_capabilities():
+  """Tests prioritizing/sorting skills and injecting global system prompts."""
+
+  class SteeringPolicy(SkillPolicy):
+
+    def is_skill_allowed(self, skill: Skill, context, active_taxonomies: list[str]) -> bool:
+      return True
+
+    def shape_instructions(self, skill: Skill, context, original_instructions: str) -> str:
+      return original_instructions
+
+    def shape_system_instruction(self, context, active_taxonomies: list[str], original_instructions: str) -> str:
+      if "strict" in active_taxonomies:
+        return original_instructions + " - MANDATED COMPLIANCE TURN"
+      return original_instructions
+
+    def prioritize_skills(self, skills: list[Skill], context, active_taxonomies: list[str]) -> list[Skill]:
+      if "strict" in active_taxonomies:
+        return sorted(skills, key=lambda s: 0 if s.frontmatter.name == "important" else 1)
+      return skills
+
+  class MockResolver(TaxonomyResolver):
+    async def resolve_taxonomies(self, context, llm_request) -> list[str]:
+      return ["strict"]
+
+  plugin = TaxonomyPlugin(policy=SteeringPolicy(), resolver=MockResolver())
+
+  # 1. Verify before_model_callback system instruction injection
+  context = mock.MagicMock()
+  context.state = {}
+  llm_request = mock.MagicMock()
+  llm_request.config = mock.MagicMock()
+  llm_request.config.system_instruction = "Original Prompt"
+
+  await plugin.before_model_callback(callback_context=context, llm_request=llm_request)
+  assert context.state["_active_taxonomies"] == ["strict"]
+  assert llm_request.config.system_instruction == "Original Prompt - MANDATED COMPLIANCE TURN"
+
+  # 2. Verify skill prioritization/sorting in list_skills
+  skills = [
+      Skill(frontmatter=Frontmatter(name="normal", description="Desc"), instructions="body"),
+      Skill(frontmatter=Frontmatter(name="important", description="Desc"), instructions="body"),
+  ]
+
+  mock_tool = mock.MagicMock()
+  mock_tool.name = "list_skills"
+  mock_tool._toolset._list_skills.return_value = skills
+
+  with mock.patch("google.adk_community.plugins.taxonomy.taxonomy_plugin.prompt.format_skills_as_xml") as mock_format:
+    await plugin.before_tool_callback(
+        tool=mock_tool,
+        tool_args={},
+        tool_context=context,
+    )
+    # Check that format_skills_as_xml was called with "important" sorted first
+    called_skills = mock_format.call_args[0][0]
+    assert called_skills[0].frontmatter.name == "important"
+    assert called_skills[1].frontmatter.name == "normal"
