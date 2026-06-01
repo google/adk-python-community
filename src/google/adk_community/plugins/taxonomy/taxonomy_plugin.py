@@ -58,7 +58,12 @@ class TaxonomyPlugin(BasePlugin):
     super().__init__(name)
     self.taxonomy_registry = taxonomy_registry or TaxonomyRegistry()
     self.resolver = resolver
-    self.policy = policy
+    self.policy = policy or DefaultSkillPolicy(self.taxonomy_registry)
+    if self.policy and getattr(self.policy, "registry", None) is None:
+      try:
+        self.policy.registry = self.taxonomy_registry
+      except Exception:
+        pass
 
   async def before_model_callback(
       self, *, callback_context: CallbackContext, llm_request: LlmRequest
