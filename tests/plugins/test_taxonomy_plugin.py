@@ -306,3 +306,44 @@ async def test_taxonomy_steering_capabilities():
     called_skills = mock_format.call_args[0][0]
     assert called_skills[0].frontmatter.name == "important"
     assert called_skills[1].frontmatter.name == "normal"
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_variable_interpolation():
+  """Tests that DefaultSkillPolicy correctly interpolates taxonomy variables."""
+  taxonomy_data = [
+      {
+          "id": "urn:adk:domain:finance",
+          "name": "Strict Finance",
+          "variables": {
+              "warning": "[PII WARNING]",
+              "guardrail": "Mask SSN"
+          }
+      }
+  ]
+  registry = TaxonomyRegistry.from_flat_json(taxonomy_data)
+  policy = DefaultSkillPolicy(registry)
+
+  skill = Skill(
+      frontmatter=Frontmatter(
+          name="audit",
+          description="Read accounts. {taxonomy:warning}",
+          taxonomy_binds=["urn:adk:domain:finance"]
+      ),
+      instructions="Fetch logs.\n{taxonomy:guardrail}"
+  )
+
+  context = mock.MagicMock()
+  context.state = {"_active_taxonomies": ["urn:adk:domain:finance"]}
+
+  # 1. Test shape_description
+  desc = policy.shape_description(skill, context, skill.frontmatter.description)
+  assert desc == "Read accounts. [PII WARNING]"
+
+  # 2. Test shape_instructions
+  inst = policy.shape_instructions(skill, context, skill.instructions)
+  assert inst == "Fetch logs.\nMask SSN"
+
+  # 3. Test shape_system_instruction
+  sys_inst = policy.shape_system_instruction(context, ["urn:adk:domain:finance"], "Start. {taxonomy:warning}")
+  assert sys_inst == "Start. [PII WARNING]"
