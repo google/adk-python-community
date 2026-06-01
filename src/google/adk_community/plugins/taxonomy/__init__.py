@@ -15,6 +15,7 @@
 """Pluggable Policy & Taxonomy Security Engine for ADK Community."""
 
 from .policy import DefaultSkillPolicy
+from .policy import DefaultKeywordResolver
 from .policy import SkillPolicy
 from .policy import TaxonomyPipeline
 from .policy import TaxonomyResolver
@@ -24,6 +25,7 @@ from .taxonomy_plugin import TaxonomyPlugin
 
 __all__ = [
     "DefaultSkillPolicy",
+    "DefaultKeywordResolver",
     "SkillPolicy",
     "TaxonomyPipeline",
     "TaxonomyPlugin",
