@@ -69,6 +69,42 @@ class TaxonomyPipeline(TaxonomyResolver):
     return list(active_domains)
 
 
+class DefaultKeywordResolver(TaxonomyResolver):
+  """Declarative, configuration-driven keyword/phrase resolver.
+  
+  Scans user prompt history for triggering phrases defined directly inside each
+  taxonomy term's triggers list or alt_labels, resolving active domains natively.
+  """
+
+  def __init__(self, registry: Any):
+    self.registry = registry
+
+  async def resolve_taxonomies(self, context: ReadonlyContext, llm_request: LlmRequest) -> list[str]:
+    active_domains: set[str] = set()
+    
+    for term_id in self.registry.list_ids():
+      term = self.registry.get_term(term_id)
+      if term:
+        triggers = getattr(term, "triggers", [])
+        if not triggers and hasattr(term, "model_extra"):
+          triggers = (term.model_extra or {}).get("triggers", [])
+        
+        # Fall back to alt_labels as secondary keyword triggers
+        if not triggers and hasattr(term, "alt_labels"):
+          triggers = term.alt_labels
+          
+        if triggers:
+          for turn in llm_request.contents:
+            for part in turn.parts:
+              if part.text:
+                text_upper = part.text.upper()
+                if any(str(phrase).upper() in text_upper for phrase in triggers):
+                  active_domains.add(term_id)
+                  break
+
+    return list(active_domains)
+
+
 class SkillPolicy(ABC):
   """Abstract policy engine determining skill execution permissions and instruction shaping.
   
@@ -175,12 +211,37 @@ def _get_taxonomy_binds(skill: Skill) -> list[str]:
   return list(binds)
 
 
+def _interpolate_variables(text: str, active_taxonomies: list[str], registry: Optional[Any]) -> str:
+  if not text or not registry:
+    return text
+
+  import re
+  pattern = r"\{taxonomy:([a-zA-Z0-9_-]+)\}"
+
+  def replace(match):
+    var_name = match.group(1)
+    for tax_id in active_taxonomies:
+      term = registry.get_term(tax_id)
+      if term:
+        variables = getattr(term, "variables", {})
+        if not variables and hasattr(term, "model_extra"):
+          variables = (term.model_extra or {}).get("variables", {})
+        if variables and var_name in variables:
+          return str(variables[var_name])
+    return ""
+
+  return re.sub(pattern, replace, text)
+
+
 class DefaultSkillPolicy(SkillPolicy):
   """Default skill policy using taxonomy-bind set-intersection matching.
   
   If a skill has no taxonomy binds defined, it is treated as unrestricted/allowed by default.
   If it has binds, at least one bind must intersect with the active taxonomy set.
   """
+
+  def __init__(self, registry: Optional[Any] = None):
+    self.registry = registry
 
   def is_skill_allowed(
       self,
@@ -201,8 +262,17 @@ class DefaultSkillPolicy(SkillPolicy):
       context: ReadonlyContext,
       original_instructions: str,
   ) -> str:
-    # No-op pass-through for default behavior
-    return original_instructions
+    active_taxonomies = context.state.get("_active_taxonomies") or []
+    return _interpolate_variables(original_instructions, active_taxonomies, self.registry)
+
+  def shape_description(
+      self,
+      skill: Skill,
+      context: ReadonlyContext,
+      original_description: str,
+  ) -> str:
+    active_taxonomies = context.state.get("_active_taxonomies") or []
+    return _interpolate_variables(original_description, active_taxonomies, self.registry)
 
   def shape_system_instruction(
       self,
@@ -210,8 +280,7 @@ class DefaultSkillPolicy(SkillPolicy):
       active_taxonomies: list[str],
       original_instructions: str,
   ) -> str:
-    # No-op pass-through for default behavior
-    return original_instructions
+    return _interpolate_variables(original_instructions, active_taxonomies, self.registry)
 
   def prioritize_skills(
       self,
