@@ -31,6 +31,8 @@ class TaxonomyTerm(BaseModel):
       name: (str)
       definition: (Optional[str])
       alt_labels: (list[str])
+      variables: (dict[str, str])
+      triggers: (list[str])
   """
 
   model_config = ConfigDict(populate_by_name=True)
@@ -40,6 +42,8 @@ class TaxonomyTerm(BaseModel):
   name: str
   definition: Optional[str] = None
   alt_labels: list[str] = Field(default_factory=list, alias="altLabels")
+  variables: dict[str, str] = Field(default_factory=dict)
+  triggers: list[str] = Field(default_factory=list)
 
 
 class TaxonomyRegistry(BaseModel):
@@ -105,12 +109,16 @@ class TaxonomyRegistry(BaseModel):
       ]
 
       broader = item.get("broader")
+      variables = item.get("variables", {})
+      triggers = item.get("triggers", [])
       term = TaxonomyTerm(
           id=term_id,
           parent_id=broader,
           name=pref_label,
           definition=definition,
           alt_labels=alt_labels,
+          variables=variables,
+          triggers=triggers,
       )
       terms[term_id] = term
     return cls(terms=terms)
