@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
+import logging
+from typing import Any, Optional
 
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.models.llm_request import LlmRequest
 from google.adk.skills.models import Skill
 
+logger = logging.getLogger("google_adk_community." + __name__)
 
 class TaxonomyResolver(ABC):
   """Abstract base class for taxonomy resolution.
@@ -190,6 +192,31 @@ class SkillPolicy(ABC):
     """
     return skills
 
+  def shape_skill(
+      self,
+      skill: Skill,
+      context: ReadonlyContext,
+      shaped_description: Optional[str],
+  ) -> Skill:
+    """Prepares and shapes a skill representation for presentation to the agent.
+
+    Defaults to a secure manual reconstruction to prevent accidental leakage of
+    internal developer/business flags to LLM prompts, but can be overridden by
+    custom policies to use `model_copy()` or other strategies.
+    """
+    assert skill is not None, "Skill instance cannot be None"
+    
+    from google.adk.skills.models import Skill, Frontmatter
+    extra = getattr(skill.frontmatter, "model_extra", None) or {}
+    return Skill(
+        frontmatter=Frontmatter(
+            name=skill.frontmatter.name,
+            description=shaped_description,
+            **extra
+        ),
+        instructions=skill.instructions
+    )
+
 
 def _get_taxonomy_binds(skill: Skill) -> list[str]:
   """Dynamically extracts taxonomy binds, supporting both modified and unmodified core SDKs.
@@ -228,6 +255,8 @@ def _interpolate_variables(text: str, active_taxonomies: list[str], registry: Op
           variables = (term.model_extra or {}).get("variables", {})
         if variables and var_name in variables:
           return str(variables[var_name])
+    
+    logger.warning("Taxonomy variable %r not found under active taxonomies: %s", var_name, active_taxonomies)
     return ""
 
   return re.sub(pattern, replace, text)
