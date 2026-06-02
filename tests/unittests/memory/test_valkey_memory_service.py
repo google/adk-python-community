@@ -172,6 +172,25 @@ class TestValkeyMemoryServiceConfig:
     with pytest.raises(Exception):
       ValkeyMemoryServiceConfig(similarity_top_k=1001)
 
+  def test_config_validation_distance_metric(self):
+    """Test distance_metric validation rejects invalid values."""
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(distance_metric="HAMMING")
+
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(distance_metric="invalid")
+
+  def test_config_distance_metric_case_insensitive(self):
+    """Test that distance_metric is case-insensitive and normalized."""
+    config = ValkeyMemoryServiceConfig(distance_metric="cosine")
+    assert config.distance_metric == "COSINE"
+
+    config = ValkeyMemoryServiceConfig(distance_metric="l2")
+    assert config.distance_metric == "L2"
+
+    config = ValkeyMemoryServiceConfig(distance_metric="ip")
+    assert config.distance_metric == "IP"
+
 
 class TestValkeyMemoryServiceInit:
   """Tests for ValkeyMemoryService initialization."""
@@ -589,6 +608,30 @@ class TestValkeyMemoryServiceBuildQuery:
     assert "my\\-app" in query
     assert "user\\-1" in query
 
+  def test_special_characters_dots(self, memory_service):
+    """Test escaping of dots in TAG values."""
+    query = memory_service._build_knn_query("com.example.app", "user.1", 10)
+    assert "com\\.example\\.app" in query
+    assert "user\\.1" in query
+
+  def test_special_characters_colons(self, memory_service):
+    """Test escaping of colons in TAG values."""
+    query = memory_service._build_knn_query("app:v2", "user:123", 10)
+    assert "app\\:v2" in query
+    assert "user\\:123" in query
+
+  def test_special_characters_at_sign(self, memory_service):
+    """Test escaping of @ sign in TAG values."""
+    query = memory_service._build_knn_query("app@org", "user@domain", 10)
+    assert "app\\@org" in query
+    assert "user\\@domain" in query
+
+  def test_special_characters_spaces(self, memory_service):
+    """Test escaping of spaces in TAG values."""
+    query = memory_service._build_knn_query("my app", "user 1", 10)
+    assert "my\\ app" in query
+    assert "user\\ 1" in query
+
 
 class TestValkeyMemoryServiceClose:
   """Tests for close method."""
@@ -600,3 +643,41 @@ class TestValkeyMemoryServiceClose:
     """Test that close does not close the underlying client."""
     await memory_service.close()
     mock_valkey_client.close.assert_not_called()
+
+
+class TestValkeyMemoryServiceEscapeTagValue:
+  """Tests for _escape_tag_value static method."""
+
+  def test_no_special_characters(self):
+    """Test that plain values are unchanged."""
+    assert ValkeyMemoryService._escape_tag_value("myapp") == "myapp"
+
+  def test_hyphen_escaped(self):
+    """Test hyphen escaping."""
+    assert ValkeyMemoryService._escape_tag_value("my-app") == "my\\-app"
+
+  def test_dot_escaped(self):
+    """Test dot escaping."""
+    assert (
+        ValkeyMemoryService._escape_tag_value("com.example.app")
+        == "com\\.example\\.app"
+    )
+
+  def test_colon_escaped(self):
+    """Test colon escaping."""
+    assert ValkeyMemoryService._escape_tag_value("app:v2") == "app\\:v2"
+
+  def test_at_sign_escaped(self):
+    """Test @ sign escaping."""
+    assert (
+        ValkeyMemoryService._escape_tag_value("user@domain") == "user\\@domain"
+    )
+
+  def test_space_escaped(self):
+    """Test space escaping."""
+    assert ValkeyMemoryService._escape_tag_value("my app") == "my\\ app"
+
+  def test_multiple_special_chars(self):
+    """Test multiple special characters in one value."""
+    result = ValkeyMemoryService._escape_tag_value("a-b.c:d@e")
+    assert result == "a\\-b\\.c\\:d\\@e"

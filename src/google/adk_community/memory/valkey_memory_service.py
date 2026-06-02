@@ -28,6 +28,7 @@ import struct
 import time
 from typing import Optional
 from typing import TYPE_CHECKING
+from typing import Union
 import uuid
 
 from google.adk.memory.base_memory_service import BaseMemoryService
@@ -41,6 +42,8 @@ from typing_extensions import override
 from .utils import extract_text_from_event
 
 if TYPE_CHECKING:
+  from glide import GlideClient
+  from glide import GlideClusterClient
   from google.adk.sessions.session import Session
 
 logger = logging.getLogger("google_adk." + __name__)
@@ -75,6 +78,20 @@ class ValkeyMemoryServiceConfig(BaseModel):
   index_name: str = Field(default="adk_memory_idx")
   distance_metric: str = Field(default="COSINE")
   ttl_seconds: Optional[int] = Field(default=None, ge=1)
+
+  @classmethod
+  def _validate_distance_metric(cls, v):
+    """Validate distance_metric is one of the allowed values."""
+    allowed = {"COSINE", "L2", "IP"}
+    if v.upper() not in allowed:
+      raise ValueError(f"distance_metric must be one of {allowed}, got '{v}'")
+    return v.upper()
+
+  from pydantic import field_validator
+
+  _check_distance_metric = field_validator("distance_metric")(
+      _validate_distance_metric
+  )
 
 
 class ValkeyMemoryService(BaseMemoryService):
@@ -115,7 +132,7 @@ class ValkeyMemoryService(BaseMemoryService):
 
   def __init__(
       self,
-      client,
+      client: Union["GlideClient", "GlideClusterClient"],
       embedding_function: EmbeddingFunction,
       config: Optional[ValkeyMemoryServiceConfig] = None,
   ):
@@ -156,7 +173,6 @@ class ValkeyMemoryService(BaseMemoryService):
     - app_name: TAG field for filtering by application
     - user_id: TAG field for filtering by user
     - author: TAG field for filtering by author
-    - timestamp: NUMERIC field for sorting
 
     This method is idempotent — if the index already exists, it
     will log a debug message and return without error.
@@ -295,7 +311,7 @@ class ValkeyMemoryService(BaseMemoryService):
         memories_added += 1
         logger.debug("Added memory for event %s at key %s", event.id, hash_key)
 
-        if self._config.ttl_seconds:
+        if self._config.ttl_seconds is not None:
           await self._client.expire(hash_key, self._config.ttl_seconds)
       except Exception as e:
         logger.error("Failed to add memory for event %s: %s", event.id, e)
@@ -372,12 +388,30 @@ class ValkeyMemoryService(BaseMemoryService):
         await self._client.hset(hash_key, field_values)
         memories_added += 1
 
-        if self._config.ttl_seconds:
+        if self._config.ttl_seconds is not None:
           await self._client.expire(hash_key, self._config.ttl_seconds)
       except Exception as e:
         logger.error("Failed to add memory for event %s: %s", event.id, e)
 
     logger.info("Added %d memories via add_events_to_memory", memories_added)
+
+  # Characters that must be escaped in Valkey Search TAG field values.
+  _TAG_SPECIAL_CHARS = set(r',.<>{}[]"' + r"':;!@#$%^&*()-+=~|/\\ ")
+
+  @staticmethod
+  def _escape_tag_value(value: str) -> str:
+    """Escape special characters for Valkey Search TAG field queries.
+
+    Per the Valkey Search query syntax, TAG values must have
+    metacharacters escaped with a backslash.
+    """
+    escaped = []
+    for ch in value:
+      if ch in ValkeyMemoryService._TAG_SPECIAL_CHARS:
+        escaped.append(f"\\{ch}")
+      else:
+        escaped.append(ch)
+    return "".join(escaped)
 
   def _build_knn_query(self, app_name: str, user_id: str, top_k: int) -> str:
     """Build a KNN search query with TAG pre-filters.
@@ -390,8 +424,8 @@ class ValkeyMemoryService(BaseMemoryService):
     Returns:
         A Valkey Search KNN query string.
     """
-    escaped_app = app_name.replace("-", "\\-")
-    escaped_user = user_id.replace("-", "\\-")
+    escaped_app = self._escape_tag_value(app_name)
+    escaped_user = self._escape_tag_value(user_id)
 
     # KNN query with pre-filter: filter first, then KNN on results
     return (
