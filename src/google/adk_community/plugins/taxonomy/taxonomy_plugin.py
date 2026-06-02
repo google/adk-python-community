@@ -17,8 +17,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
-from typing import Optional
+from pathlib import PurePosixPath, PureWindowsPath
+from typing import Any, Optional
 
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.agents.callback_context import CallbackContext
@@ -28,6 +28,7 @@ from google.adk.skills import prompt
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from .policy import DefaultSkillPolicy
 from .policy import SkillPolicy
 from .policy import TaxonomyResolver
 from .taxonomy_config import TaxonomyRegistry
@@ -106,6 +107,11 @@ class TaxonomyPlugin(BasePlugin):
     if tool.name not in _SKILL_GATE_TOOLS:
       return None
 
+    # Rule 5 Assertions
+    assert tool is not None, "Intercepted tool cannot be None"
+    assert isinstance(tool_args, dict), "tool_args must be a dictionary"
+    assert tool_context is not None, "tool_context cannot be None"
+
     active_taxonomies = (
         tool_context.state.get(_ACTIVE_TAXONOMIES_STATE_KEY) or []
     )
@@ -133,7 +139,18 @@ class TaxonomyPlugin(BasePlugin):
 
     file_path = tool_args.get("file_path")
     if file_path:
-      if ".." in file_path or file_path.startswith(("/", "\\")):
+      posix_p = PurePosixPath(file_path)
+      win_p = PureWindowsPath(file_path)
+      
+      # Block absolute paths or presence of a drive letter
+      if posix_p.is_absolute() or win_p.is_absolute() or win_p.drive:
+        return {
+            "error": f"Absolute path blocked: {file_path}",
+            "error_code": "INVALID_ARGUMENTS",
+        }
+      
+      # Block traversal segments
+      if ".." in posix_p.parts or ".." in win_p.parts:
         return {
             "error": f"Path traversal attempt blocked: {file_path}",
             "error_code": "INVALID_ARGUMENTS",
@@ -187,21 +204,11 @@ class TaxonomyPlugin(BasePlugin):
         allowed_skills, tool_context, active_taxonomies
     )
 
-    from google.adk.skills.models import Skill, Frontmatter
-
     shaped_skills = []
     for skill in prioritized_skills:
       original_desc = skill.frontmatter.description or ""
       shaped_desc = self.policy.shape_description(skill, tool_context, original_desc)
-      extra = getattr(skill.frontmatter, "model_extra", None) or {}
-      new_skill = Skill(
-          frontmatter=Frontmatter(
-              name=skill.frontmatter.name,
-              description=shaped_desc,
-              **extra
-          ),
-          instructions=skill.instructions
-      )
+      new_skill = self.policy.shape_skill(skill, tool_context, shaped_desc)
       shaped_skills.append(new_skill)
 
     logger.debug(
