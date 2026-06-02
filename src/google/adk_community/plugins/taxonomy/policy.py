@@ -119,6 +119,8 @@ class SkillPolicy(ABC):
   for steering while keeping authorization and core shaping abstract.
   """
 
+  registry: Optional[Any] = None
+
   @abstractmethod
   def is_skill_allowed(
       self,
