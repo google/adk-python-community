@@ -275,7 +275,7 @@ async def test_taxonomy_steering_capabilities():
 
   plugin = TaxonomyPlugin(policy=SteeringPolicy(), resolver=MockResolver())
 
-  # 1. Verify before_model_callback system instruction injection
+  # Verify before_model_callback system instruction injection
   context = mock.MagicMock()
   context.state = {}
   llm_request = mock.MagicMock()
@@ -286,7 +286,7 @@ async def test_taxonomy_steering_capabilities():
   assert context.state["_active_taxonomies"] == ["strict"]
   assert llm_request.config.system_instruction == "Original Prompt - MANDATED COMPLIANCE TURN"
 
-  # 2. Verify skill prioritization/sorting in list_skills
+  # Verify skill prioritization/sorting in list_skills
   skills = [
       Skill(frontmatter=Frontmatter(name="normal", description="Desc"), instructions="body"),
       Skill(frontmatter=Frontmatter(name="important", description="Desc"), instructions="body"),
@@ -336,14 +336,109 @@ async def test_taxonomy_variable_interpolation():
   context = mock.MagicMock()
   context.state = {"_active_taxonomies": ["urn:adk:domain:finance"]}
 
-  # 1. Test shape_description
+  # Test shape_description
   desc = policy.shape_description(skill, context, skill.frontmatter.description)
   assert desc == "Read accounts. [PII WARNING]"
 
-  # 2. Test shape_instructions
+  # Test shape_instructions
   inst = policy.shape_instructions(skill, context, skill.instructions)
   assert inst == "Fetch logs.\nMask SSN"
 
-  # 3. Test shape_system_instruction
+  # Test shape_system_instruction
   sys_inst = policy.shape_system_instruction(context, ["urn:adk:domain:finance"], "Start. {taxonomy:warning}")
   assert sys_inst == "Start. [PII WARNING]"
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_plugin_path_validation():
+  """Tests that absolute paths and path traversals are blocked on all platforms."""
+  plugin = TaxonomyPlugin()
+  mock_tool = mock.MagicMock()
+  mock_tool.name = "load_skill"
+  context = mock.MagicMock()
+  context.state = {}
+
+  # Test cases for blocked paths (absolute or traversal)
+  blocked_cases = [
+      "/etc/passwd",
+      "C:\\Windows\\System32",
+      "\\\\unc\\share\\file",
+      "../../traversal",
+      "subdir\\..\\parent",
+  ]
+
+  for file_path in blocked_cases:
+    result = await plugin.before_tool_callback(
+        tool=mock_tool,
+        tool_args={"skill_name": "test-skill", "file_path": file_path},
+        tool_context=context,
+    )
+    assert isinstance(result, dict)
+    assert result.get("error_code") == "INVALID_ARGUMENTS"
+    assert "blocked" in result.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_taxonomy_variable_interpolation_warning(caplog):
+  """Tests that unresolved taxonomy variables log a warning and fallback to empty string."""
+  registry = TaxonomyRegistry(terms={})
+  policy = DefaultSkillPolicy(registry)
+  context = mock.MagicMock()
+  context.state = {"_active_taxonomies": ["urn:adk:domain:test"]}
+
+  with caplog.at_level("WARNING"):
+    result = policy.shape_system_instruction(
+        context, ["urn:adk:domain:test"], "Prompt: {taxonomy:missing_variable}"
+    )
+
+    assert result == "Prompt: "
+    assert len(caplog.records) == 1
+    assert "missing_variable" in caplog.records[0].message
+
+
+def test_taxonomy_custom_shape_skill():
+  """Tests default sanitization and custom policy shape_skill overriding."""
+
+  from pydantic import Field
+  
+  class ExtendedFrontmatter(Frontmatter):
+    billing_entitlement: str = Field("premium", alias="billingEntitlement")
+    custom_flag: bool = True
+
+  original_skill = Skill(
+      frontmatter=ExtendedFrontmatter(
+          name="custom-skill",
+          description="My skill",
+          billingEntitlement="enterprise",
+      ),
+      instructions="Execute tasks"
+  )
+
+  policy = DefaultSkillPolicy()
+  context = mock.MagicMock()
+
+  # It should drop the custom pydantic field billing_entitlement because it's not captured by standard Frontmatter
+  default_shaped = policy.shape_skill(original_skill, context, "Shaped My skill")
+  assert default_shaped.frontmatter.name == "custom-skill"
+  assert default_shaped.frontmatter.description == "Shaped My skill"
+  # Standard Frontmatter doesn't have custom_flag or billing_entitlement as defined properties
+  assert not hasattr(default_shaped.frontmatter, "custom_flag")
+  assert not hasattr(default_shaped.frontmatter, "billing_entitlement")
+
+  # Verify Custom Policy Behavior using model_copy
+  class CustomCopyPolicy(DefaultSkillPolicy):
+    def shape_skill(self, skill, context, shaped_description):
+      new_fm = skill.frontmatter.model_copy(update={"description": shaped_description})
+      return skill.model_copy(update={"frontmatter": new_fm})
+
+  custom_policy = CustomCopyPolicy()
+  custom_shaped = custom_policy.shape_skill(original_skill, context, "Shaped My skill")
+  
+  # Ensure all custom attributes, types, and values are fully preserved!
+  assert custom_shaped.frontmatter.name == "custom-skill"
+  assert custom_shaped.frontmatter.description == "Shaped My skill"
+  assert isinstance(custom_shaped.frontmatter, ExtendedFrontmatter)
+  assert custom_shaped.frontmatter.billing_entitlement == "enterprise"
+  assert custom_shaped.frontmatter.custom_flag is True
+
+
