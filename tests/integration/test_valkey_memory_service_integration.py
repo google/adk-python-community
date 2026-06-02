@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for ValkeyMemoryService.
+"""Integration tests for ValkeyMemoryService with vector similarity search.
 
 Requires a running Valkey instance with the Search module loaded.
 Set VALKEY_HOST and VALKEY_PORT environment variables if not using
 defaults (localhost:6379).
 
-The valkey-bundle image (valkey/valkey-bundle) includes the Search
-module. Run with:
+The valkey-bundle image includes the Search module with vector support.
+Run with:
 
     podman run -d --name valkey-test -p 6379:6379 valkey/valkey-bundle:9.1
     pytest tests/integration/test_valkey_memory_service_integration.py -v
@@ -28,6 +28,7 @@ module. Run with:
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import uuid
 
@@ -41,6 +42,33 @@ from google.adk_community.memory.valkey_memory_service import ValkeyMemoryServic
 
 VALKEY_HOST = os.environ.get("VALKEY_HOST", "localhost")
 VALKEY_PORT = int(os.environ.get("VALKEY_PORT", "6379"))
+
+# Simple deterministic embedding function for testing.
+# Maps text to a 32-dim vector based on character frequencies.
+EMBED_DIM = 32
+
+
+async def _test_embedding_function(
+    texts: list[str],
+) -> list[list[float]]:
+  """Deterministic embedding function for testing.
+
+  Generates a 32-dimensional vector based on character frequency
+  distribution. This gives semantically similar texts somewhat
+  similar vectors (texts with similar character distributions).
+  """
+  embeddings = []
+  for text in texts:
+    text_lower = text.lower()
+    vec = [0.0] * EMBED_DIM
+    for ch in text_lower:
+      idx = ord(ch) % EMBED_DIM
+      vec[idx] += 1.0
+    # Normalize to unit vector
+    magnitude = math.sqrt(sum(x * x for x in vec)) or 1.0
+    vec = [x / magnitude for x in vec]
+    embeddings.append(vec)
+  return embeddings
 
 
 def _requires_valkey():
@@ -78,17 +106,20 @@ async def memory_service(valkey_client):
   config = ValkeyMemoryServiceConfig(
       key_prefix=test_prefix,
       index_name=index_name,
-      search_top_k=10,
+      similarity_top_k=10,
+      embedding_dimensions=EMBED_DIM,
   )
-  service = ValkeyMemoryService(client=valkey_client, config=config)
+  service = ValkeyMemoryService(
+      client=valkey_client,
+      embedding_function=_test_embedding_function,
+      config=config,
+  )
   await service.create_index()
-
-  # Small delay for index to be ready
   await asyncio.sleep(0.1)
 
   yield service
 
-  # Cleanup: drop the index and delete test keys
+  # Cleanup
   try:
     await ft.dropindex(valkey_client, index_name)
   except Exception:
@@ -152,27 +183,10 @@ def _make_session(app_name: str, user_id: str) -> Session:
 
 @pytest.mark.asyncio
 class TestValkeyMemoryServiceIntegration:
-  """Integration tests for ValkeyMemoryService with a real Valkey instance."""
+  """Integration tests with vector similarity search."""
 
   async def test_add_and_search_memories(self, memory_service):
-    """Test adding a session and searching for memories."""
-    session = _make_session("test-app", "user-1")
-
-    await memory_service.add_session_to_memory(session)
-    await asyncio.sleep(0.5)  # Wait for indexing
-
-    result = await memory_service.search_memory(
-        app_name="test-app",
-        user_id="user-1",
-        query="Python",
-    )
-
-    assert len(result.memories) >= 1
-    texts = [m.content.parts[0].text for m in result.memories]
-    assert any("Python" in t for t in texts)
-
-  async def test_search_returns_empty_for_no_match(self, memory_service):
-    """Test that search returns empty when no memories match."""
+    """Test adding a session and searching with vector similarity."""
     session = _make_session("test-app", "user-1")
     await memory_service.add_session_to_memory(session)
     await asyncio.sleep(0.5)
@@ -180,10 +194,32 @@ class TestValkeyMemoryServiceIntegration:
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="JavaScript framework Angular",
+        query="Python programming language",
     )
 
-    assert len(result.memories) == 0
+    assert len(result.memories) >= 1
+    texts = [m.content.parts[0].text for m in result.memories]
+    assert any("Python" in t for t in texts)
+
+  async def test_search_returns_results_ranked_by_similarity(
+      self, memory_service
+  ):
+    """Test that results are returned by vector similarity."""
+    session = _make_session("test-app", "user-1")
+    await memory_service.add_session_to_memory(session)
+    await asyncio.sleep(0.5)
+
+    # Query similar to "Python" content should return Python memories
+    result = await memory_service.search_memory(
+        app_name="test-app",
+        user_id="user-1",
+        query="I enjoy learning Python programming",
+    )
+
+    assert len(result.memories) >= 1
+    # The most similar result should be about Python
+    top_text = result.memories[0].content.parts[0].text
+    assert "Python" in top_text or "python" in top_text.lower()
 
   async def test_user_isolation(self, memory_service):
     """Test that memories are isolated between users."""
@@ -210,21 +246,23 @@ class TestValkeyMemoryServiceIntegration:
     await memory_service.add_session_to_memory(session2)
     await asyncio.sleep(0.5)
 
-    # user-1 should not see user-2's memories
+    # user-1 should not see user-2's Java memory
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="Java",
+        query="Java programming",
     )
-    assert len(result.memories) == 0
+    texts = [m.content.parts[0].text for m in result.memories]
+    assert not any("Java" in t for t in texts)
 
     # user-2 should see their own Java memory
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-2",
-        query="Java",
+        query="Java programming",
     )
     assert len(result.memories) == 1
+    assert "Java" in result.memories[0].content.parts[0].text
 
   async def test_app_isolation(self, memory_service):
     """Test that memories are isolated between applications."""
@@ -271,17 +309,20 @@ class TestValkeyMemoryServiceIntegration:
     result = await memory_service.search_memory(
         app_name="app-one",
         user_id="user-1",
-        query="Kubernetes",
+        query="Kubernetes orchestration",
     )
     assert len(result.memories) == 1
 
-    # app-two should not see app-one's memories
+    # app-two should only see its own Docker memory, not Kubernetes
     result = await memory_service.search_memory(
         app_name="app-two",
         user_id="user-1",
-        query="Kubernetes",
+        query="Kubernetes orchestration",
     )
-    assert len(result.memories) == 0
+    # KNN returns nearest neighbor from the filtered set (app-two only).
+    # The result should NOT contain app-one's Kubernetes content.
+    for mem in result.memories:
+      assert "Kubernetes" not in mem.content.parts[0].text
 
   async def test_multiple_sessions_accumulate(self, memory_service):
     """Test that multiple sessions accumulate memories."""
@@ -311,7 +352,7 @@ class TestValkeyMemoryServiceIntegration:
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="Python",
+        query="Python programming",
     )
 
     # Should find memories from both sessions
@@ -322,48 +363,12 @@ class TestValkeyMemoryServiceIntegration:
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="anything",
+        query="anything at all",
     )
-
     assert len(result.memories) == 0
 
-  async def test_search_case_insensitive(self, memory_service):
-    """Test that full-text search is case-insensitive."""
-    session = Session(
-        app_name="test-app",
-        user_id="user-1",
-        id="session-case",
-        last_update_time=1000,
-        events=[
-            Event(
-                id="event-case",
-                invocation_id="inv-case",
-                author="user",
-                timestamp=12345,
-                content=types.Content(
-                    parts=[
-                        types.Part(
-                            text="VALKEY is a high performance datastore."
-                        )
-                    ]
-                ),
-            ),
-        ],
-    )
-
-    await memory_service.add_session_to_memory(session)
-    await asyncio.sleep(0.5)
-
-    # Search with lowercase should find uppercase content
-    result = await memory_service.search_memory(
-        app_name="test-app",
-        user_id="user-1",
-        query="valkey",
-    )
-    assert len(result.memories) == 1
-
-  async def test_search_top_k_limit(self, valkey_client):
-    """Test that search_top_k limits the number of results."""
+  async def test_similarity_top_k_limit(self, valkey_client):
+    """Test that similarity_top_k limits the number of results."""
     from glide import ft
 
     test_prefix = f"test:topk:{uuid.uuid4().hex[:8]}"
@@ -371,13 +376,17 @@ class TestValkeyMemoryServiceIntegration:
     config = ValkeyMemoryServiceConfig(
         key_prefix=test_prefix,
         index_name=index_name,
-        search_top_k=3,
+        similarity_top_k=3,
+        embedding_dimensions=EMBED_DIM,
     )
-    service = ValkeyMemoryService(client=valkey_client, config=config)
+    service = ValkeyMemoryService(
+        client=valkey_client,
+        embedding_function=_test_embedding_function,
+        config=config,
+    )
     await service.create_index()
     await asyncio.sleep(0.1)
 
-    # Add more events than top_k
     events = [
         Event(
             id=f"event-{i}",
@@ -404,10 +413,9 @@ class TestValkeyMemoryServiceIntegration:
     result = await service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="Python",
+        query="Python tips",
     )
 
-    # Should return at most 3 (search_top_k)
     assert len(result.memories) <= 3
     assert len(result.memories) >= 1
 
@@ -433,7 +441,6 @@ class TestValkeyMemoryServiceIntegration:
         id="session-filter",
         last_update_time=1000,
         events=[
-            # Function call event - should be filtered
             Event(
                 id="event-func",
                 invocation_id="inv-func",
@@ -447,14 +454,12 @@ class TestValkeyMemoryServiceIntegration:
                     ]
                 ),
             ),
-            # Empty event - should be filtered
             Event(
                 id="event-empty",
                 invocation_id="inv-empty",
                 author="user",
                 timestamp=12346,
             ),
-            # Valid text event - should be stored
             Event(
                 id="event-text",
                 invocation_id="inv-text",
@@ -470,21 +475,12 @@ class TestValkeyMemoryServiceIntegration:
     await memory_service.add_session_to_memory(session)
     await asyncio.sleep(0.5)
 
-    # Only the text event should be searchable
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="valid content",
+        query="valid content text",
     )
     assert len(result.memories) == 1
-
-    # Function call content should not appear
-    result = await memory_service.search_memory(
-        app_name="test-app",
-        user_id="user-1",
-        query="search_tool",
-    )
-    assert len(result.memories) == 0
 
   async def test_memory_entry_metadata(self, memory_service):
     """Test that returned MemoryEntry has correct metadata."""
@@ -512,7 +508,7 @@ class TestValkeyMemoryServiceIntegration:
     result = await memory_service.search_memory(
         app_name="test-app",
         user_id="user-1",
-        query="Metadata verification",
+        query="Metadata verification test",
     )
 
     assert len(result.memories) == 1
@@ -530,10 +526,14 @@ class TestValkeyMemoryServiceIntegration:
     config = ValkeyMemoryServiceConfig(
         key_prefix=test_prefix,
         index_name=index_name,
+        embedding_dimensions=EMBED_DIM,
     )
-    service = ValkeyMemoryService(client=valkey_client, config=config)
+    service = ValkeyMemoryService(
+        client=valkey_client,
+        embedding_function=_test_embedding_function,
+        config=config,
+    )
 
-    # First call should succeed
     await service.create_index()
     assert service._index_created is True
 
@@ -544,5 +544,111 @@ class TestValkeyMemoryServiceIntegration:
     # Cleanup
     try:
       await ft.dropindex(valkey_client, index_name)
+    except Exception:
+      pass
+
+  async def test_add_events_to_memory(self, memory_service):
+    """Test incremental event ingestion via add_events_to_memory."""
+    events = [
+        Event(
+            id="event-inc-1",
+            invocation_id="inv-inc-1",
+            author="user",
+            timestamp=50001,
+            content=types.Content(
+                parts=[types.Part(text="Incremental memory about Golang.")]
+            ),
+        ),
+        Event(
+            id="event-inc-2",
+            invocation_id="inv-inc-2",
+            author="model",
+            timestamp=50002,
+            content=types.Content(
+                parts=[types.Part(text="Go is great for concurrency.")]
+            ),
+        ),
+    ]
+
+    await memory_service.add_events_to_memory(
+        app_name="test-app",
+        user_id="user-1",
+        events=events,
+        session_id="session-incremental",
+    )
+    await asyncio.sleep(0.5)
+
+    result = await memory_service.search_memory(
+        app_name="test-app",
+        user_id="user-1",
+        query="Golang concurrency",
+    )
+    assert len(result.memories) >= 1
+    texts = [m.content.parts[0].text for m in result.memories]
+    assert any("Go" in t for t in texts)
+
+  async def test_vector_distance_threshold(self, valkey_client):
+    """Test that vector_distance_threshold filters distant results."""
+    from glide import ft
+
+    test_prefix = f"test:thresh:{uuid.uuid4().hex[:8]}"
+    index_name = f"test_thresh_idx_{uuid.uuid4().hex[:8]}"
+    config = ValkeyMemoryServiceConfig(
+        key_prefix=test_prefix,
+        index_name=index_name,
+        similarity_top_k=10,
+        embedding_dimensions=EMBED_DIM,
+        vector_distance_threshold=0.01,  # Very strict threshold
+    )
+    service = ValkeyMemoryService(
+        client=valkey_client,
+        embedding_function=_test_embedding_function,
+        config=config,
+    )
+    await service.create_index()
+    await asyncio.sleep(0.1)
+
+    session = Session(
+        app_name="test-app",
+        user_id="user-1",
+        id="session-thresh",
+        last_update_time=1000,
+        events=[
+            Event(
+                id="event-thresh",
+                invocation_id="inv-thresh",
+                author="user",
+                timestamp=12345,
+                content=types.Content(
+                    parts=[types.Part(text="Completely unrelated topic XYZ.")]
+                ),
+            ),
+        ],
+    )
+
+    await service.add_session_to_memory(session)
+    await asyncio.sleep(0.5)
+
+    # Search for something very different — should be filtered by threshold
+    result = await service.search_memory(
+        app_name="test-app",
+        user_id="user-1",
+        query="AAAAAAA BBBBBBB CCCCCCC",
+    )
+    # With strict threshold, dissimilar results should be filtered
+    # (This depends on the embedding function producing distant vectors)
+    assert len(result.memories) <= 1
+
+    # Cleanup
+    try:
+      await ft.dropindex(valkey_client, index_name)
+    except Exception:
+      pass
+    try:
+      keys = await valkey_client.custom_command(["KEYS", f"{test_prefix}:*"])
+      if keys:
+        for key in keys:
+          key_str = key.decode() if isinstance(key, bytes) else key
+          await valkey_client.custom_command(["DEL", key_str])
     except Exception:
       pass

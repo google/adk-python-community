@@ -14,13 +14,17 @@
 
 """Valkey-backed memory service for ADK using valkey-glide client.
 
-Uses the Valkey Search module (FT.CREATE / FT.SEARCH) for full-text
-search over stored memories.
+Uses the Valkey Search module with vector similarity search (HNSW)
+for semantic memory retrieval, analogous to VertexAiRagMemoryService.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from collections.abc import Callable
+from collections.abc import Sequence
 import logging
+import struct
 import time
 from typing import Optional
 from typing import TYPE_CHECKING
@@ -41,35 +45,51 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("google_adk." + __name__)
 
+# Type alias for the embedding function.
+# It takes a list of text strings and returns a list of float vectors.
+EmbeddingFunction = Callable[[list[str]], Awaitable[list[list[float]]]]
+
 
 class ValkeyMemoryServiceConfig(BaseModel):
   """Configuration for ValkeyMemoryService.
 
   Attributes:
-      search_top_k: Maximum number of memories to retrieve per search.
+      similarity_top_k: Maximum number of memories to retrieve per
+          search (KNN parameter).
+      vector_distance_threshold: Maximum distance threshold for
+          filtering results. Results with distance greater than this
+          are excluded. None means no threshold filtering.
+      embedding_dimensions: Dimensionality of the embedding vectors.
       key_prefix: Prefix for all Valkey keys to avoid collisions.
       index_name: Name of the Valkey Search index.
-      ttl_seconds: Optional TTL for memory entries in seconds. None means
-          no expiration.
+      distance_metric: Distance metric for vector similarity.
+          One of 'COSINE', 'L2', or 'IP' (inner product).
+      ttl_seconds: Optional TTL for memory entries in seconds.
+          None means no expiration.
   """
 
-  search_top_k: int = Field(default=10, ge=1, le=100)
+  similarity_top_k: int = Field(default=10, ge=1, le=1000)
+  vector_distance_threshold: Optional[float] = Field(default=None, ge=0.0)
+  embedding_dimensions: int = Field(default=768, ge=1)
   key_prefix: str = Field(default="adk:memory")
   index_name: str = Field(default="adk_memory_idx")
+  distance_metric: str = Field(default="COSINE")
   ttl_seconds: Optional[int] = Field(default=None, ge=1)
 
 
 class ValkeyMemoryService(BaseMemoryService):
-  """Memory service implementation using Valkey with the Search module.
+  """Memory service using Valkey Search module with vector similarity.
 
   Uses valkey-glide client for communication with Valkey server and the
-  Valkey Search module (FT.CREATE / FT.SEARCH) for full-text search
-  over stored memories.
+  Valkey Search module for vector-based semantic search over stored
+  memories. This provides functionality analogous to
+  VertexAiRagMemoryService but backed by Valkey infrastructure.
 
   Memories are stored as Valkey Hash keys with fields: content, author,
-  timestamp, session_id, event_id, app_name, user_id, created_at. A
-  full-text search index is created over the content field, with TAG
-  fields for app_name and user_id to enable scoped queries.
+  timestamp, session_id, event_id, app_name, user_id, created_at, and
+  an embedding vector field. A vector search index (HNSW) is created
+  for approximate nearest neighbor retrieval, with TAG fields for
+  app_name and user_id to enable scoped queries.
 
   Example usage:
 
@@ -80,7 +100,15 @@ class ValkeyMemoryService(BaseMemoryService):
           client_name="adk_memory_client",
       )
       client = await GlideClient.create(config)
-      service = ValkeyMemoryService(client=client)
+
+      async def my_embed_fn(texts: list[str]) -> list[list[float]]:
+          # Your embedding logic here (OpenAI, Gemini, etc.)
+          ...
+
+      service = ValkeyMemoryService(
+          client=client,
+          embedding_function=my_embed_fn,
+      )
       await service.create_index()
 
   """
@@ -88,6 +116,7 @@ class ValkeyMemoryService(BaseMemoryService):
   def __init__(
       self,
       client,
+      embedding_function: EmbeddingFunction,
       config: Optional[ValkeyMemoryServiceConfig] = None,
   ):
     """Initializes the Valkey memory service.
@@ -96,6 +125,10 @@ class ValkeyMemoryService(BaseMemoryService):
         client: A connected valkey-glide GlideClient or
             GlideClusterClient instance. The caller is responsible
             for creating and managing the client lifecycle.
+        embedding_function: An async callable that takes a list of
+            text strings and returns a list of embedding vectors
+            (list of floats). Users provide their own embedding
+            model (e.g., OpenAI, Google Gemini, sentence-transformers).
         config: Optional ValkeyMemoryServiceConfig instance.
             If None, uses defaults.
     """
@@ -104,15 +137,22 @@ class ValkeyMemoryService(BaseMemoryService):
           "client is required. Provide a connected valkey-glide "
           "GlideClient or GlideClusterClient instance."
       )
+    if embedding_function is None:
+      raise ValueError(
+          "embedding_function is required. Provide an async callable "
+          "that takes list[str] and returns list[list[float]]."
+      )
     self._client = client
+    self._embedding_function = embedding_function
     self._config = config or ValkeyMemoryServiceConfig()
     self._index_created = False
 
   async def create_index(self):
     """Create the Valkey Search index if it does not already exist.
 
-    Creates a full-text search index with:
-    - content: TEXT field for full-text search
+    Creates a vector search index (HNSW) with:
+    - embedding: VECTOR field (HNSW, FLOAT32) for similarity search
+    - content: TEXT field for optional full-text filtering
     - app_name: TAG field for filtering by application
     - user_id: TAG field for filtering by user
     - author: TAG field for filtering by author
@@ -122,18 +162,39 @@ class ValkeyMemoryService(BaseMemoryService):
     will log a debug message and return without error.
     """
     from glide import DataType
+    from glide import DistanceMetricType
     from glide import ft
     from glide import FtCreateOptions
-    from glide import NumericField
     from glide import TagField
     from glide import TextField
+    from glide import VectorAlgorithm
+    from glide import VectorField
+    from glide import VectorFieldAttributesHnsw
+    from glide import VectorType
+
+    distance_map = {
+        "COSINE": DistanceMetricType.COSINE,
+        "L2": DistanceMetricType.L2,
+        "IP": DistanceMetricType.IP,
+    }
+    distance_metric = distance_map.get(
+        self._config.distance_metric.upper(), DistanceMetricType.COSINE
+    )
 
     schema = [
+        VectorField(
+            "embedding",
+            algorithm=VectorAlgorithm.HNSW,
+            attributes=VectorFieldAttributesHnsw(
+                dimensions=self._config.embedding_dimensions,
+                distance_metric=distance_metric,
+                type=VectorType.FLOAT32,
+            ),
+        ),
         TextField("content"),
         TagField("app_name"),
         TagField("user_id"),
         TagField("author"),
-        NumericField("timestamp", sortable=True),
     ]
 
     options = FtCreateOptions(
@@ -166,24 +227,56 @@ class ValkeyMemoryService(BaseMemoryService):
     unique_id = uuid.uuid4().hex[:12]
     return f"{self._config.key_prefix}:{unique_id}"
 
+  @staticmethod
+  def _vector_to_bytes(vector: list[float]) -> bytes:
+    """Convert a list of floats to a binary blob for Valkey storage."""
+    return struct.pack(f"<{len(vector)}f", *vector)
+
   @override
   async def add_session_to_memory(self, session: Session):
     """Add a session's events to Valkey memory storage.
 
-    Each event with text content is stored as a separate Valkey Hash
-    key with the configured prefix, making it automatically indexed
-    by the search module.
+    Extracts text from session events, generates embeddings using the
+    configured embedding function, and stores each event as a Valkey
+    Hash with the embedding vector for later similarity search.
     """
     if not self._index_created:
       await self.create_index()
 
-    memories_added = 0
-
+    # Collect texts and their corresponding events
+    texts = []
+    valid_events = []
     for event in session.events:
       content_text = extract_text_from_event(event)
-      if not content_text:
-        continue
+      if content_text:
+        texts.append(content_text)
+        valid_events.append(event)
 
+    if not texts:
+      logger.debug("No text events to add from session %s", session.id)
+      return
+
+    # Generate embeddings for all texts in one batch
+    try:
+      embeddings = await self._embedding_function(texts)
+    except Exception as e:
+      logger.error(
+          "Failed to generate embeddings for session %s: %s",
+          session.id,
+          e,
+      )
+      return
+
+    if len(embeddings) != len(texts):
+      logger.error(
+          "Embedding function returned %d vectors for %d texts",
+          len(embeddings),
+          len(texts),
+      )
+      return
+
+    memories_added = 0
+    for event, content_text, embedding in zip(valid_events, texts, embeddings):
       hash_key = self._memory_hash_key()
       field_values = {
           "content": content_text,
@@ -194,6 +287,7 @@ class ValkeyMemoryService(BaseMemoryService):
           "app_name": session.app_name,
           "user_id": session.user_id,
           "created_at": str(time.time()),
+          "embedding": self._vector_to_bytes(embedding),
       }
 
       try:
@@ -208,46 +302,114 @@ class ValkeyMemoryService(BaseMemoryService):
 
     logger.info("Added %d memories from session %s", memories_added, session.id)
 
-  def _build_search_query(self, app_name: str, user_id: str, query: str) -> str:
-    """Build an FT.SEARCH query string with filters.
+  @override
+  async def add_events_to_memory(
+      self,
+      *,
+      app_name: str,
+      user_id: str,
+      events: Sequence,
+      session_id: str | None = None,
+      custom_metadata=None,
+  ) -> None:
+    """Adds an incremental list of events to memory.
 
-    Constructs a query that:
-    - Filters by app_name and user_id using TAG filters
-    - Searches content using full-text search
+    Generates embeddings and stores each event with text content.
+    This is useful for persisting only a subset of events (e.g.,
+    the latest turn) without re-ingesting the full session.
+
+    Args:
+        app_name: The application name for memory scope.
+        user_id: The user ID for memory scope.
+        events: The events to add to memory.
+        session_id: Optional session ID for partitioning.
+        custom_metadata: Optional metadata (unused currently).
+    """
+    if not self._index_created:
+      await self.create_index()
+
+    texts = []
+    valid_events = []
+    for event in events:
+      content_text = extract_text_from_event(event)
+      if content_text:
+        texts.append(content_text)
+        valid_events.append(event)
+
+    if not texts:
+      return
+
+    try:
+      embeddings = await self._embedding_function(texts)
+    except Exception as e:
+      logger.error("Failed to generate embeddings: %s", e)
+      return
+
+    if len(embeddings) != len(texts):
+      logger.error(
+          "Embedding function returned %d vectors for %d texts",
+          len(embeddings),
+          len(texts),
+      )
+      return
+
+    memories_added = 0
+    for event, content_text, embedding in zip(valid_events, texts, embeddings):
+      hash_key = self._memory_hash_key()
+      field_values = {
+          "content": content_text,
+          "author": event.author or "",
+          "timestamp": str(event.timestamp) if event.timestamp else "0",
+          "session_id": session_id or "",
+          "event_id": event.id or "",
+          "app_name": app_name,
+          "user_id": user_id,
+          "created_at": str(time.time()),
+          "embedding": self._vector_to_bytes(embedding),
+      }
+
+      try:
+        await self._client.hset(hash_key, field_values)
+        memories_added += 1
+
+        if self._config.ttl_seconds:
+          await self._client.expire(hash_key, self._config.ttl_seconds)
+      except Exception as e:
+        logger.error("Failed to add memory for event %s: %s", event.id, e)
+
+    logger.info("Added %d memories via add_events_to_memory", memories_added)
+
+  def _build_knn_query(self, app_name: str, user_id: str, top_k: int) -> str:
+    """Build a KNN search query with TAG pre-filters.
 
     Args:
         app_name: Application name filter.
         user_id: User ID filter.
-        query: The user's search query text.
+        top_k: Number of nearest neighbors to retrieve.
 
     Returns:
-        A Valkey Search query string.
+        A Valkey Search KNN query string.
     """
-    # Escape special characters in TAG values
     escaped_app = app_name.replace("-", "\\-")
     escaped_user = user_id.replace("-", "\\-")
 
-    # Build full-text query with TAG filters
-    # Use @field:{value} for TAG filtering and plain text for content
-    tag_filter = f"@app_name:{{{escaped_app}}} @user_id:{{{escaped_user}}}"
-
-    # Escape special FT.SEARCH characters in the query text
-    search_chars = r'@!{}()|-=><~*:;$["\]^'
-    escaped_query = query
-    for ch in search_chars:
-      escaped_query = escaped_query.replace(ch, f"\\{ch}")
-
-    return f"{tag_filter} {escaped_query}"
+    # KNN query with pre-filter: filter first, then KNN on results
+    return (
+        f"(@app_name:{{{escaped_app}}} "
+        f"@user_id:{{{escaped_user}}})"
+        f"=>[KNN {top_k} @embedding $query_vec]"
+    )
 
   @override
   async def search_memory(
       self, *, app_name: str, user_id: str, query: str
   ) -> SearchMemoryResponse:
-    """Search for memories matching the query using Valkey Search.
+    """Search for memories using vector similarity (KNN).
 
-    Uses FT.SEARCH with the Valkey Search module for full-text search.
-    Results are filtered by app_name and user_id, and the query is
-    matched against the content field.
+    Generates an embedding for the query text, then performs a KNN
+    search using FT.SEARCH with pre-filtering by app_name and
+    user_id. Results are ranked by vector distance (lower = more
+    similar for COSINE).
 
     Args:
         app_name: The application name to scope the search.
@@ -255,19 +417,31 @@ class ValkeyMemoryService(BaseMemoryService):
         query: The search query string.
 
     Returns:
-        SearchMemoryResponse containing matching MemoryEntry objects.
+        SearchMemoryResponse containing matching MemoryEntry objects,
+        ordered by similarity.
     """
     from glide import ft
-    from glide import FtSearchLimit
     from glide import FtSearchOptions
 
     if not self._index_created:
       await self.create_index()
 
+    # Generate embedding for the query
     try:
-      search_query = self._build_search_query(app_name, user_id, query)
+      query_embeddings = await self._embedding_function([query])
+      query_embedding = query_embeddings[0]
+    except Exception as e:
+      logger.error("Failed to generate query embedding: %s", e)
+      return SearchMemoryResponse(memories=[])
+
+    query_vec_bytes = self._vector_to_bytes(query_embedding)
+
+    try:
+      search_query = self._build_knn_query(
+          app_name, user_id, self._config.similarity_top_k
+      )
       options = FtSearchOptions(
-          limit=FtSearchLimit(0, self._config.search_top_k),
+          params={"query_vec": query_vec_bytes},
       )
 
       result = await ft.search(
@@ -280,7 +454,6 @@ class ValkeyMemoryService(BaseMemoryService):
       if not result or len(result) < 2:
         return SearchMemoryResponse(memories=[])
 
-      # result is [count, {doc_id: {field: value, ...}, ...}]
       doc_count = result[0]
       if doc_count == 0:
         return SearchMemoryResponse(memories=[])
@@ -290,13 +463,20 @@ class ValkeyMemoryService(BaseMemoryService):
 
       for doc_id, fields in doc_map.items():
         try:
+          # Check distance threshold if configured
+          if self._config.vector_distance_threshold is not None:
+            score_raw = self._decode(fields.get(b"__embedding_score", b""))
+            if score_raw:
+              distance = float(score_raw)
+              if distance > self._config.vector_distance_threshold:
+                continue
+
           content_text = self._decode(fields.get(b"content", b""))
           if not content_text:
             continue
 
           author = self._decode(fields.get(b"author", b"")) or None
           timestamp_raw = self._decode(fields.get(b"timestamp", b"0"))
-          # Numeric fields may return "12345.0"; normalize to int string
           if timestamp_raw and timestamp_raw != "0":
             try:
               timestamp = str(int(float(timestamp_raw)))
