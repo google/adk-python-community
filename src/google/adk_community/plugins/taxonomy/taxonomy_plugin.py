@@ -107,7 +107,6 @@ class TaxonomyPlugin(BasePlugin):
     if tool.name not in _SKILL_GATE_TOOLS:
       return None
 
-    # Rule 5 Assertions
     assert tool is not None, "Intercepted tool cannot be None"
     assert isinstance(tool_args, dict), "tool_args must be a dictionary"
     assert tool_context is not None, "tool_context cannot be None"
