@@ -42,9 +42,11 @@ from glide import GlideClient, GlideClientConfiguration, NodeAddress
 from google.adk_community.memory import ValkeyMemoryService, ValkeyMemoryServiceConfig
 
 # 1. Create a valkey-glide client
+# IMPORTANT: Set client_name for observability — it appears in CLIENT LIST,
+# monitoring dashboards, and CloudWatch metrics.
 config = GlideClientConfiguration(
     addresses=[NodeAddress(host="localhost", port=6379)],
-    client_name="my_adk_app",
+    client_name="my_adk_memory_client",
 )
 client = await GlideClient.create(config)
 

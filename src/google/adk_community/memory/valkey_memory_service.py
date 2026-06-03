@@ -112,6 +112,8 @@ class ValkeyMemoryService(BaseMemoryService):
 
       from glide import GlideClientConfiguration, NodeAddress, GlideClient
 
+      # IMPORTANT: Set client_name for observability in CLIENT LIST,
+      # monitoring dashboards, and CloudWatch metrics.
       config = GlideClientConfiguration(
           addresses=[NodeAddress(host="localhost", port=6379)],
           client_name="adk_memory_client",
