@@ -97,6 +97,7 @@ def mock_valkey_client():
   client = AsyncMock()
   client.hset = AsyncMock(return_value=1)
   client.expire = AsyncMock(return_value=True)
+  client.exec = AsyncMock(return_value=[])
   return client
 
 
@@ -278,22 +279,19 @@ class TestValkeyMemoryServiceAddSession:
   @pytest.mark.asyncio
   async def test_add_session_success(self, memory_service, mock_valkey_client):
     """Test successful addition of session memories."""
-    await memory_service.add_session_to_memory(MOCK_SESSION)
+    with patch("glide.Batch") as MockBatch:
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
 
-    # Should make 2 hset calls (one per valid event with text)
-    assert mock_valkey_client.hset.call_count == 2
+      await memory_service.add_session_to_memory(MOCK_SESSION)
 
-    # Check first call stores correct fields including embedding
-    first_call = mock_valkey_client.hset.call_args_list[0]
-    key = first_call[0][0]
-    assert key.startswith("adk:memory:")
-    fields = first_call[0][1]
-    assert fields["content"] == "Hello, I like Python."
-    assert fields["author"] == "user"
-    assert fields["app_name"] == MOCK_APP_NAME
-    assert fields["user_id"] == MOCK_USER_ID
-    assert "embedding" in fields
-    assert isinstance(fields["embedding"], bytes)
+      # Should call exec once with the batch
+      mock_valkey_client.exec.assert_called_once_with(
+          mock_batch_instance, raise_on_error=True
+      )
+      # Batch should be created as non-atomic
+      MockBatch.assert_called_once_with(is_atomic=False)
 
   @pytest.mark.asyncio
   async def test_add_session_filters_empty_events(
@@ -301,26 +299,46 @@ class TestValkeyMemoryServiceAddSession:
   ):
     """Test that events without text content are filtered out."""
     await memory_service.add_session_to_memory(MOCK_SESSION_WITH_EMPTY_EVENTS)
-    assert mock_valkey_client.hset.call_count == 0
+    mock_valkey_client.exec.assert_not_called()
 
   @pytest.mark.asyncio
   async def test_add_session_with_ttl(
       self, memory_service_with_config, mock_valkey_client
   ):
     """Test that TTL is set when configured."""
-    await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      expire_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: expire_calls.append(
+          args
+      )
 
-    assert mock_valkey_client.expire.call_count == 2
-    expire_call = mock_valkey_client.expire.call_args_list[0]
-    assert expire_call[0][1] == 3600
+      await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+
+      # 2 valid events -> 2 hset + 2 expire calls on the batch
+      assert len(hset_calls) == 2
+      assert len(expire_calls) == 2
+      # TTL should be 3600
+      assert expire_calls[0][1] == 3600
 
   @pytest.mark.asyncio
   async def test_add_session_no_ttl_by_default(
       self, memory_service, mock_valkey_client
   ):
     """Test that no TTL is set when not configured."""
-    await memory_service.add_session_to_memory(MOCK_SESSION)
-    mock_valkey_client.expire.assert_not_called()
+    with patch("glide.Batch") as MockBatch:
+      expire_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: expire_calls.append(
+          args
+      )
+
+      await memory_service.add_session_to_memory(MOCK_SESSION)
+
+      assert len(expire_calls) == 0
 
   @pytest.mark.asyncio
   async def test_add_session_embedding_error(self, mock_valkey_client):
@@ -337,28 +355,39 @@ class TestValkeyMemoryServiceAddSession:
 
     # Should not raise, just log error
     await service.add_session_to_memory(MOCK_SESSION)
-    mock_valkey_client.hset.assert_not_called()
+    mock_valkey_client.exec.assert_not_called()
 
   @pytest.mark.asyncio
-  async def test_add_session_hset_error(
+  async def test_add_session_batch_exec_error(
       self, memory_service, mock_valkey_client
   ):
-    """Test error handling during hset."""
-    mock_valkey_client.hset.side_effect = Exception("Connection error")
+    """Test error handling during batch exec."""
+    mock_valkey_client.exec.side_effect = Exception("Connection error")
 
-    await memory_service.add_session_to_memory(MOCK_SESSION)
-    assert mock_valkey_client.hset.call_count == 2
+    with patch("glide.Batch") as MockBatch:
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      # Should not raise, just log error
+      await memory_service.add_session_to_memory(MOCK_SESSION)
+      mock_valkey_client.exec.assert_called_once()
 
   @pytest.mark.asyncio
   async def test_add_session_custom_key_prefix(
       self, memory_service_with_config, mock_valkey_client
   ):
     """Test that custom key prefix is used."""
-    await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: None
 
-    first_call = mock_valkey_client.hset.call_args_list[0]
-    key = first_call[0][0]
-    assert key.startswith("custom:mem:")
+      await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+
+      key = hset_calls[0][0]
+      assert key.startswith("custom:mem:")
 
   @pytest.mark.asyncio
   async def test_add_session_creates_index_if_needed(self, mock_valkey_client):
@@ -368,8 +397,15 @@ class TestValkeyMemoryServiceAddSession:
         embedding_function=_mock_embed_fn,
     )
 
-    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+    with (
+        patch("glide.ft.create", new_callable=AsyncMock) as mock_create,
+        patch("glide.Batch") as MockBatch,
+    ):
       mock_create.return_value = "OK"
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
       await service.add_session_to_memory(MOCK_SESSION)
       mock_create.assert_called_once()
       assert service._index_created is True
@@ -391,19 +427,26 @@ class TestValkeyMemoryServiceAddEvents:
         ),
     ]
 
-    await memory_service.add_events_to_memory(
-        app_name="myapp",
-        user_id="user1",
-        events=events,
-        session_id="sess-1",
-    )
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: None
 
-    assert mock_valkey_client.hset.call_count == 1
-    fields = mock_valkey_client.hset.call_args_list[0][0][1]
-    assert fields["content"] == "Hello world"
-    assert fields["app_name"] == "myapp"
-    assert fields["user_id"] == "user1"
-    assert fields["session_id"] == "sess-1"
+      await memory_service.add_events_to_memory(
+          app_name="myapp",
+          user_id="user1",
+          events=events,
+          session_id="sess-1",
+      )
+
+      assert len(hset_calls) == 1
+      fields = hset_calls[0][1]
+      assert fields["content"] == "Hello world"
+      assert fields["app_name"] == "myapp"
+      assert fields["user_id"] == "user1"
+      assert fields["session_id"] == "sess-1"
+      mock_valkey_client.exec.assert_called_once()
 
   @pytest.mark.asyncio
   async def test_add_events_filters_empty(
@@ -420,7 +463,7 @@ class TestValkeyMemoryServiceAddEvents:
         events=events,
     )
 
-    mock_valkey_client.hset.assert_not_called()
+    mock_valkey_client.exec.assert_not_called()
 
 
 class TestValkeyMemoryServiceSearch:
@@ -645,6 +688,55 @@ class TestValkeyMemoryServiceClose:
     mock_valkey_client.close.assert_not_called()
 
 
+class TestValkeyMemoryServiceEnsureIndex:
+  """Tests for _ensure_index with asyncio.Lock."""
+
+  @pytest.mark.asyncio
+  async def test_ensure_index_skips_if_already_created(
+      self, mock_valkey_client
+  ):
+    """Test that _ensure_index does not call create_index if already done."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+    service._index_created = True
+
+    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+      await service._ensure_index()
+      mock_create.assert_not_called()
+
+  @pytest.mark.asyncio
+  async def test_ensure_index_calls_create_index_once(self, mock_valkey_client):
+    """Test that concurrent calls to _ensure_index only create index once."""
+    import asyncio
+
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    call_count = 0
+
+    async def mock_create(*args, **kwargs):
+      nonlocal call_count
+      call_count += 1
+      await asyncio.sleep(0.01)  # Simulate async work
+      return "OK"
+
+    with patch("glide.ft.create", side_effect=mock_create):
+      # Launch multiple concurrent ensure_index calls
+      await asyncio.gather(
+          service._ensure_index(),
+          service._ensure_index(),
+          service._ensure_index(),
+      )
+
+      # Should only call create once due to lock
+      assert call_count == 1
+      assert service._index_created is True
+
+
 class TestValkeyMemoryServiceEscapeTagValue:
   """Tests for _escape_tag_value static method."""
 
@@ -681,3 +773,8 @@ class TestValkeyMemoryServiceEscapeTagValue:
     """Test multiple special characters in one value."""
     result = ValkeyMemoryService._escape_tag_value("a-b.c:d@e")
     assert result == "a\\-b\\.c\\:d\\@e"
+
+  def test_question_mark_escaped(self):
+    """Test question mark escaping (wildcard glob in TAG queries)."""
+    assert ValkeyMemoryService._escape_tag_value("app?") == "app\\?"
+    assert ValkeyMemoryService._escape_tag_value("a?b?c") == "a\\?b\\?c"

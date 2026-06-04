@@ -20,6 +20,7 @@ for semantic memory retrieval, analogous to VertexAiRagMemoryService.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from collections.abc import Callable
 from collections.abc import Sequence
@@ -165,6 +166,7 @@ class ValkeyMemoryService(BaseMemoryService):
     self._embedding_function = embedding_function
     self._config = config or ValkeyMemoryServiceConfig()
     self._index_created = False
+    self._index_lock = asyncio.Lock()
 
   async def create_index(self):
     """Create the Valkey Search index if it does not already exist.
@@ -245,6 +247,14 @@ class ValkeyMemoryService(BaseMemoryService):
     unique_id = uuid.uuid4().hex[:12]
     return f"{self._config.key_prefix}:{unique_id}"
 
+  async def _ensure_index(self):
+    """Ensure the search index exists, using double-check locking."""
+    if self._index_created:
+      return
+    async with self._index_lock:
+      if not self._index_created:
+        await self.create_index()
+
   @staticmethod
   def _vector_to_bytes(vector: list[float]) -> bytes:
     """Convert a list of floats to a binary blob for Valkey storage."""
@@ -258,67 +268,13 @@ class ValkeyMemoryService(BaseMemoryService):
     configured embedding function, and stores each event as a Valkey
     Hash with the embedding vector for later similarity search.
     """
-    if not self._index_created:
-      await self.create_index()
-
-    # Collect texts and their corresponding events
-    texts = []
-    valid_events = []
-    for event in session.events:
-      content_text = extract_text_from_event(event)
-      if content_text:
-        texts.append(content_text)
-        valid_events.append(event)
-
-    if not texts:
-      logger.debug("No text events to add from session %s", session.id)
-      return
-
-    # Generate embeddings for all texts in one batch
-    try:
-      embeddings = await self._embedding_function(texts)
-    except Exception as e:
-      logger.error(
-          "Failed to generate embeddings for session %s: %s",
-          session.id,
-          e,
-      )
-      return
-
-    if len(embeddings) != len(texts):
-      logger.error(
-          "Embedding function returned %d vectors for %d texts",
-          len(embeddings),
-          len(texts),
-      )
-      return
-
-    memories_added = 0
-    for event, content_text, embedding in zip(valid_events, texts, embeddings):
-      hash_key = self._memory_hash_key()
-      field_values = {
-          "content": content_text,
-          "author": event.author or "",
-          "timestamp": str(event.timestamp) if event.timestamp else "0",
-          "session_id": session.id,
-          "event_id": event.id or "",
-          "app_name": session.app_name,
-          "user_id": session.user_id,
-          "created_at": str(time.time()),
-          "embedding": self._vector_to_bytes(embedding),
-      }
-
-      try:
-        await self._client.hset(hash_key, field_values)
-        memories_added += 1
-        logger.debug("Added memory for event %s at key %s", event.id, hash_key)
-
-        if self._config.ttl_seconds is not None:
-          await self._client.expire(hash_key, self._config.ttl_seconds)
-      except Exception as e:
-        logger.error("Failed to add memory for event %s: %s", event.id, e)
-
-    logger.info("Added %d memories from session %s", memories_added, session.id)
+    await self._ensure_index()
+    await self._ingest_events(
+        events=session.events,
+        app_name=session.app_name,
+        user_id=session.user_id,
+        session_id=session.id,
+    )
 
   @override
   async def add_events_to_memory(
@@ -343,9 +299,36 @@ class ValkeyMemoryService(BaseMemoryService):
         session_id: Optional session ID for partitioning.
         custom_metadata: Optional metadata (unused currently).
     """
-    if not self._index_created:
-      await self.create_index()
+    await self._ensure_index()
+    await self._ingest_events(
+        events=events,
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id or "",
+    )
 
+  async def _ingest_events(
+      self,
+      events: Sequence,
+      app_name: str,
+      user_id: str,
+      session_id: str,
+  ) -> None:
+    """Shared ingestion logic for add_session_to_memory and add_events_to_memory.
+
+    Extracts text from events, generates embeddings in batch, and
+    stores each event as a Valkey Hash using pipelined Batch commands
+    for efficiency.
+
+    Args:
+        events: The events to ingest.
+        app_name: The application name for memory scope.
+        user_id: The user ID for memory scope.
+        session_id: The session ID for partitioning.
+    """
+    from glide import Batch
+
+    # Collect texts and their corresponding events
     texts = []
     valid_events = []
     for event in events:
@@ -355,8 +338,10 @@ class ValkeyMemoryService(BaseMemoryService):
         valid_events.append(event)
 
     if not texts:
+      logger.debug("No text events to ingest")
       return
 
+    # Generate embeddings for all texts in one batch
     try:
       embeddings = await self._embedding_function(texts)
     except Exception as e:
@@ -371,14 +356,17 @@ class ValkeyMemoryService(BaseMemoryService):
       )
       return
 
-    memories_added = 0
+    # Build a Batch to pipeline all hset + expire calls
+    batch = Batch(is_atomic=False)
+    hash_keys = []
     for event, content_text, embedding in zip(valid_events, texts, embeddings):
       hash_key = self._memory_hash_key()
+      hash_keys.append(hash_key)
       field_values = {
           "content": content_text,
           "author": event.author or "",
           "timestamp": str(event.timestamp) if event.timestamp else "0",
-          "session_id": session_id or "",
+          "session_id": session_id,
           "event_id": event.id or "",
           "app_name": app_name,
           "user_id": user_id,
@@ -386,19 +374,19 @@ class ValkeyMemoryService(BaseMemoryService):
           "embedding": self._vector_to_bytes(embedding),
       }
 
-      try:
-        await self._client.hset(hash_key, field_values)
-        memories_added += 1
+      batch.hset(hash_key, field_values)
+      if self._config.ttl_seconds is not None:
+        batch.expire(hash_key, self._config.ttl_seconds)
 
-        if self._config.ttl_seconds is not None:
-          await self._client.expire(hash_key, self._config.ttl_seconds)
-      except Exception as e:
-        logger.error("Failed to add memory for event %s: %s", event.id, e)
-
-    logger.info("Added %d memories via add_events_to_memory", memories_added)
+    try:
+      await self._client.exec(batch, raise_on_error=True)
+      logger.info("Added %d memories via batch pipeline", len(hash_keys))
+    except Exception as e:
+      logger.error("Failed to execute batch pipeline: %s", e)
 
   # Characters that must be escaped in Valkey Search TAG field values.
-  _TAG_SPECIAL_CHARS = set(r',.<>{}[]"' + r"':;!@#$%^&*()-+=~|/\\ ")
+  # Includes '?' which is a single-character wildcard glob in TAG queries.
+  _TAG_SPECIAL_CHARS = set(r',.<>{}[]"' + r"':;!@#$%^&*()-+=~|/\\ ?")
 
   @staticmethod
   def _escape_tag_value(value: str) -> str:
@@ -459,8 +447,7 @@ class ValkeyMemoryService(BaseMemoryService):
     from glide import ft
     from glide import FtSearchOptions
 
-    if not self._index_created:
-      await self.create_index()
+    await self._ensure_index()
 
     # Generate embedding for the query
     try:
