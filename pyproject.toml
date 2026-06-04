@@ -50,6 +50,7 @@ sdc-agents = [
     "sdc-agents>=4.3.3; python_version >= '3.11'",
 ]
 spraay = ["web3>=6.0.0"]
+typesense = ["typesense>=0.20.0"]
 
 
 [tool.pyink]
