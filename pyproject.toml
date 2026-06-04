@@ -50,6 +50,10 @@ sdc-agents = [
     "sdc-agents>=4.3.3; python_version >= '3.11'",
 ]
 spraay = ["web3>=6.0.0"]
+google-managed-mcp = [
+    "google-auth>=2.0.0",  # For ADC-based auth in GoogleManagedMcpToolset
+    "mcp>=1.24,<2",  # MCP protocol support (optional in google-adk)
+]
 
 
 [tool.pyink]
