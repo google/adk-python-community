@@ -38,6 +38,7 @@ from google.adk.memory.memory_entry import MemoryEntry
 from google.genai import types
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import field_validator
 from typing_extensions import override
 
 from .utils import extract_text_from_event
@@ -80,6 +81,7 @@ class ValkeyMemoryServiceConfig(BaseModel):
   distance_metric: str = Field(default="COSINE")
   ttl_seconds: Optional[int] = Field(default=None, ge=1)
 
+  @field_validator("distance_metric")
   @classmethod
   def _validate_distance_metric(cls, v):
     """Validate distance_metric is one of the allowed values."""
@@ -87,12 +89,6 @@ class ValkeyMemoryServiceConfig(BaseModel):
     if v.upper() not in allowed:
       raise ValueError(f"distance_metric must be one of {allowed}, got '{v}'")
     return v.upper()
-
-  from pydantic import field_validator
-
-  _check_distance_metric = field_validator("distance_metric")(
-      _validate_distance_metric
-  )
 
 
 class ValkeyMemoryService(BaseMemoryService):
@@ -383,6 +379,7 @@ class ValkeyMemoryService(BaseMemoryService):
       logger.info("Added %d memories via batch pipeline", len(hash_keys))
     except Exception as e:
       logger.error("Failed to execute batch pipeline: %s", e)
+      raise RuntimeError(f"Memory ingestion failed: {e}") from e
 
   # Characters that must be escaped in Valkey Search TAG field values.
   # Includes '?' which is a single-character wildcard glob in TAG queries.
@@ -482,7 +479,7 @@ class ValkeyMemoryService(BaseMemoryService):
         return SearchMemoryResponse(memories=[])
 
       memories = []
-      doc_map = result[1] if len(result) > 1 else {}
+      doc_map = result[1]
 
       for doc_id, fields in doc_map.items():
         try:

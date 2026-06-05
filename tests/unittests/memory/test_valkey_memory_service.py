@@ -361,7 +361,7 @@ class TestValkeyMemoryServiceAddSession:
   async def test_add_session_batch_exec_error(
       self, memory_service, mock_valkey_client
   ):
-    """Test error handling during batch exec."""
+    """Test that batch exec failure raises RuntimeError."""
     mock_valkey_client.exec.side_effect = Exception("Connection error")
 
     with patch("glide.Batch") as MockBatch:
@@ -369,8 +369,8 @@ class TestValkeyMemoryServiceAddSession:
       mock_batch_instance.hset = lambda *args, **kwargs: None
       mock_batch_instance.expire = lambda *args, **kwargs: None
 
-      # Should not raise, just log error
-      await memory_service.add_session_to_memory(MOCK_SESSION)
+      with pytest.raises(RuntimeError, match="Memory ingestion failed"):
+        await memory_service.add_session_to_memory(MOCK_SESSION)
       mock_valkey_client.exec.assert_called_once()
 
   @pytest.mark.asyncio
