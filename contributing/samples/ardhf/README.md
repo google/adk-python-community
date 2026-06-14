@@ -1,51 +1,19 @@
-# ARDHF — Agent Finder (ARD) Toolset for ADK
+# ARDHF — Agentic Resource Discovery (ARD) Toolset for ADK
 
 ## Overview
 
 ARDHF wraps [HuggingFace's Agent Finder](https://github.com/huggingface/hf-agentfinder)
 (ARD — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
-agent the ability to **search for, discover, and connect to** agents, skills,
-MCP servers, and other agentic resources at runtime.
+agent the ability to **discover, inspect, and connect to** agents, skills,
+MCP servers, HuggingFace Spaces, and other agentic resources at runtime.
 
-The toolset provides three tools:
+The core workflow is **discover → inspect → connect**:
 
-| Tool | Description |
-|---|---|
-| `search_agents` | Search ARD registries by natural-language query |
-| `get_agent_card` | Fetch a specific artifact (agent card, skill, MCP descriptor) by URL |
-| `connect_agent` | Send a message to a remote A2A agent and return the response |
+1. **Discover** — search ARD registries for resources matching a natural-language query.
+2. **Inspect** — fetch the full artifact (agent card, skill markdown, MCP descriptor) by URL.
+3. **Connect** — send a message to a remote A2A agent and get a response.
 
-## Sample Inputs
-
-- `Find MCP servers for image processing`
-
-- `Search for code review agents`
-
-  *Returns skill and agent entries related to code review.*
-
-- `What tools are available for background removal?`
-
-- `Get the agent card at https://huggingface.co/api/agentfinder/skills/huggingface/rembg/SKILL.md`
-
-  *Fetches the full skill markdown for the rembg Space.*
-
-- `Find A2A agents for code review and connect to the best one`
-
-  *Searches for A2A agents, picks the best match, and sends a message via the A2A protocol.*
-
-## How To
-
-### Install
-
-```bash
-pip install google-adk-community
-# For A2A agent connectivity:
-pip install 'google-adk[a2a]'
-# Optional, for local (in-process) mode:
-pip install hf-agentfinder
-```
-
-### Basic usage
+## Quick Start
 
 ```python
 from google.adk import Agent
@@ -58,72 +26,244 @@ agent = Agent(
 )
 ```
 
-### Remote vs local mode
+That's it — the agent now has access to all discovery tools and can search,
+inspect, and connect to agentic resources.
 
-By default, the toolset sends HTTP requests to the hosted HuggingFace Agent
-Finder registry.  For in-process search (no network calls), install
-`hf-agentfinder` and set `local=True`:
+## Available Tools
+
+| Tool | Description |
+|---|---|
+| `search_ards` | Search ARD registries across all artifact types (agents, skills, MCP servers, Spaces) |
+| `search_agents` | Search filtered to A2A agents (`application/a2a-agent-card+json`) |
+| `search_skills` | Search filtered to skills (`application/ai-skill`) |
+| `search_tools` | Search filtered to MCP servers (`application/mcp-server+json`) |
+| `search_spaces` | Search filtered to HuggingFace Spaces (`application/vnd.huggingface.space+json`) |
+| `get_agent_card` | Fetch a specific artifact (agent card, skill markdown, MCP descriptor) by URL |
+| `connect_agent` | Send a message to a remote A2A agent and return the response |
+
+The `search_agents`, `search_skills`, `search_tools`, and `search_spaces`
+tools are convenience aliases — each calls the same core search logic with
+the artifact type pre-set.  Use `search_ards` when you want to search across
+all types at once.
+
+## Realistic Scenarios
+
+### Finding and using a Skill
+
+> "Find a code review skill and apply it to my PR"
+
+1. The agent calls `search_skills('code review')` to find skills related to code review.
+2. It picks the best match and calls `get_agent_card(url)` to fetch the full skill markdown.
+3. It reads the skill instructions and applies them to the user's code.
+
+```
+User: Find a skill for reviewing Python code
+Agent: [calls search_skills('Python code review')]
+Agent: Found "python-review-skill" — fetching details...
+Agent: [calls get_agent_card('https://huggingface.co/.../SKILL.md')]
+Agent: Here's what the skill covers: ...
+```
+
+### Finding and using an MCP Tool
+
+> "Find a database query tool"
+
+1. The agent calls `search_tools('database query')` to find MCP servers.
+2. It calls `get_agent_card(url)` to fetch the MCP server descriptor.
+3. The descriptor contains tool definitions that can be connected via `McpToolset`.
+
+```
+User: Find tools for querying SQL databases
+Agent: [calls search_tools('SQL database query')]
+Agent: Found "sql-executor" MCP server with tools: execute_query, list_tables
+Agent: [calls get_agent_card('https://..../mcp-descriptor.json')]
+Agent: The server exposes these tools: ...
+```
+
+### Finding and using a Skill + Tool together
+
+> "Find both a triage skill and a labeling tool for my issues"
+
+1. The agent calls `search_skills('issue triage')` to find a triage skill.
+2. It calls `search_tools('issue labeling')` to find a labeling MCP server.
+3. It combines the skill's instructions with the tool's capabilities.
+
+### Connecting to a Remote A2A Agent
+
+> "Find an image generation agent and ask it to make a logo"
+
+1. The agent calls `search_agents('image generation')` to find A2A agents.
+2. It inspects the best match with `get_agent_card(url)`.
+3. It delegates the task with `connect_agent(url, 'Create a minimalist logo for a coffee shop')`.
+4. The remote agent processes the request and returns the result.
+
+```
+User: Find an agent that can generate images and make me a logo
+Agent: [calls search_agents('image generation')]
+Agent: Found "image-gen-agent" — connecting...
+Agent: [calls connect_agent('https://.../agent.json', 'Create a minimalist logo for a coffee shop')]
+Agent: The image generation agent responded with: ...
+```
+
+### Discovering HuggingFace Spaces
+
+> "Find a text-to-speech Space"
+
+1. The agent calls `search_spaces('text to speech')` to find HF Spaces.
+2. It calls `get_agent_card(url)` to fetch the Space metadata.
+3. It presents the Space info (URL, description, capabilities) to the user.
+
+```
+User: Find a Space for text to speech
+Agent: [calls search_spaces('text to speech')]
+Agent: Found "bark-tts" Space — here are the details: ...
+```
+
+## Configuration
+
+### Registry URL
+
+By default, the toolset queries the hosted HuggingFace Agent Finder registry.
+Point to any ARD-compatible registry:
+
+```python
+toolset = AgentFinderToolset(
+    registry_url="http://localhost:8090",
+)
+```
+
+Or set the environment variable:
+
+```bash
+export ARDHF_REGISTRY_URL=http://localhost:8090
+```
+
+### Authentication
+
+Pass a HuggingFace token for authenticated registry access:
+
+```python
+toolset = AgentFinderToolset(token="hf_...")
+```
+
+Or set the environment variable:
+
+```bash
+export HF_TOKEN=hf_...
+```
+
+### Local mode
+
+For in-process, offline-capable search (no HTTP requests), install the
+`hf-agentfinder` package and enable local mode:
 
 ```python
 toolset = AgentFinderToolset(local=True)
 ```
 
-Or set environment variables:
+Or set the environment variable:
 
 ```bash
 export ARDHF_LOCAL=1
-export HF_TOKEN=hf_...  # optional, for authenticated access
 ```
 
-### Custom registry URL
+### Environment variables summary
 
-Point to any ARD-compatible registry:
+| Variable | Description |
+|---|---|
+| `ARDHF_REGISTRY_URL` | Override the default registry URL |
+| `HF_TOKEN` | Bearer token for authenticated registry access |
+| `ARDHF_LOCAL` | Set to `1` / `true` / `yes` to enable local mode |
+
+## Customizations
+
+### Filtering exposed tools
+
+Use `tool_filter` to expose only specific tools to the agent:
 
 ```python
+# Only expose search and inspect tools (no connect)
 toolset = AgentFinderToolset(
-    registry_url="http://localhost:8090",  # e.g. challenge server
+    tool_filter=["search_ards", "search_agents", "get_agent_card"],
 )
 ```
 
-### Running the sample
+### Tool name prefix
 
-```bash
-# With adk web
-adk web contributing/samples/ardhf
+Add a prefix to avoid name collisions with other toolsets:
 
-# Or directly
-python -m contributing.samples.ardhf.agent
+```python
+toolset = AgentFinderToolset(tool_name_prefix="ard")
+# Tools become: ard_search_ards, ard_search_agents, etc.
 ```
 
-### Using the challenge server for deterministic testing
+### Multiple registries
 
-The `hf-agentfinder` package includes a deterministic challenge server:
+Use multiple toolset instances to search different registries:
+
+```python
+hf_toolset = AgentFinderToolset(
+    registry_url="https://huggingface.co/api/agentfinder",
+    tool_name_prefix="hf",
+)
+internal_toolset = AgentFinderToolset(
+    registry_url="https://internal.example.com/ard",
+    tool_name_prefix="internal",
+)
+
+agent = Agent(
+    name="multi_registry_agent",
+    instruction="Search multiple registries for the best tool.",
+    tools=[hf_toolset, internal_toolset],
+)
+```
+
+### Combining with other ADK toolsets
+
+ARDHF works alongside any other ADK toolset:
+
+```python
+from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
+
+agent = Agent(
+    name="combined_agent",
+    instruction="Use discovery and local tools together.",
+    tools=[AgentFinderToolset(), McpToolset(...)],
+)
+```
+
+## Testing
+
+### Using the HF challenge server
+
+The `hf-agentfinder` package includes a deterministic challenge server with
+fixed fixtures — no API keys or network access needed:
 
 ```bash
 # Terminal 1: start the challenge server
 pip install hf-agentfinder
 hf-agentfinder challenge serve --port 8090
 
-# Terminal 2: run the agent against it
+# Terminal 2: run the sample agent against it
 ARDHF_REGISTRY_URL=http://127.0.0.1:8090 \
-    python -m contributing.samples.ardhf.agent
+    adk web contributing/samples/ardhf
 ```
 
-## Architecture
+### Running the unit tests
 
-```
-AgentFinderToolset (BaseToolset)
-├── search_agents(query, artifact_type?, limit?)
-│   ├── remote: HTTP POST to registry /search
-│   └── local: agentfinder.server.search_agent_finder()
-├── get_agent_card(url)
-│   └── HTTP GET to artifact URL
-└── connect_agent(agent_card_url, message)
-    └── A2A protocol: resolve card → create client → send message
+```bash
+# Unit tests (no server needed)
+pytest tests/unittests/tools/ardhf/ -v
+
+# Integration tests (start challenge server first)
+hf-agentfinder challenge serve --port 8090 &
+pytest tests/unittests/tools/ardhf/ -v
 ```
 
-## Related
+## References
 
+- [ARD Specification](https://github.com/nichochar/ard-spec) — Agentic Resource Discovery specification
 - [HuggingFace Agent Finder](https://github.com/huggingface/hf-agentfinder) — ARD reference implementation
-- [ADK BaseToolset](https://google.github.io/adk-docs/) — ADK toolset documentation
+- [ai-catalog](https://github.com/nichochar/ai-catalog) — Curated agentic resource catalog
+- [ADK Documentation](https://google.github.io/adk-docs/) — Google Agent Development Kit
 - [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification
