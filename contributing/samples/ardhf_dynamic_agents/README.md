@@ -9,13 +9,26 @@ Unlike a traditional multi-agent system where sub-agents are hardcoded at
 build time, this orchestrator discovers capable agents on the fly:
 
 1. User sends a request the orchestrator can't handle alone.
-2. Orchestrator searches ARD registries for a capable A2A agent.
-3. Orchestrator inspects the agent card to verify compatibility.
-4. Orchestrator delegates the task via the A2A protocol.
+2. Orchestrator uses `search_agents` to find a capable A2A agent (or
+   `search_ards` for a broader search across all artifact types).
+3. Orchestrator inspects the agent card with `get_agent_card` to verify compatibility.
+4. Orchestrator delegates the task via `connect_agent` using the A2A protocol.
 5. Orchestrator returns the result to the user.
 
-This is the **discover -> connect -> use** pattern — agents finding and
+This is the **discover → connect → use** pattern — agents finding and
 collaborating with other agents without prior configuration.
+
+## Available Tools
+
+| Tool | Description |
+|---|---|
+| `search_ards` | Search across all artifact types |
+| `search_agents` | Search filtered to A2A agents |
+| `search_skills` | Search filtered to skills |
+| `search_tools` | Search filtered to MCP servers |
+| `search_spaces` | Search filtered to HuggingFace Spaces |
+| `get_agent_card` | Fetch a specific artifact by URL |
+| `connect_agent` | Send a message to a remote A2A agent |
 
 ## Sample Inputs
 
@@ -74,7 +87,11 @@ User
 │  (no built-in domain skills) │
 │                              │
 │  Tools:                      │
-│   ├── search_agents ─────────┼──► ARD Registry
+│   ├── search_ards ───────────┼──► ARD Registry (all types)
+│   ├── search_agents ─────────┼──► ARD Registry (A2A only)
+│   ├── search_skills ─────────┼──► ARD Registry (skills only)
+│   ├── search_tools ──────────┼──► ARD Registry (MCP only)
+│   ├── search_spaces ─────────┼──► ARD Registry (Spaces only)
 │   ├── get_agent_card ────────┼──► Agent Card URL
 │   └── connect_agent ─────────┼──► Remote A2A Agent
 └──────────────────────────────┘

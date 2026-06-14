@@ -21,16 +21,19 @@ Supports two modes:
 * **local** — uses the ``agentfinder`` Python package in-process for
   zero-latency, offline-capable search.
 
-The toolset exposes three tools to the agent:
+The toolset exposes the following tools to the agent:
 
-* ``search_agents`` — search ARD registries for agents, skills, MCP
-  servers, and other agentic resources.
+* ``search_ards`` — search ARD registries across all artifact types
+  (agents, skills, MCP servers, spaces).
+* ``search_agents`` — convenience alias: search filtered to A2A agents.
+* ``search_skills`` — convenience alias: search filtered to skills.
+* ``search_tools`` — convenience alias: search filtered to MCP servers.
+* ``search_spaces`` — convenience alias: search filtered to HF Spaces.
 * ``get_agent_card`` — fetch a specific artifact (agent card, skill
   markdown, MCP server descriptor) by URL.
 * ``connect_agent`` — send a message to a remote A2A agent and return
   the response, enabling the full discover → connect → use flow.
 
-Prepared for rename to ARD (Agentic Resource Discovery).
 Reference: https://github.com/huggingface/hf-agentfinder
 """
 
@@ -210,7 +213,8 @@ def _extract_text_from_a2a_response(a2a_response: Any) -> list[str]:
 class AgentFinderToolset(BaseToolset):
   """ADK BaseToolset wrapping HuggingFace Agent Finder (ARD).
 
-  Provides ``search_agents``, ``get_agent_card``, and
+  Provides ``search_ards``, ``search_agents``, ``search_skills``,
+  ``search_tools``, ``search_spaces``, ``get_agent_card``, and
   ``connect_agent`` tools to any ADK agent, enabling the full
   *discover → inspect → connect* workflow.
 
@@ -241,30 +245,15 @@ class AgentFinderToolset(BaseToolset):
     self._token = token
     self._local = local
 
-  # -- Tool implementations -----------------------------------------------
+  # -- Internal search logic -----------------------------------------------
 
-  async def _search_agents(
+  async def _do_search(
       self,
-      tool_context: ToolContext,
       query: str,
       artifact_type: Optional[str] = None,
       limit: int = 10,
   ) -> dict[str, Any]:
-    """Search ARD registries for agents, skills, and MCP servers.
-
-    Args:
-      query: Natural-language search query describing what you need,
-          e.g. "remove image background" or "code review agent".
-      artifact_type: Optional filter by artifact kind.  Supported
-          values: ``skill``, ``mcp``, ``space``, ``a2a``, or a raw
-          media type like ``application/mcp-server+json``.  When
-          omitted, all artifact types are returned.
-      limit: Maximum number of results to return (1-100, default 10).
-
-    Returns:
-      A dictionary with ``results`` (list of matching entries) and
-      optionally ``referrals`` (list of additional registries).
-    """
+    """Core search logic shared by all search tools."""
     # Resolve human-friendly kind to media type.
     resolved_type = (
         _artifact_type_for_kind(artifact_type) if artifact_type else None
@@ -293,6 +282,114 @@ class AgentFinderToolset(BaseToolset):
       return {"error": f"Search request failed: {exc}"}
     except ImportError as exc:
       return {"error": str(exc)}
+
+  # -- Tool implementations -----------------------------------------------
+
+  async def _search_ards(
+      self,
+      tool_context: ToolContext,
+      query: str,
+      artifact_type: Optional[str] = None,
+      limit: int = 10,
+  ) -> dict[str, Any]:
+    """Search ARD registries across all artifact types.
+
+    Args:
+      query: Natural-language search query describing what you need,
+          e.g. "remove image background" or "code review".
+      artifact_type: Optional filter by artifact kind.  Supported
+          values: ``skill``, ``mcp``, ``space``, ``a2a``, or a raw
+          media type like ``application/mcp-server+json``.  When
+          omitted, all artifact types are returned.
+      limit: Maximum number of results to return (1-100, default 10).
+
+    Returns:
+      A dictionary with ``results`` (list of matching entries) and
+      optionally ``referrals`` (list of additional registries).
+    """
+    return await self._do_search(
+        query, artifact_type=artifact_type, limit=limit
+    )
+
+  async def _search_agents(
+      self,
+      tool_context: ToolContext,
+      query: str,
+      limit: int = 10,
+  ) -> dict[str, Any]:
+    """Search ARD registries for A2A agents only.
+
+    Args:
+      query: Natural-language search query describing the agent
+          capability you need, e.g. "code review" or "translation".
+      limit: Maximum number of results to return (1-100, default 10).
+
+    Returns:
+      A dictionary with ``results`` filtered to A2A agents and
+      optionally ``referrals``.
+    """
+    return await self._do_search(query, artifact_type="a2a", limit=limit)
+
+  async def _search_skills(
+      self,
+      tool_context: ToolContext,
+      query: str,
+      limit: int = 10,
+  ) -> dict[str, Any]:
+    """Search ARD registries for skills only.
+
+    Args:
+      query: Natural-language search query describing the skill you
+          need, e.g. "code review" or "triage issues".
+      limit: Maximum number of results to return (1-100, default 10).
+
+    Returns:
+      A dictionary with ``results`` filtered to skills and optionally
+      ``referrals``.
+    """
+    return await self._do_search(
+        query, artifact_type="skill", limit=limit
+    )
+
+  async def _search_tools(
+      self,
+      tool_context: ToolContext,
+      query: str,
+      limit: int = 10,
+  ) -> dict[str, Any]:
+    """Search ARD registries for MCP servers only.
+
+    Args:
+      query: Natural-language search query describing the tool you
+          need, e.g. "database query" or "image processing".
+      limit: Maximum number of results to return (1-100, default 10).
+
+    Returns:
+      A dictionary with ``results`` filtered to MCP servers and
+      optionally ``referrals``.
+    """
+    return await self._do_search(query, artifact_type="mcp", limit=limit)
+
+  async def _search_spaces(
+      self,
+      tool_context: ToolContext,
+      query: str,
+      limit: int = 10,
+  ) -> dict[str, Any]:
+    """Search ARD registries for HuggingFace Spaces only.
+
+    Args:
+      query: Natural-language search query describing the Space you
+          need, e.g. "text to speech" or "image generation".
+      limit: Maximum number of results to return (1-100, default 10).
+
+    Returns:
+      A dictionary with ``results`` filtered to HuggingFace Spaces and
+      optionally ``referrals``.
+    """
+    return await self._do_search(
+        query, artifact_type="space", limit=limit
+    )
 
   async def _get_agent_card(
       self,
@@ -439,9 +536,13 @@ class AgentFinderToolset(BaseToolset):
       self,
       readonly_context: Optional[ReadonlyContext] = None,
   ) -> list[BaseTool]:
-    """Return the search_agents, get_agent_card, and connect_agent tools."""
+    """Return all search, inspect, and connect tools."""
     tools: list[BaseTool] = [
+        FunctionTool(self._search_ards),
         FunctionTool(self._search_agents),
+        FunctionTool(self._search_skills),
+        FunctionTool(self._search_tools),
+        FunctionTool(self._search_spaces),
         FunctionTool(self._get_agent_card),
         FunctionTool(self._connect_agent),
     ]

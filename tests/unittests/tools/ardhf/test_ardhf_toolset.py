@@ -109,15 +109,23 @@ class TestToolsetGetTools:
   """Tests for AgentFinderToolset.get_tools without a running server."""
 
   @pytest.mark.asyncio
-  async def test_returns_three_tools(self):
-    """The toolset exposes search_agents, get_agent_card, and connect_agent."""
+  async def test_returns_all_tools(self):
+    """The toolset exposes all search aliases plus get_agent_card and connect_agent."""
     toolset = AgentFinderToolset()
 
     tools = await toolset.get_tools()
 
-    assert len(tools) == 3
+    assert len(tools) == 7
     names = {tool.name for tool in tools}
-    assert names == {"search_agents", "get_agent_card", "connect_agent"}
+    assert names == {
+        "search_ards",
+        "search_agents",
+        "search_skills",
+        "search_tools",
+        "search_spaces",
+        "get_agent_card",
+        "connect_agent",
+    }
 
   @pytest.mark.asyncio
   async def test_tools_have_descriptions(self):
@@ -136,18 +144,22 @@ class TestToolsetGetTools:
     tools = await toolset.get_tools_with_prefix()
 
     names = {tool.name for tool in tools}
+    assert "ard_search_ards" in names
     assert "ard_search_agents" in names
+    assert "ard_search_skills" in names
+    assert "ard_search_tools" in names
+    assert "ard_search_spaces" in names
     assert "ard_get_agent_card" in names
     assert "ard_connect_agent" in names
 
   @pytest.mark.asyncio
-  async def test_search_handles_connection_error(self):
-    """search_agents returns an error dict for unreachable servers."""
+  async def test_search_ards_handles_connection_error(self):
+    """search_ards returns an error dict for unreachable servers."""
     toolset = AgentFinderToolset(
         registry_url="http://127.0.0.1:19999"
     )
     tools = await toolset.get_tools()
-    search_tool = next(t for t in tools if t.name == "search_agents")
+    search_tool = next(t for t in tools if t.name == "search_ards")
 
     mock_context = AsyncMock()
     result = await search_tool.run_async(
@@ -156,6 +168,52 @@ class TestToolsetGetTools:
     )
 
     assert "error" in result
+
+  @pytest.mark.asyncio
+  async def test_search_agents_filters_to_a2a(self):
+    """search_agents is a convenience alias filtering to A2A agents."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    search_tool = next(
+        t for t in tools if t.name == "search_agents"
+    )
+
+    # The tool should not accept an artifact_type parameter
+    # (it's hardcoded to a2a).
+    assert search_tool.name == "search_agents"
+
+  @pytest.mark.asyncio
+  async def test_search_skills_filters_to_skill(self):
+    """search_skills is a convenience alias filtering to skills."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    search_tool = next(
+        t for t in tools if t.name == "search_skills"
+    )
+
+    assert search_tool.name == "search_skills"
+
+  @pytest.mark.asyncio
+  async def test_search_tools_filters_to_mcp(self):
+    """search_tools is a convenience alias filtering to MCP servers."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    search_tool = next(
+        t for t in tools if t.name == "search_tools"
+    )
+
+    assert search_tool.name == "search_tools"
+
+  @pytest.mark.asyncio
+  async def test_search_spaces_filters_to_space(self):
+    """search_spaces is a convenience alias filtering to HF Spaces."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    search_tool = next(
+        t for t in tools if t.name == "search_spaces"
+    )
+
+    assert search_tool.name == "search_spaces"
 
 
 class TestExtractTextFromA2aResponse:
@@ -497,12 +555,12 @@ class TestToolsetAgainstChallenge:
   """Integration tests for AgentFinderToolset against challenge."""
 
   @pytest.mark.asyncio
-  async def test_search_agents_tool(self):
-    """search_agents returns results from the challenge server."""
+  async def test_search_ards_tool(self):
+    """search_ards returns results from the challenge server."""
     toolset = AgentFinderToolset(registry_url=CHALLENGE_URL)
     tools = await toolset.get_tools()
     search_tool = next(
-        t for t in tools if t.name == "search_agents"
+        t for t in tools if t.name == "search_ards"
     )
 
     mock_context = AsyncMock()
@@ -557,12 +615,12 @@ class TestToolsetAgainstChallenge:
     assert "triage-skill" in result["content"]
 
   @pytest.mark.asyncio
-  async def test_search_with_kind_resolution(self):
-    """search_agents resolves human-friendly kind names."""
+  async def test_search_ards_with_kind_resolution(self):
+    """search_ards resolves human-friendly kind names."""
     toolset = AgentFinderToolset(registry_url=CHALLENGE_URL)
     tools = await toolset.get_tools()
     search_tool = next(
-        t for t in tools if t.name == "search_agents"
+        t for t in tools if t.name == "search_ards"
     )
 
     mock_context = AsyncMock()
