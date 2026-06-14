@@ -21,12 +21,14 @@ Supports two modes:
 * **local** — uses the ``agentfinder`` Python package in-process for
   zero-latency, offline-capable search.
 
-The toolset exposes two tools to the agent:
+The toolset exposes three tools to the agent:
 
 * ``search_agents`` — search ARD registries for agents, skills, MCP
   servers, and other agentic resources.
 * ``get_agent_card`` — fetch a specific artifact (agent card, skill
   markdown, MCP server descriptor) by URL.
+* ``connect_agent`` — send a message to a remote A2A agent and return
+  the response, enabling the full discover → connect → use flow.
 
 Prepared for rename to ARD (Agentic Resource Discovery).
 Reference: https://github.com/huggingface/hf-agentfinder
@@ -36,9 +38,10 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any, List, Optional, Union
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
 
@@ -159,11 +162,57 @@ def _local_search(
   )
 
 
+def _extract_text_from_a2a_response(a2a_response: Any) -> list[str]:
+  """Extract text strings from an A2A client response event.
+
+  The response from ``A2AClient.send_message`` can be either a tuple
+  of ``(Task, update)`` or an ``A2AMessage``.  This helper walks the
+  parts and collects all text content.
+  """
+  texts: list[str] = []
+
+  try:
+    from a2a.types import Message as A2AMessage
+    from a2a.types import TextPart as A2ATextPart
+  except ImportError:
+    return texts
+
+  def _extract_from_parts(
+      parts: Optional[list[Any]],
+  ) -> None:
+    if not parts:
+      return
+    for part in parts:
+      root = getattr(part, "root", None)
+      if isinstance(root, A2ATextPart):
+        texts.append(root.text)
+
+  if isinstance(a2a_response, tuple):
+    task = a2a_response[0]
+    if task is not None:
+      # Extract from task artifacts.
+      for artifact in getattr(task, "artifacts", None) or []:
+        _extract_from_parts(getattr(artifact, "parts", None))
+      # Extract from task status message.
+      status = getattr(task, "status", None)
+      if status is not None:
+        status_msg = getattr(status, "message", None)
+        if status_msg is not None:
+          _extract_from_parts(
+              getattr(status_msg, "parts", None)
+          )
+  elif isinstance(a2a_response, A2AMessage):
+    _extract_from_parts(getattr(a2a_response, "parts", None))
+
+  return texts
+
+
 class AgentFinderToolset(BaseToolset):
   """ADK BaseToolset wrapping HuggingFace Agent Finder (ARD).
 
-  Provides ``search_agents`` and ``get_agent_card`` tools to any ADK
-  agent.
+  Provides ``search_agents``, ``get_agent_card``, and
+  ``connect_agent`` tools to any ADK agent, enabling the full
+  *discover → inspect → connect* workflow.
 
   Args:
     registry_url: ARD registry URL for remote mode.  Ignored when
@@ -277,16 +326,124 @@ class AgentFinderToolset(BaseToolset):
           "content_type": "text/markdown",
       }
 
+  async def _connect_agent(
+      self,
+      tool_context: ToolContext,
+      agent_card_url: str,
+      message: str,
+  ) -> dict[str, Any]:
+    """Send a message to a remote A2A agent and return the response.
+
+    Use this after ``search_agents`` and ``get_agent_card`` to
+    interact with a discovered A2A agent.  The agent card URL should
+    be for an artifact with media type
+    ``application/a2a-agent-card+json``.
+
+    Args:
+      agent_card_url: Full URL to the remote agent's A2A agent card
+          (typically the ``url`` field from a search result whose
+          ``type`` is ``application/a2a-agent-card+json``).
+      message: The message to send to the remote agent.
+
+    Returns:
+      A dictionary with ``response`` (the agent's reply text),
+      ``agent_name``, and ``agent_url``.  On failure, returns a
+      dictionary with an ``error`` key.
+    """
+    try:
+      from a2a.client.card_resolver import (
+          A2ACardResolver,
+      )
+      from a2a.client.client import (
+          ClientConfig as A2AClientConfig,
+      )
+      from a2a.client.client_factory import (
+          ClientFactory as A2AClientFactory,
+      )
+      from a2a.types import Message as A2AMessage
+      from a2a.types import Part as A2APart
+      from a2a.types import TextPart as A2ATextPart
+      import httpx
+    except ImportError:
+      return {
+          "error": (
+              "A2A dependencies are not installed.  Install them"
+              " with:  pip install 'google-adk[a2a]'"
+          )
+      }
+
+    try:
+      parsed = urlparse(agent_card_url)
+      if not parsed.scheme or not parsed.netloc:
+        return {"error": f"Invalid agent card URL: {agent_card_url}"}
+
+      base_url = f"{parsed.scheme}://{parsed.netloc}"
+      relative_path = parsed.path
+
+      async with httpx.AsyncClient(
+          timeout=httpx.Timeout(timeout=float(_HTTP_TIMEOUT))
+      ) as http_client:
+        # Resolve the agent card.
+        resolver = A2ACardResolver(
+            httpx_client=http_client,
+            base_url=base_url,
+        )
+        agent_card = await resolver.get_agent_card(
+            relative_card_path=relative_path,
+        )
+
+        # Create an A2A client for this agent.
+        factory = A2AClientFactory(
+            config=A2AClientConfig(httpx_client=http_client),
+        )
+        a2a_client = factory.create(agent_card)
+
+        # Build and send the message.
+        request = A2AMessage(
+            message_id=str(uuid.uuid4()),
+            parts=[A2APart(root=A2ATextPart(text=message))],
+            role="user",
+        )
+
+        response_texts: list[str] = []
+        async for a2a_response in a2a_client.send_message(
+            request=request,
+        ):
+          response_texts.extend(
+              _extract_text_from_a2a_response(a2a_response)
+          )
+
+        agent_name = getattr(agent_card, "name", "unknown")
+        response_text = "\n".join(response_texts) if response_texts else ""
+
+        return {
+            "response": response_text,
+            "agent_name": agent_name,
+            "agent_url": agent_card_url,
+        }
+
+    except Exception as exc:
+      logger.warning(
+          "A2A connect failed for %s: %s", agent_card_url, exc
+      )
+      return {
+          "error": (
+              f"Failed to communicate with agent at"
+              f" {agent_card_url}: {exc}"
+          ),
+      }
+
   # -- BaseToolset interface ----------------------------------------------
 
   async def get_tools(
       self,
       readonly_context: Optional[ReadonlyContext] = None,
   ) -> list[BaseTool]:
-    """Return the search_agents and get_agent_card tools."""
+    """Return the search_agents, get_agent_card, and connect_agent tools."""
     tools: list[BaseTool] = [
         FunctionTool(self._search_agents),
         FunctionTool(self._get_agent_card),
+        FunctionTool(self._connect_agent),
     ]
 
     # Rename the tools to use cleaner names (strip leading underscore).

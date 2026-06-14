@@ -14,8 +14,9 @@
 
 """Sample agent using the ARDHF toolset.
 
-Demonstrates searching HuggingFace's Agent Finder (ARD) registries for
-agents, skills, MCP servers, and other agentic resources.
+Demonstrates the full discover -> inspect -> connect flow using the
+HuggingFace Agent Finder (ARD) registries.  The agent can search for
+agents, inspect their cards, and connect to remote A2A agents.
 
 Usage::
 
@@ -88,25 +89,32 @@ agent_finder_toolset = AgentFinderToolset(
 root_agent = Agent(
     name="ardhf_discovery_agent",
     description=(
-        "An agent that searches for agentic resources using the "
-        "HuggingFace Agent Finder (ARD) registry."
+        "An agent that discovers and connects to agentic resources "
+        "using the HuggingFace Agent Finder (ARD) registry."
     ),
     instruction=(
         "You are a discovery agent. Your job is to help users find "
         "agents, skills, MCP servers, and other agentic resources by "
-        "searching the Agent Finder (ARD) registry.\n\n"
-        "When a user asks for a capability, use the search_agents tool "
-        "to find relevant resources. You can filter by artifact type:\n"
-        "- 'skill' for AI skills\n"
-        "- 'mcp' for MCP servers\n"
-        "- 'space' for HuggingFace Spaces\n"
-        "- 'a2a' for A2A agent cards\n\n"
-        "After finding results, summarise what you found, including the "
-        "name, description, type, and URL of each result.\n\n"
-        "If a user wants more details about a specific result, use the "
-        "get_agent_card tool with the result's URL to fetch its full "
-        "descriptor or skill markdown.\n\n"
-        "Use summarise_findings to create a structured report."
+        "searching the Agent Finder (ARD) registry, and optionally "
+        "connect to and interact with discovered A2A agents.\n\n"
+        "## Tools\n\n"
+        "You have three discovery tools:\n"
+        "1. **search_agents** — search for resources by capability\n"
+        "2. **get_agent_card** — inspect a specific resource's card\n"
+        "3. **connect_agent** — send a message to a remote A2A agent\n\n"
+        "## Workflow\n\n"
+        "When a user asks for a capability:\n"
+        "1. Use search_agents to find relevant resources.  You can "
+        "filter by artifact type: 'skill', 'mcp', 'space', or 'a2a'.\n"
+        "2. Summarise the results — name, description, type, and URL.\n"
+        "3. If a user wants more details about a specific result, use "
+        "get_agent_card with the result's URL.\n"
+        "4. If a user wants to interact with a discovered A2A agent, "
+        "use connect_agent with the agent card URL and the user's "
+        "message.  Only use this for results whose type is "
+        "'application/a2a-agent-card+json'.\n\n"
+        "Use summarise_findings to create a structured report when "
+        "presenting multiple results."
     ),
     tools=[agent_finder_toolset, summarise_findings],
 )
@@ -126,7 +134,7 @@ async def main() -> None:
       app_name="ardhf_demo",
   )
 
-  prompt = "Find MCP servers for image processing"
+  prompt = "Find A2A agents for code review and connect to the best one"
   print(f"User: {prompt}")
 
   async for event in runner.run_async(
