@@ -461,6 +461,12 @@ class AgentFinderToolset(BaseToolset):
     be for an artifact with media type
     ``application/a2a-agent-card+json``.
 
+    Note: The remote agent may return an immediate response or start
+    a long-running task (submitted → working → completed).  This
+    call collects available response text, but the exchange is the
+    beginning of an A2A conversation — for multi-turn interactions,
+    use ``RemoteA2aAgent`` directly with the discovered agent card URL.
+
     Args:
       agent_card_url: Full URL to the remote agent's A2A agent card
           (typically the ``url`` field from a search result whose
