@@ -161,10 +161,8 @@ def _local_search(
       pageSize=limit,
   )
   response = search_agent_finder(request, token=token)
-  return json.loads(
-      response.model_dump_json(
-          exclude_none=True, exclude_defaults=True
-      )
+  return response.model_dump(
+      exclude_none=True, exclude_defaults=True
   )
 
 
@@ -285,7 +283,7 @@ class AgentFinderToolset(BaseToolset):
           limit=limit,
           token=self._token,
       )
-    except (HTTPError, URLError, TimeoutError) as exc:
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
       logger.warning("ARD search failed: %s", exc)
       return {"error": f"Search request failed: {exc}"}
     except ImportError as exc:

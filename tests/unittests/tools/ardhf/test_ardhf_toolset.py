@@ -110,7 +110,7 @@ class TestToolsetGetTools:
 
   @pytest.mark.asyncio
   async def test_returns_all_tools(self):
-    """The toolset exposes all search aliases plus get_agent_card and connect_agent."""
+    """All seven tools are exposed by default."""
     toolset = AgentFinderToolset()
 
     tools = await toolset.get_tools()
@@ -504,11 +504,11 @@ class TestConnectAgent:
         patch(
             "a2a.client.card_resolver.A2ACardResolver",
             return_value=mock_resolver,
-        ) as _,
+        ),
         patch(
             "a2a.client.client_factory.ClientFactory",
             return_value=mock_factory,
-        ) as _,
+        ),
     ):
       result = await connect_tool.run_async(
           args={
