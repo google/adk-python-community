@@ -327,6 +327,82 @@ class TestDoSearch:
     assert "error" in result
 
 
+class TestGetAgentCard:
+  """Tests for the get_agent_card tool's content handling."""
+
+  @pytest.mark.asyncio
+  async def test_returns_parsed_json_for_json_content(self):
+    """JSON content is parsed and returned as a dict."""
+    toolset = AgentFinderToolset()
+    json_content = '{"name": "test-tool", "version": "1.0"}'
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._remote_fetch",
+        return_value=json_content,
+    ):
+      mock_context = AsyncMock()
+      result = await toolset._get_agent_card(
+          mock_context, url="https://example.com/tool.json"
+      )
+
+    assert result["name"] == "test-tool"
+    assert result["version"] == "1.0"
+
+  @pytest.mark.asyncio
+  async def test_returns_markdown_for_non_json_content(self):
+    """Non-JSON content is returned as raw text under 'content'."""
+    toolset = AgentFinderToolset()
+    md_content = "# Skill\n\nThis is a skill."
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._remote_fetch",
+        return_value=md_content,
+    ):
+      mock_context = AsyncMock()
+      result = await toolset._get_agent_card(
+          mock_context,
+          url="https://example.com/SKILL.md",
+      )
+
+    assert result["content"] == md_content
+    assert result["content_type"] == "text/markdown"
+
+  @pytest.mark.asyncio
+  async def test_local_mode_delegates_to_local_search(self):
+    """Local mode calls _local_search instead of _remote_search."""
+    toolset = AgentFinderToolset(local=True)
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._local_search",
+        return_value={"results": []},
+    ) as mock_local:
+      await toolset._do_search("test query", limit=5)
+
+    mock_local.assert_called_once_with(
+        "test query",
+        artifact_type=None,
+        limit=5,
+        token=None,
+    )
+
+  @pytest.mark.asyncio
+  async def test_local_mode_import_error_returns_error(self):
+    """Local mode returns error when agentfinder is not installed."""
+    toolset = AgentFinderToolset(local=True)
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._local_search",
+        side_effect=ImportError("agentfinder not installed"),
+    ):
+      result = await toolset._do_search("test query")
+
+    assert "error" in result
+
+
 class TestExtractTextFromA2aResponse:
   """Tests for the _extract_text_from_a2a_response helper."""
 
