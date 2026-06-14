@@ -170,50 +170,161 @@ class TestToolsetGetTools:
     assert "error" in result
 
   @pytest.mark.asyncio
-  async def test_search_agents_filters_to_a2a(self):
-    """search_agents is a convenience alias filtering to A2A agents."""
+  async def test_search_agents_delegates_with_a2a_type(self):
+    """search_agents passes artifact_type='a2a' to the search logic."""
     toolset = AgentFinderToolset()
-    tools = await toolset.get_tools()
-    search_tool = next(
-        t for t in tools if t.name == "search_agents"
-    )
 
-    # The tool should not accept an artifact_type parameter
-    # (it's hardcoded to a2a).
-    assert search_tool.name == "search_agents"
+    with patch.object(
+        toolset, "_do_search", new_callable=AsyncMock
+    ) as mock_search:
+      mock_search.return_value = {"results": []}
+      mock_context = AsyncMock()
+      await toolset._search_agents(
+          mock_context, query="test", limit=5
+      )
+
+    mock_search.assert_called_once_with(
+        "test", artifact_type="a2a", limit=5
+    )
 
   @pytest.mark.asyncio
-  async def test_search_skills_filters_to_skill(self):
-    """search_skills is a convenience alias filtering to skills."""
+  async def test_search_skills_delegates_with_skill_type(self):
+    """search_skills passes artifact_type='skill' to the search logic."""
     toolset = AgentFinderToolset()
-    tools = await toolset.get_tools()
-    search_tool = next(
-        t for t in tools if t.name == "search_skills"
-    )
 
-    assert search_tool.name == "search_skills"
+    with patch.object(
+        toolset, "_do_search", new_callable=AsyncMock
+    ) as mock_search:
+      mock_search.return_value = {"results": []}
+      mock_context = AsyncMock()
+      await toolset._search_skills(
+          mock_context, query="test", limit=5
+      )
+
+    mock_search.assert_called_once_with(
+        "test", artifact_type="skill", limit=5
+    )
 
   @pytest.mark.asyncio
-  async def test_search_tools_filters_to_mcp(self):
-    """search_tools is a convenience alias filtering to MCP servers."""
+  async def test_search_tools_delegates_with_mcp_type(self):
+    """search_tools passes artifact_type='mcp' to the search logic."""
     toolset = AgentFinderToolset()
-    tools = await toolset.get_tools()
-    search_tool = next(
-        t for t in tools if t.name == "search_tools"
-    )
 
-    assert search_tool.name == "search_tools"
+    with patch.object(
+        toolset, "_do_search", new_callable=AsyncMock
+    ) as mock_search:
+      mock_search.return_value = {"results": []}
+      mock_context = AsyncMock()
+      await toolset._search_tools(
+          mock_context, query="test", limit=5
+      )
+
+    mock_search.assert_called_once_with(
+        "test", artifact_type="mcp", limit=5
+    )
 
   @pytest.mark.asyncio
-  async def test_search_spaces_filters_to_space(self):
-    """search_spaces is a convenience alias filtering to HF Spaces."""
+  async def test_search_spaces_delegates_with_space_type(self):
+    """search_spaces passes artifact_type='space' to the search logic."""
     toolset = AgentFinderToolset()
-    tools = await toolset.get_tools()
-    search_tool = next(
-        t for t in tools if t.name == "search_spaces"
+
+    with patch.object(
+        toolset, "_do_search", new_callable=AsyncMock
+    ) as mock_search:
+      mock_search.return_value = {"results": []}
+      mock_context = AsyncMock()
+      await toolset._search_spaces(
+          mock_context, query="test", limit=5
+      )
+
+    mock_search.assert_called_once_with(
+        "test", artifact_type="space", limit=5
     )
 
-    assert search_tool.name == "search_spaces"
+
+class TestDoSearch:
+  """Tests for the _do_search core logic."""
+
+  @pytest.mark.asyncio
+  async def test_limit_clamped_to_valid_range(self):
+    """Limit values outside 1-100 are clamped."""
+    toolset = AgentFinderToolset()
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._remote_search",
+        return_value={"results": []},
+    ) as mock_search:
+      await toolset._do_search("test", limit=0)
+      _, kwargs = mock_search.call_args
+      assert kwargs["limit"] == 1
+
+      await toolset._do_search("test", limit=200)
+      _, kwargs = mock_search.call_args
+      assert kwargs["limit"] == 100
+
+  @pytest.mark.asyncio
+  async def test_raw_media_type_passed_through(self):
+    """A raw media type string is used as-is when kind lookup fails."""
+    toolset = AgentFinderToolset()
+
+    with patch(
+        "google.adk_community.tools.ardhf.ardhf_toolset"
+        "._remote_search",
+        return_value={"results": []},
+    ) as mock_search:
+      await toolset._do_search(
+          "test",
+          artifact_type="application/custom+json",
+      )
+      _, kwargs = mock_search.call_args
+      assert (
+          kwargs["artifact_type"] == "application/custom+json"
+      )
+
+  @pytest.mark.asyncio
+  async def test_get_agent_card_returns_error_for_unreachable(self):
+    """get_agent_card returns error dict for unreachable URLs."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    fetch_tool = next(
+        t for t in tools if t.name == "get_agent_card"
+    )
+
+    mock_context = AsyncMock()
+    result = await fetch_tool.run_async(
+        args={"url": "http://127.0.0.1:19999/nonexistent"},
+        tool_context=mock_context,
+    )
+
+    assert "error" in result
+
+  @pytest.mark.asyncio
+  async def test_get_agent_card_rejects_file_url(self):
+    """get_agent_card rejects file:// URLs to prevent SSRF."""
+    toolset = AgentFinderToolset()
+    mock_context = AsyncMock()
+
+    result = await toolset._get_agent_card(
+        mock_context, url="file:///etc/passwd"
+    )
+
+    assert "error" in result
+    assert "Invalid URL scheme" in result["error"]
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_rejects_file_url(self):
+    """connect_agent rejects non-HTTP URLs."""
+    toolset = AgentFinderToolset()
+    mock_context = AsyncMock()
+
+    result = await toolset._connect_agent(
+        mock_context,
+        agent_card_url="ftp://example.com/agent.json",
+        message="hello",
+    )
+
+    assert "error" in result
 
 
 class TestExtractTextFromA2aResponse:

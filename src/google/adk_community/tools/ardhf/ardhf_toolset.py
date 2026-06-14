@@ -39,10 +39,11 @@ Reference: https://github.com/huggingface/hf-agentfinder
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
-from typing import Any, List, Optional, Union
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request as UrlRequest
@@ -71,24 +72,26 @@ def _registry_search_url(registry_url: str) -> str:
   return urljoin(f"{normalised}/", "search")
 
 
-def _artifact_type_for_kind(kind: str) -> Optional[str]:
+_KIND_TO_MEDIA_TYPE: dict[str, str] = {
+    "skill": "application/ai-skill",
+    "mcp": "application/mcp-server+json",
+    "space": "application/vnd.huggingface.space+json",
+    "a2a": "application/a2a-agent-card+json",
+}
+
+
+def _artifact_type_for_kind(kind: str) -> str | None:
   """Map a human-friendly kind label to its ARD media type."""
-  types = {
-      "skill": "application/ai-skill",
-      "mcp": "application/mcp-server+json",
-      "space": "application/vnd.huggingface.space+json",
-      "a2a": "application/a2a-agent-card+json",
-  }
-  return types.get(kind)
+  return _KIND_TO_MEDIA_TYPE.get(kind)
 
 
 def _remote_search(
     registry_url: str,
     query: str,
     *,
-    artifact_type: Optional[str] = None,
+    artifact_type: str | None = None,
     limit: int = 10,
-    token: Optional[str] = None,
+    token: str | None = None,
 ) -> dict[str, Any]:
   """POST a SearchRequest to a remote ARD registry and return raw JSON."""
   search_query: dict[str, Any] = {"text": query}
@@ -120,7 +123,7 @@ def _remote_search(
 
 
 def _remote_fetch(
-    url: str, *, token: Optional[str] = None
+    url: str, *, token: str | None = None
 ) -> str:
   """GET an artifact URL and return its text content."""
   headers = {"User-Agent": "adk-ardhf/0.1"}
@@ -135,9 +138,9 @@ def _remote_fetch(
 def _local_search(
     query: str,
     *,
-    artifact_type: Optional[str] = None,
+    artifact_type: str | None = None,
     limit: int = 10,
-    token: Optional[str] = None,
+    token: str | None = None,
 ) -> dict[str, Any]:
   """Search using the in-process ``agentfinder`` package."""
   try:
@@ -181,7 +184,7 @@ def _extract_text_from_a2a_response(a2a_response: Any) -> list[str]:
     return texts
 
   def _extract_from_parts(
-      parts: Optional[list[Any]],
+      parts: list[Any] | None,
   ) -> None:
     if not parts:
       return
@@ -232,10 +235,10 @@ class AgentFinderToolset(BaseToolset):
       self,
       *,
       registry_url: str = _DEFAULT_REGISTRY_URL,
-      token: Optional[str] = None,
+      token: str | None = None,
       local: bool = False,
-      tool_filter: Optional[Union[ToolPredicate, List[str]]] = None,
-      tool_name_prefix: Optional[str] = None,
+      tool_filter: ToolPredicate | list[str] | None = None,
+      tool_name_prefix: str | None = None,
   ) -> None:
     super().__init__(
         tool_filter=tool_filter,
@@ -250,10 +253,13 @@ class AgentFinderToolset(BaseToolset):
   async def _do_search(
       self,
       query: str,
-      artifact_type: Optional[str] = None,
+      artifact_type: str | None = None,
       limit: int = 10,
   ) -> dict[str, Any]:
     """Core search logic shared by all search tools."""
+    # Clamp limit to the valid range.
+    limit = max(1, min(limit, 100))
+
     # Resolve human-friendly kind to media type.
     resolved_type = (
         _artifact_type_for_kind(artifact_type) if artifact_type else None
@@ -264,13 +270,15 @@ class AgentFinderToolset(BaseToolset):
 
     try:
       if self._local:
-        return _local_search(
+        return await asyncio.to_thread(
+            _local_search,
             query,
             artifact_type=resolved_type,
             limit=limit,
             token=self._token,
         )
-      return _remote_search(
+      return await asyncio.to_thread(
+          _remote_search,
           self._registry_url,
           query,
           artifact_type=resolved_type,
@@ -289,7 +297,7 @@ class AgentFinderToolset(BaseToolset):
       self,
       tool_context: ToolContext,
       query: str,
-      artifact_type: Optional[str] = None,
+      artifact_type: str | None = None,
       limit: int = 10,
   ) -> dict[str, Any]:
     """Search ARD registries across all artifact types.
@@ -407,8 +415,14 @@ class AgentFinderToolset(BaseToolset):
       (skills), the content is returned under a ``content`` key.
       For JSON artifacts, the parsed object is returned directly.
     """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+      return {"error": f"Invalid URL scheme: {url}"}
+
     try:
-      raw = _remote_fetch(url, token=self._token)
+      raw = await asyncio.to_thread(
+          _remote_fetch, url, token=self._token
+      )
     except (HTTPError, URLError, TimeoutError) as exc:
       logger.warning("ARD fetch failed for %s: %s", url, exc)
       return {"error": f"Failed to fetch {url}: {exc}"}
@@ -448,6 +462,7 @@ class AgentFinderToolset(BaseToolset):
       dictionary with an ``error`` key.
     """
     try:
+      import httpx
       from a2a.client.card_resolver import (
           A2ACardResolver,
       )
@@ -460,7 +475,6 @@ class AgentFinderToolset(BaseToolset):
       from a2a.types import Message as A2AMessage
       from a2a.types import Part as A2APart
       from a2a.types import TextPart as A2ATextPart
-      import httpx
     except ImportError:
       return {
           "error": (
@@ -471,7 +485,7 @@ class AgentFinderToolset(BaseToolset):
 
     try:
       parsed = urlparse(agent_card_url)
-      if not parsed.scheme or not parsed.netloc:
+      if parsed.scheme not in ("http", "https") or not parsed.netloc:
         return {"error": f"Invalid agent card URL: {agent_card_url}"}
 
       base_url = f"{parsed.scheme}://{parsed.netloc}"
@@ -534,23 +548,23 @@ class AgentFinderToolset(BaseToolset):
 
   async def get_tools(
       self,
-      readonly_context: Optional[ReadonlyContext] = None,
+      readonly_context: ReadonlyContext | None = None,
   ) -> list[BaseTool]:
     """Return all search, inspect, and connect tools."""
-    tools: list[BaseTool] = [
-        FunctionTool(self._search_ards),
-        FunctionTool(self._search_agents),
-        FunctionTool(self._search_skills),
-        FunctionTool(self._search_tools),
-        FunctionTool(self._search_spaces),
-        FunctionTool(self._get_agent_card),
-        FunctionTool(self._connect_agent),
+    tool_defs = [
+        (self._search_ards, "search_ards"),
+        (self._search_agents, "search_agents"),
+        (self._search_skills, "search_skills"),
+        (self._search_tools, "search_tools"),
+        (self._search_spaces, "search_spaces"),
+        (self._get_agent_card, "get_agent_card"),
+        (self._connect_agent, "connect_agent"),
     ]
-
-    # Rename the tools to use cleaner names (strip leading underscore).
-    for tool in tools:
-      if tool.name.startswith("_"):
-        tool.name = tool.name[1:]
+    tools: list[BaseTool] = []
+    for func, name in tool_defs:
+      tool = FunctionTool(func)
+      tool.name = name
+      tools.append(tool)
 
     if readonly_context is not None:
       tools = [
