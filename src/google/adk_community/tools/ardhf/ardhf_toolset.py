@@ -63,6 +63,9 @@ _DEFAULT_REGISTRY_URL = "https://huggingface.co/api/agentfinder"
 # HTTP timeout for remote requests (seconds).
 _HTTP_TIMEOUT = 30
 
+# Default allowed URL schemes (secure by default).
+_DEFAULT_ALLOWED_SCHEMES = frozenset(("http", "https"))
+
 
 def _registry_search_url(registry_url: str) -> str:
   """Normalise a registry base URL to its ``/search`` endpoint."""
@@ -225,6 +228,11 @@ class AgentFinderToolset(BaseToolset):
     token: Optional Bearer token for authenticated registry access.
     local: When ``True``, use the ``agentfinder`` Python package
         in-process instead of making HTTP requests.
+    allowed_schemes: URL schemes permitted for ``get_agent_card``
+        and ``connect_agent``.  Defaults to ``("http", "https")``
+        for security (prevents SSRF via ``file://`` etc.).  Set to
+        ``("http", "https", "file")`` for local development or
+        ``("http", "https", "grpc", "grpcs")`` for gRPC support.
     tool_filter: Optional filter to select which tools are exposed.
     tool_name_prefix: Optional prefix for tool names.
   """
@@ -235,6 +243,7 @@ class AgentFinderToolset(BaseToolset):
       registry_url: str = _DEFAULT_REGISTRY_URL,
       token: str | None = None,
       local: bool = False,
+      allowed_schemes: tuple[str, ...] | list[str] | None = None,
       tool_filter: ToolPredicate | list[str] | None = None,
       tool_name_prefix: str | None = None,
   ) -> None:
@@ -245,6 +254,10 @@ class AgentFinderToolset(BaseToolset):
     self._registry_url = registry_url
     self._token = token
     self._local = local
+    self._allowed_schemes = frozenset(
+        allowed_schemes if allowed_schemes is not None
+        else _DEFAULT_ALLOWED_SCHEMES
+    )
 
   # -- Internal search logic -----------------------------------------------
 
@@ -414,8 +427,8 @@ class AgentFinderToolset(BaseToolset):
       For JSON artifacts, the parsed object is returned directly.
     """
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-      return {"error": f"Invalid URL scheme: {url}"}
+    if parsed.scheme not in self._allowed_schemes:
+      return {"error": f"URL scheme '{parsed.scheme}' not allowed: {url}"}
 
     try:
       raw = await asyncio.to_thread(
@@ -483,7 +496,7 @@ class AgentFinderToolset(BaseToolset):
 
     try:
       parsed = urlparse(agent_card_url)
-      if parsed.scheme not in ("http", "https") or not parsed.netloc:
+      if parsed.scheme not in self._allowed_schemes or not parsed.netloc:
         return {"error": f"Invalid agent card URL: {agent_card_url}"}
 
       base_url = f"{parsed.scheme}://{parsed.netloc}"
