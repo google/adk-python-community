@@ -11,23 +11,37 @@ The core workflow is **discover → inspect → connect**:
 
 1. **Discover** — search ARD registries for resources matching a natural-language query.
 2. **Inspect** — fetch the full artifact (agent card, skill markdown, MCP descriptor) by URL.
-3. **Connect** — send a message to a remote A2A agent and get a response.
+3. **Connect** — send a message to a remote A2A agent and get a response (which may be the start of a long-running A2A conversation).
 
 ## Quick Start
+
+### 1. Create the agent (`agent.py`)
 
 ```python
 from google.adk import Agent
 from google.adk_community.tools.ardhf import AgentFinderToolset
 
-agent = Agent(
-    name="my_agent",
-    instruction="Search for tools when you need a capability.",
+root_agent = Agent(
+    name="discovery_agent",
+    description="An agent that discovers and connects to agentic resources.",
+    instruction="Search for agents, skills, and tools when you need a capability.",
     tools=[AgentFinderToolset()],
 )
 ```
 
-That's it — the agent now has access to all discovery tools and can search,
-inspect, and connect to agentic resources.
+### 2. Run the app
+
+```bash
+# Interactive web UI
+adk web .
+
+# Or run programmatically
+adk run .
+```
+
+The agent is an ADK app — serve it with `adk web` for the interactive UI,
+or `adk run` for CLI mode.  The toolset provides all discovery and connection
+tools automatically.
 
 ## Available Tools
 
@@ -39,7 +53,7 @@ inspect, and connect to agentic resources.
 | `search_tools` | Search filtered to MCP servers (`application/mcp-server+json`) |
 | `search_spaces` | Search filtered to HuggingFace Spaces (`application/vnd.huggingface.space+json`) |
 | `get_agent_card` | Fetch a specific artifact (agent card, skill markdown, MCP descriptor) by URL |
-| `connect_agent` | Send a message to a remote A2A agent and return the response |
+| `connect_agent` | Send a message to a remote A2A agent — may return an immediate response or start a long-running task with its own lifecycle |
 
 The `search_agents`, `search_skills`, `search_tools`, and `search_spaces`
 tools are convenience aliases — each calls the same core search logic with
@@ -103,6 +117,30 @@ Agent: [calls search_agents('image generation')]
 Agent: Found "image-gen-agent" — connecting...
 Agent: [calls connect_agent('https://.../agent.json', 'Create a minimalist logo for a coffee shop')]
 Agent: The image generation agent responded with: ...
+```
+
+**Note on A2A conversations:** `connect_agent` sends a single message and
+collects the response, but the remote agent may return a **long-running task**
+with its own lifecycle (submitted → working → completed).  The response you
+get back may be the final result or an intermediate status.  This initial
+exchange is the **beginning of an A2A conversation** — for multi-turn
+interactions with a discovered agent, consider using ADK's `RemoteA2aAgent`
+directly with the agent card URL returned by `get_agent_card`:
+
+```python
+from google.adk.agents.remote_a2a_agent import RemoteA2aAgent
+
+# After discovering an agent via search_agents + get_agent_card:
+remote = RemoteA2aAgent(
+    name="discovered_agent",
+    agent_card="https://example.com/.well-known/agent.json",
+)
+
+# Use as a sub-agent for ongoing A2A conversation
+orchestrator = Agent(
+    name="orchestrator",
+    sub_agents=[remote],
+)
 ```
 
 ### Discovering HuggingFace Spaces
@@ -244,9 +282,9 @@ fixed fixtures — no API keys or network access needed:
 pip install hf-agentfinder
 hf-agentfinder challenge serve --port 8090
 
-# Terminal 2: run the sample agent against it
-ARDHF_REGISTRY_URL=http://127.0.0.1:8090 \
-    adk web contributing/samples/ardhf
+# Terminal 2: run the sample app against it
+cd contributing/samples/ardhf
+ARDHF_REGISTRY_URL=http://127.0.0.1:8090 adk web .
 ```
 
 ### Running the unit tests
