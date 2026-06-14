@@ -4,15 +4,16 @@
 
 ARDHF wraps [HuggingFace's Agent Finder](https://github.com/huggingface/hf-agentfinder)
 (ARD — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
-agent the ability to **search for and discover** agents, skills, MCP servers,
-and other agentic resources at runtime.
+agent the ability to **search for, discover, and connect to** agents, skills,
+MCP servers, and other agentic resources at runtime.
 
-The toolset provides two tools:
+The toolset provides three tools:
 
 | Tool | Description |
 |---|---|
 | `search_agents` | Search ARD registries by natural-language query |
 | `get_agent_card` | Fetch a specific artifact (agent card, skill, MCP descriptor) by URL |
+| `connect_agent` | Send a message to a remote A2A agent and return the response |
 
 ## Sample Inputs
 
@@ -28,12 +29,18 @@ The toolset provides two tools:
 
   *Fetches the full skill markdown for the rembg Space.*
 
+- `Find A2A agents for code review and connect to the best one`
+
+  *Searches for A2A agents, picks the best match, and sends a message via the A2A protocol.*
+
 ## How To
 
 ### Install
 
 ```bash
 pip install google-adk-community
+# For A2A agent connectivity:
+pip install 'google-adk[a2a]'
 # Optional, for local (in-process) mode:
 pip install hf-agentfinder
 ```
@@ -109,11 +116,14 @@ AgentFinderToolset (BaseToolset)
 ├── search_agents(query, artifact_type?, limit?)
 │   ├── remote: HTTP POST to registry /search
 │   └── local: agentfinder.server.search_agent_finder()
-└── get_agent_card(url)
-    └── HTTP GET to artifact URL
+├── get_agent_card(url)
+│   └── HTTP GET to artifact URL
+└── connect_agent(agent_card_url, message)
+    └── A2A protocol: resolve card → create client → send message
 ```
 
 ## Related
 
 - [HuggingFace Agent Finder](https://github.com/huggingface/hf-agentfinder) — ARD reference implementation
 - [ADK BaseToolset](https://google.github.io/adk-docs/) — ADK toolset documentation
+- [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification

@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import json
 import os
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from google.adk_community.tools.ardhf.ardhf_toolset import (
     AgentFinderToolset,
     _artifact_type_for_kind,
+    _extract_text_from_a2a_response,
     _registry_search_url,
     _remote_fetch,
     _remote_search,
@@ -108,15 +109,15 @@ class TestToolsetGetTools:
   """Tests for AgentFinderToolset.get_tools without a running server."""
 
   @pytest.mark.asyncio
-  async def test_returns_two_tools(self):
-    """The toolset exposes search_agents and get_agent_card."""
+  async def test_returns_three_tools(self):
+    """The toolset exposes search_agents, get_agent_card, and connect_agent."""
     toolset = AgentFinderToolset()
 
     tools = await toolset.get_tools()
 
-    assert len(tools) == 2
+    assert len(tools) == 3
     names = {tool.name for tool in tools}
-    assert names == {"search_agents", "get_agent_card"}
+    assert names == {"search_agents", "get_agent_card", "connect_agent"}
 
   @pytest.mark.asyncio
   async def test_tools_have_descriptions(self):
@@ -137,6 +138,7 @@ class TestToolsetGetTools:
     names = {tool.name for tool in tools}
     assert "ard_search_agents" in names
     assert "ard_get_agent_card" in names
+    assert "ard_connect_agent" in names
 
   @pytest.mark.asyncio
   async def test_search_handles_connection_error(self):
@@ -154,6 +156,203 @@ class TestToolsetGetTools:
     )
 
     assert "error" in result
+
+
+class TestExtractTextFromA2aResponse:
+  """Tests for the _extract_text_from_a2a_response helper."""
+
+  def test_extracts_text_from_message(self):
+    """Text is extracted from an A2AMessage with TextPart."""
+    try:
+      from a2a.types import Message as A2AMessage
+      from a2a.types import Part as A2APart
+      from a2a.types import TextPart as A2ATextPart
+    except ImportError:
+      pytest.skip("a2a SDK not installed")
+
+    msg = A2AMessage(
+        message_id="test-1",
+        parts=[A2APart(root=A2ATextPart(text="Hello from agent"))],
+        role="agent",
+    )
+
+    texts = _extract_text_from_a2a_response(msg)
+
+    assert texts == ["Hello from agent"]
+
+  def test_extracts_text_from_task_tuple(self):
+    """Text is extracted from a (Task, None) tuple response."""
+    try:
+      from a2a.types import Artifact
+      from a2a.types import Part as A2APart
+      from a2a.types import Task as A2ATask
+      from a2a.types import TaskState
+      from a2a.types import TaskStatus
+      from a2a.types import TextPart as A2ATextPart
+    except ImportError:
+      pytest.skip("a2a SDK not installed")
+
+    task = A2ATask(
+        id="task-1",
+        contextId="ctx-1",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[
+            Artifact(
+                artifactId="art-1",
+                parts=[
+                    A2APart(root=A2ATextPart(text="Task result"))
+                ],
+            )
+        ],
+    )
+
+    texts = _extract_text_from_a2a_response((task, None))
+
+    assert "Task result" in texts
+
+  def test_returns_empty_for_unknown_type(self):
+    """An unknown response type returns an empty list."""
+    texts = _extract_text_from_a2a_response("unexpected")
+    assert texts == []
+
+  def test_returns_empty_when_a2a_not_installed(self):
+    """Returns empty list when a2a SDK is not available."""
+    with patch.dict(
+        "sys.modules", {"a2a": None, "a2a.types": None}
+    ):
+      # Re-import to pick up the patched modules.
+      texts = _extract_text_from_a2a_response("anything")
+      assert texts == []
+
+
+class TestConnectAgent:
+  """Tests for the connect_agent tool."""
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_tool_exists(self):
+    """The toolset exposes a connect_agent tool."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+
+    names = {tool.name for tool in tools}
+    assert "connect_agent" in names
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_has_description(self):
+    """The connect_agent tool has a non-empty description."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    connect_tool = next(
+        t for t in tools if t.name == "connect_agent"
+    )
+
+    assert connect_tool.description
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_invalid_url(self):
+    """connect_agent returns error for invalid URLs."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    connect_tool = next(
+        t for t in tools if t.name == "connect_agent"
+    )
+
+    mock_context = AsyncMock()
+    result = await connect_tool.run_async(
+        args={
+            "agent_card_url": "not-a-valid-url",
+            "message": "hello",
+        },
+        tool_context=mock_context,
+    )
+
+    assert "error" in result
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_unreachable_host(self):
+    """connect_agent returns error for unreachable agents."""
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    connect_tool = next(
+        t for t in tools if t.name == "connect_agent"
+    )
+
+    mock_context = AsyncMock()
+    result = await connect_tool.run_async(
+        args={
+            "agent_card_url": (
+                "http://127.0.0.1:19999/.well-known/agent.json"
+            ),
+            "message": "hello",
+        },
+        tool_context=mock_context,
+    )
+
+    assert "error" in result
+
+  @pytest.mark.asyncio
+  async def test_connect_agent_success_with_mocked_a2a(self):
+    """connect_agent returns response text from a mocked A2A agent."""
+    try:
+      from a2a.types import AgentCard
+      from a2a.types import Message as A2AMessage
+      from a2a.types import Part as A2APart
+      from a2a.types import TextPart as A2ATextPart
+    except ImportError:
+      pytest.skip("a2a SDK not installed")
+
+    mock_agent_card = MagicMock(spec=AgentCard)
+    mock_agent_card.name = "test-agent"
+    mock_agent_card.url = "http://localhost:9999/a2a"
+
+    mock_response = A2AMessage(
+        message_id="resp-1",
+        parts=[A2APart(root=A2ATextPart(text="I can help!"))],
+        role="agent",
+    )
+
+    async def mock_send_message(**kwargs):
+      yield mock_response
+
+    mock_client = MagicMock()
+    mock_client.send_message = mock_send_message
+
+    mock_factory = MagicMock()
+    mock_factory.create.return_value = mock_client
+
+    mock_resolver = AsyncMock()
+    mock_resolver.get_agent_card.return_value = mock_agent_card
+
+    toolset = AgentFinderToolset()
+    tools = await toolset.get_tools()
+    connect_tool = next(
+        t for t in tools if t.name == "connect_agent"
+    )
+
+    mock_context = AsyncMock()
+
+    with (
+        patch(
+            "a2a.client.card_resolver.A2ACardResolver",
+            return_value=mock_resolver,
+        ) as _,
+        patch(
+            "a2a.client.client_factory.ClientFactory",
+            return_value=mock_factory,
+        ) as _,
+    ):
+      result = await connect_tool.run_async(
+          args={
+              "agent_card_url": (
+                  "http://localhost:9999/.well-known/agent.json"
+              ),
+              "message": "Can you help?",
+          },
+          tool_context=mock_context,
+      )
+
+    assert result["response"] == "I can help!"
+    assert result["agent_name"] == "test-agent"
 
 
 # ------------------------------------------------------------------ #
