@@ -310,7 +310,7 @@ class TestDoSearch:
     )
 
     assert "error" in result
-    assert "Invalid URL scheme" in result["error"]
+    assert "not allowed" in result["error"]
 
   @pytest.mark.asyncio
   async def test_connect_agent_rejects_file_url(self):

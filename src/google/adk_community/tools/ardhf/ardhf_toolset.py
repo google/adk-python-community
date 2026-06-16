@@ -77,7 +77,7 @@ def _registry_search_url(registry_url: str) -> str:
 
 _KIND_TO_MEDIA_TYPE: dict[str, str] = {
     "skill": "application/ai-skill",
-    "mcp": "application/mcp-server+json",
+    "mcp": "application/mcp-server-card+json",
     "space": "application/vnd.huggingface.space+json",
     "a2a": "application/a2a-agent-card+json",
 }
@@ -318,7 +318,7 @@ class AgentFinderToolset(BaseToolset):
           e.g. "remove image background" or "code review".
       artifact_type: Optional filter by artifact kind.  Supported
           values: ``skill``, ``mcp``, ``space``, ``a2a``, or a raw
-          media type like ``application/mcp-server+json``.  When
+          media type like ``application/mcp-server-card+json``.  When
           omitted, all artifact types are returned.
       limit: Maximum number of results to return (1-100, default 10).
 
