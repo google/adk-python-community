@@ -32,7 +32,7 @@ Usage::
 
 Or with the challenge server::
 
-    hf-agentfinder challenge serve --port 8090 &
+    hf-discover challenge serve --port 8090 &
     ARDHF_REGISTRY_URL=http://127.0.0.1:8090 \
         adk web contributing/samples/ardhf_dynamic_agents
 """
@@ -52,7 +52,7 @@ from google.adk_community.tools.ardhf import AgentFinderToolset
 
 _registry_url = os.environ.get(
     "ARDHF_REGISTRY_URL",
-    "https://huggingface.co/api/agentfinder",
+    "https://evalstate-hf-discover.hf.space",
 )
 _token = os.environ.get("HF_TOKEN")
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-ARDHF wraps [HuggingFace's Agent Finder](https://github.com/huggingface/hf-agentfinder)
+ARDHF wraps [HuggingFace Discover](https://github.com/huggingface/hf-discover)
 (ARD — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
 agent the ability to **discover, inspect, and connect to** agents, skills,
 MCP servers, HuggingFace Spaces, and other agentic resources at runtime.
@@ -161,7 +161,7 @@ Agent: Found "bark-tts" Space — here are the details: ...
 
 ### Registry URL
 
-By default, the toolset queries the hosted HuggingFace Agent Finder registry.
+By default, the toolset queries the hosted HuggingFace Discover registry.
 Point to any ARD-compatible registry:
 
 ```python
@@ -193,7 +193,7 @@ export HF_TOKEN=hf_...
 ### Local mode
 
 For in-process, offline-capable search (no HTTP requests), install the
-`hf-agentfinder` package and enable local mode:
+`hf-discover` package and enable local mode:
 
 ```python
 toolset = AgentFinderToolset(local=True)
@@ -241,7 +241,7 @@ Use multiple toolset instances to search different registries:
 
 ```python
 hf_toolset = AgentFinderToolset(
-    registry_url="https://huggingface.co/api/agentfinder",
+    registry_url="https://evalstate-hf-discover.hf.space",
     tool_name_prefix="hf",
 )
 internal_toolset = AgentFinderToolset(
@@ -274,13 +274,13 @@ agent = Agent(
 
 ### Using the HF challenge server
 
-The `hf-agentfinder` package includes a deterministic challenge server with
+The `hf-discover` package includes a deterministic challenge server with
 fixed fixtures — no API keys or network access needed:
 
 ```bash
 # Terminal 1: start the challenge server
-pip install hf-agentfinder
-hf-agentfinder challenge serve --port 8090
+pip install hf-discover
+hf-discover challenge serve --port 8090
 
 # Terminal 2: run the sample app against it
 cd contributing/samples/ardhf
@@ -294,14 +294,14 @@ ARDHF_REGISTRY_URL=http://127.0.0.1:8090 adk web .
 pytest tests/unittests/tools/ardhf/ -v
 
 # Integration tests (start challenge server first)
-hf-agentfinder challenge serve --port 8090 &
+hf-discover challenge serve --port 8090 &
 pytest tests/unittests/tools/ardhf/ -v
 ```
 
 ## References
 
 - [ARD Specification](https://github.com/nichochar/ard-spec) — Agentic Resource Discovery specification
-- [HuggingFace Agent Finder](https://github.com/huggingface/hf-agentfinder) — ARD reference implementation
+- [HuggingFace Discover](https://github.com/huggingface/hf-discover) — ARD reference implementation
 - [ai-catalog](https://github.com/nichochar/ai-catalog) — Curated agentic resource catalog
 - [ADK Documentation](https://google.github.io/adk-docs/) — Google Agent Development Kit
 - [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification

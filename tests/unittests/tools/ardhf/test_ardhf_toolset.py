@@ -15,11 +15,11 @@
 """Tests for the ARDHF toolset.
 
 Unit tests run without any external services.  Integration tests
-require the hf-agentfinder challenge server (deterministic fixtures,
+require the hf-discover challenge server (deterministic fixtures,
 no API keys needed)::
 
-    pip install hf-agentfinder
-    hf-agentfinder challenge serve --port 8090
+    pip install hf-discover
+    hf-discover challenge serve --port 8090
     pytest tests/unittests/tools/ardhf/ -v
 """
 
@@ -390,13 +390,13 @@ class TestGetAgentCard:
 
   @pytest.mark.asyncio
   async def test_local_mode_import_error_returns_error(self):
-    """Local mode returns error when agentfinder is not installed."""
+    """Local mode returns error when hf-discover is not installed."""
     toolset = AgentFinderToolset(local=True)
 
     with patch(
         "google.adk_community.tools.ardhf.ardhf_toolset"
         "._local_search",
-        side_effect=ImportError("agentfinder not installed"),
+        side_effect=ImportError("hf-discover not installed"),
     ):
       result = await toolset._do_search("test query")
 

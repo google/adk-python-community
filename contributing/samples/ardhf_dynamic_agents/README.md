@@ -69,7 +69,7 @@ python -m contributing.samples.ardhf_dynamic_agents.agent
 
 ```bash
 # Terminal 1
-hf-agentfinder challenge serve --port 8090
+hf-discover challenge serve --port 8090
 
 # Terminal 2
 ARDHF_REGISTRY_URL=http://127.0.0.1:8090 \
@@ -115,5 +115,5 @@ User
 ## Related
 
 - [ARDHF basic sample](../ardhf/) — Simpler sample focusing on discovery only.
-- [HuggingFace Agent Finder](https://github.com/huggingface/hf-agentfinder) — ARD reference implementation.
+- [HuggingFace Discover](https://github.com/huggingface/hf-discover) — ARD reference implementation.
 - [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification.

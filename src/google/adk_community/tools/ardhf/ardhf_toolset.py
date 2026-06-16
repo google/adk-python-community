@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ARDHF toolset — wraps HuggingFace Agent Finder (ARD) as BaseToolset.
+"""ARDHF toolset — wraps HuggingFace Discover (ARD) as BaseToolset.
 
 Supports two modes:
 
 * **remote** (default) — HTTP POST to any ARD-compatible registry
-  endpoint (e.g. the hosted ``hf-agentfinder``).
-* **local** — uses the ``agentfinder`` Python package in-process for
+  endpoint (e.g. the hosted ``hf-discover``).
+* **local** — uses the ``discover`` Python package in-process for
   zero-latency, offline-capable search.
 
 The toolset exposes the following tools to the agent:
@@ -34,7 +34,7 @@ The toolset exposes the following tools to the agent:
 * ``connect_agent`` — send a message to a remote A2A agent and return
   the response, enabling the full discover → connect → use flow.
 
-Reference: https://github.com/huggingface/hf-agentfinder
+Reference: https://github.com/huggingface/hf-discover
 """
 
 from __future__ import annotations
@@ -57,8 +57,8 @@ from google.adk.tools.tool_context import ToolContext
 
 logger = logging.getLogger(__name__)
 
-# Default hosted HuggingFace Agent Finder registry.
-_DEFAULT_REGISTRY_URL = "https://huggingface.co/api/agentfinder"
+# Default hosted HuggingFace Discover registry.
+_DEFAULT_REGISTRY_URL = "https://evalstate-hf-discover.hf.space"
 
 # HTTP timeout for remote requests (seconds).
 _HTTP_TIMEOUT = 30
@@ -145,14 +145,14 @@ def _local_search(
     limit: int = 10,
     token: str | None = None,
 ) -> dict[str, Any]:
-  """Search using the in-process ``agentfinder`` package."""
+  """Search using the in-process ``discover`` package."""
   try:
-    from agentfinder.models import SearchQuery, SearchRequest
-    from agentfinder.server import search_agent_finder
+    from discover.models import SearchQuery, SearchRequest
+    from discover.server import search_discover
   except ImportError as exc:
     raise ImportError(
-        "Local mode requires the 'hf-agentfinder' package. "
-        "Install it with: pip install hf-agentfinder"
+        "Local mode requires the 'hf-discover' package. "
+        "Install it with: pip install hf-discover"
     ) from exc
 
   search_filter: dict[str, Any] = {}
@@ -163,7 +163,7 @@ def _local_search(
       query=SearchQuery(text=query, filter=search_filter),
       pageSize=limit,
   )
-  response = search_agent_finder(request, token=token)
+  response = search_discover(request, token=token)
   return response.model_dump(
       exclude_none=True, exclude_defaults=True
   )
@@ -215,7 +215,7 @@ def _extract_text_from_a2a_response(a2a_response: Any) -> list[str]:
 
 
 class AgentFinderToolset(BaseToolset):
-  """ADK BaseToolset wrapping HuggingFace Agent Finder (ARD).
+  """ADK BaseToolset wrapping HuggingFace Discover (ARD).
 
   Provides ``search_ards``, ``search_agents``, ``search_skills``,
   ``search_tools``, ``search_spaces``, ``get_agent_card``, and
@@ -226,7 +226,7 @@ class AgentFinderToolset(BaseToolset):
     registry_url: ARD registry URL for remote mode.  Ignored when
         ``local=True``.
     token: Optional Bearer token for authenticated registry access.
-    local: When ``True``, use the ``agentfinder`` Python package
+    local: When ``True``, use the ``discover`` Python package
         in-process instead of making HTTP requests.
     allowed_schemes: URL schemes permitted for ``get_agent_card``
         and ``connect_agent``.  Defaults to ``("http", "https")``

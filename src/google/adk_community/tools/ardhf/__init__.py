@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ARDHF — Agent Finder (ARD) toolset for ADK.
+"""ARDHF — HuggingFace Discover (ARD) toolset for ADK.
 
-Wraps the HuggingFace Agent Finder
-(https://github.com/huggingface/hf-agentfinder) as an ADK BaseToolset,
+Wraps HuggingFace Discover
+(https://github.com/huggingface/hf-discover) as an ADK BaseToolset,
 giving agents the ability to discover agents, skills, MCP servers, and
 other agentic resources at runtime.
 

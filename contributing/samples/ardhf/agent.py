@@ -15,7 +15,7 @@
 """Sample agent using the ARDHF toolset.
 
 Demonstrates the full discover -> inspect -> connect flow using the
-HuggingFace Agent Finder (ARD) registries.  The agent can search for
+HuggingFace Discover (ARD) registries.  The agent can search for
 agents, inspect their cards, and connect to remote A2A agents.
 
 Usage::
@@ -24,7 +24,7 @@ Usage::
 
 Or with the challenge server for deterministic results::
 
-    hf-agentfinder challenge serve --port 8090 &
+    hf-discover challenge serve --port 8090 &
     ARDHF_REGISTRY_URL=http://127.0.0.1:8090 \
         adk web contributing/samples/ardhf
 """
@@ -45,7 +45,7 @@ from google.adk_community.tools.ardhf import AgentFinderToolset
 
 _registry_url = os.environ.get(
     "ARDHF_REGISTRY_URL",
-    "https://huggingface.co/api/agentfinder",
+    "https://evalstate-hf-discover.hf.space",
 )
 _local = os.environ.get("ARDHF_LOCAL", "").lower() in (
     "1",
@@ -90,12 +90,12 @@ root_agent = Agent(
     name="ardhf_discovery_agent",
     description=(
         "An agent that discovers and connects to agentic resources "
-        "using the HuggingFace Agent Finder (ARD) registry."
+        "using the HuggingFace Discover (ARD) registry."
     ),
     instruction=(
         "You are a discovery agent. Your job is to help users find "
         "agents, skills, MCP servers, and other agentic resources by "
-        "searching the Agent Finder (ARD) registry, and optionally "
+        "searching the HuggingFace Discover (ARD) registry, and optionally "
         "connect to and interact with discovered A2A agents.\n\n"
         "## Tools\n\n"
         "You have several discovery tools:\n"
