@@ -1,9 +1,11 @@
 # ARDHF — Agentic Resource Discovery (ARD) Toolset for ADK
 
+<video src="https://storage.googleapis.com/alanblount-demo-public/ardhf-overview.mp4" controls width="100%"></video>
+
 ## Overview
 
 ARDHF wraps [HuggingFace Discover](https://github.com/huggingface/hf-discover)
-([ARD](https://agenticresourcediscovery.org) — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
+([ARD](https://agenticresourcediscovery.org) — [Agentic Resource Discovery](https://developers.googleblog.com/announcing-the-agentic-resource-discovery-specification/)) as an ADK `BaseToolset`.  It gives any ADK
 agent the ability to **discover, inspect, and connect to** agents, skills,
 MCP servers, HuggingFace Spaces, and other agentic resources at runtime.
 
@@ -300,6 +302,7 @@ pytest tests/unittests/tools/ardhf/ -v
 
 ## References
 
+- [Announcing the Agentic Resource Discovery Specification](https://developers.googleblog.com/announcing-the-agentic-resource-discovery-specification/) — Google Developers Blog
 - [ARD — Agentic Resource Discovery](https://agenticresourcediscovery.org) — Official ARD specification and documentation
 - [ARD Specification (GitHub)](https://github.com/ards-project/ard-spec) — ARD spec repository
 - [HuggingFace Discover](https://github.com/huggingface/hf-discover) — ARD reference implementation
