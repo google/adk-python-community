@@ -86,7 +86,7 @@ class TestArtifactTypeForKind:
   def test_mcp_kind(self):
     assert (
         _artifact_type_for_kind("mcp")
-        == "application/mcp-server+json"
+        == "application/mcp-server-card+json"
     )
 
   def test_space_kind(self):
@@ -655,12 +655,12 @@ class TestRemoteSearchAgainstChallenge:
     response = _remote_search(
         CHALLENGE_URL,
         "find tools",
-        artifact_type="application/mcp-server+json",
+        artifact_type="application/mcp-server-card+json",
         limit=10,
     )
 
     for result in response["results"]:
-      assert result["type"] == "application/mcp-server+json"
+      assert result["type"] == "application/mcp-server-card+json"
 
   def test_search_with_skill_filter(self):
     """Filtering by skill type returns only skill results."""
@@ -822,4 +822,4 @@ class TestToolsetAgainstChallenge:
 
     assert "results" in result
     for entry in result["results"]:
-      assert entry["type"] == "application/mcp-server+json"
+      assert entry["type"] == "application/mcp-server-card+json"

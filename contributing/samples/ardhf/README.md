@@ -3,7 +3,7 @@
 ## Overview
 
 ARDHF wraps [HuggingFace Discover](https://github.com/huggingface/hf-discover)
-(ARD — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
+([ARD](https://agenticresourcediscovery.org) — Agentic Resource Discovery) as an ADK `BaseToolset`.  It gives any ADK
 agent the ability to **discover, inspect, and connect to** agents, skills,
 MCP servers, HuggingFace Spaces, and other agentic resources at runtime.
 
@@ -50,7 +50,7 @@ tools automatically.
 | `search_ards` | Search ARD registries across all artifact types (agents, skills, MCP servers, Spaces) |
 | `search_agents` | Search filtered to A2A agents (`application/a2a-agent-card+json`) |
 | `search_skills` | Search filtered to skills (`application/ai-skill`) |
-| `search_tools` | Search filtered to MCP servers (`application/mcp-server+json`) |
+| `search_tools` | Search filtered to MCP servers (`application/mcp-server-card+json`) |
 | `search_spaces` | Search filtered to HuggingFace Spaces (`application/vnd.huggingface.space+json`) |
 | `get_agent_card` | Fetch a specific artifact (agent card, skill markdown, MCP descriptor) by URL |
 | `connect_agent` | Send a message to a remote A2A agent — may return an immediate response or start a long-running task with its own lifecycle |
@@ -241,7 +241,7 @@ Use multiple toolset instances to search different registries:
 
 ```python
 hf_toolset = AgentFinderToolset(
-    registry_url="https://evalstate-hf-discover.hf.space",
+    registry_url="https://huggingface-hf-discover.hf.space",
     tool_name_prefix="hf",
 )
 internal_toolset = AgentFinderToolset(
@@ -300,8 +300,8 @@ pytest tests/unittests/tools/ardhf/ -v
 
 ## References
 
-- [ARD Specification](https://github.com/nichochar/ard-spec) — Agentic Resource Discovery specification
+- [ARD — Agentic Resource Discovery](https://agenticresourcediscovery.org) — Official ARD specification and documentation
+- [ARD Specification (GitHub)](https://github.com/ards-project/ard-spec) — ARD spec repository
 - [HuggingFace Discover](https://github.com/huggingface/hf-discover) — ARD reference implementation
-- [ai-catalog](https://github.com/nichochar/ai-catalog) — Curated agentic resource catalog
 - [ADK Documentation](https://google.github.io/adk-docs/) — Google Agent Development Kit
-- [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification
+- [A2A Protocol](https://github.com/google/A2A) — Agent-to-Agent protocol specification

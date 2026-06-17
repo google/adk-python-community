@@ -58,7 +58,7 @@ from google.adk.tools.tool_context import ToolContext
 logger = logging.getLogger(__name__)
 
 # Default hosted HuggingFace Discover registry.
-_DEFAULT_REGISTRY_URL = "https://evalstate-hf-discover.hf.space"
+_DEFAULT_REGISTRY_URL = "https://huggingface-hf-discover.hf.space"
 
 # HTTP timeout for remote requests (seconds).
 _HTTP_TIMEOUT = 30

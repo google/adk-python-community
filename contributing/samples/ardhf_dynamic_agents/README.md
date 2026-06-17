@@ -115,5 +115,6 @@ User
 ## Related
 
 - [ARDHF basic sample](../ardhf/) — Simpler sample focusing on discovery only.
+- [ARD — Agentic Resource Discovery](https://agenticresourcediscovery.org) — Official ARD specification and documentation.
 - [HuggingFace Discover](https://github.com/huggingface/hf-discover) — ARD reference implementation.
-- [A2A Protocol](https://github.com/a2aproject/a2a-spec) — Agent-to-Agent protocol specification.
+- [A2A Protocol](https://github.com/google/A2A) — Agent-to-Agent protocol specification.

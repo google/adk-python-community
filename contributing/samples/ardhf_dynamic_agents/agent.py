@@ -52,7 +52,7 @@ from google.adk_community.tools.ardhf import AgentFinderToolset
 
 _registry_url = os.environ.get(
     "ARDHF_REGISTRY_URL",
-    "https://evalstate-hf-discover.hf.space",
+    "https://huggingface-hf-discover.hf.space",
 )
 _token = os.environ.get("HF_TOKEN")
 
