@@ -1,0 +1,13 @@
+patient_id,test_date,test_name,result_value,result_units,reference_low,reference_high
+P001,2026-01-15,Glucose,98,mg/dL,70,99
+P002,2026-01-15,HbA1c,5.4,%,4.0,5.6
+P003,2026-01-16,Total Cholesterol,182,mg/dL,0,200
+P004,2026-01-16,LDL Cholesterol,104,mg/dL,0,130
+P005,2026-01-17,HDL Cholesterol,58,mg/dL,40,60
+P006,2026-01-17,Triglycerides,142,mg/dL,0,150
+P007,2026-01-18,Creatinine,0.9,mg/dL,0.6,1.2
+P008,2026-01-18,BUN,14,mg/dL,7,20
+P009,2026-01-19,Sodium,140,mmol/L,135,145
+P010,2026-01-19,Potassium,4.1,mmol/L,3.5,5.0
+P011,2026-01-20,Hemoglobin,14.2,g/dL,13.5,17.5
+P012,2026-01-20,WBC,7.8,K/uL,4.0,11.0

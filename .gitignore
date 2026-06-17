@@ -79,12 +79,12 @@ Thumbs.db
 *.tmp
 *.temp
 
-
 # ADK local dev artifacts
 .adk/
 *.db
 *.sqlite
 hitl.db
+
 # gemini-cli settings
 .gemini/
 

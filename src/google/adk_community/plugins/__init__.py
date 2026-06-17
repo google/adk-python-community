@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,5 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# version: major.minor.patch
-__version__ = "0.5.0"
+from google.adk_community.plugins.agent_governance_plugin import (
+    AgentGovernancePlugin,
+)
+from google.adk_community.plugins.taxonomy import (
+    DefaultSkillPolicy,
+    SkillPolicy,
+    TaxonomyPipeline,
+    TaxonomyPlugin,
+    TaxonomyRegistry,
+    TaxonomyResolver,
+    TaxonomyTerm,
+)
+
+__all__ = [
+    "AgentGovernancePlugin",
+    "DefaultSkillPolicy",
+    "SkillPolicy",
+    "TaxonomyPipeline",
+    "TaxonomyPlugin",
+    "TaxonomyRegistry",
+    "TaxonomyResolver",
+    "TaxonomyTerm",
+]
