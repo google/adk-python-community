@@ -304,7 +304,7 @@ class AgentFinderToolset(BaseToolset):
 
   # -- Tool implementations -----------------------------------------------
 
-  async def _search_ards(
+  async def search_ards(
       self,
       tool_context: ToolContext,
       query: str,
@@ -330,7 +330,7 @@ class AgentFinderToolset(BaseToolset):
         query, artifact_type=artifact_type, limit=limit
     )
 
-  async def _search_agents(
+  async def search_agents(
       self,
       tool_context: ToolContext,
       query: str,
@@ -349,7 +349,7 @@ class AgentFinderToolset(BaseToolset):
     """
     return await self._do_search(query, artifact_type="a2a", limit=limit)
 
-  async def _search_skills(
+  async def search_skills(
       self,
       tool_context: ToolContext,
       query: str,
@@ -370,7 +370,7 @@ class AgentFinderToolset(BaseToolset):
         query, artifact_type="skill", limit=limit
     )
 
-  async def _search_tools(
+  async def search_tools(
       self,
       tool_context: ToolContext,
       query: str,
@@ -389,7 +389,7 @@ class AgentFinderToolset(BaseToolset):
     """
     return await self._do_search(query, artifact_type="mcp", limit=limit)
 
-  async def _search_spaces(
+  async def search_spaces(
       self,
       tool_context: ToolContext,
       query: str,
@@ -410,7 +410,7 @@ class AgentFinderToolset(BaseToolset):
         query, artifact_type="space", limit=limit
     )
 
-  async def _get_agent_card(
+  async def get_agent_card(
       self,
       tool_context: ToolContext,
       url: str,
@@ -448,7 +448,7 @@ class AgentFinderToolset(BaseToolset):
           "content_type": "text/markdown",
       }
 
-  async def _connect_agent(
+  async def connect_agent(
       self,
       tool_context: ToolContext,
       agent_card_url: str,
@@ -568,20 +568,16 @@ class AgentFinderToolset(BaseToolset):
       readonly_context: ReadonlyContext | None = None,
   ) -> list[BaseTool]:
     """Return all search, inspect, and connect tools."""
-    tool_defs = [
-        (self._search_ards, "search_ards"),
-        (self._search_agents, "search_agents"),
-        (self._search_skills, "search_skills"),
-        (self._search_tools, "search_tools"),
-        (self._search_spaces, "search_spaces"),
-        (self._get_agent_card, "get_agent_card"),
-        (self._connect_agent, "connect_agent"),
+    tool_funcs = [
+        self.search_ards,
+        self.search_agents,
+        self.search_skills,
+        self.search_tools,
+        self.search_spaces,
+        self.get_agent_card,
+        self.connect_agent,
     ]
-    tools: list[BaseTool] = []
-    for func, name in tool_defs:
-      tool = FunctionTool(func)
-      tool.name = name
-      tools.append(tool)
+    tools: list[BaseTool] = [FunctionTool(func) for func in tool_funcs]
 
     if readonly_context is not None:
       tools = [

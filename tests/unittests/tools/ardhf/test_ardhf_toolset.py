@@ -179,7 +179,7 @@ class TestToolsetGetTools:
     ) as mock_search:
       mock_search.return_value = {"results": []}
       mock_context = AsyncMock()
-      await toolset._search_agents(
+      await toolset.search_agents(
           mock_context, query="test", limit=5
       )
 
@@ -197,7 +197,7 @@ class TestToolsetGetTools:
     ) as mock_search:
       mock_search.return_value = {"results": []}
       mock_context = AsyncMock()
-      await toolset._search_skills(
+      await toolset.search_skills(
           mock_context, query="test", limit=5
       )
 
@@ -215,7 +215,7 @@ class TestToolsetGetTools:
     ) as mock_search:
       mock_search.return_value = {"results": []}
       mock_context = AsyncMock()
-      await toolset._search_tools(
+      await toolset.search_tools(
           mock_context, query="test", limit=5
       )
 
@@ -233,7 +233,7 @@ class TestToolsetGetTools:
     ) as mock_search:
       mock_search.return_value = {"results": []}
       mock_context = AsyncMock()
-      await toolset._search_spaces(
+      await toolset.search_spaces(
           mock_context, query="test", limit=5
       )
 
@@ -305,7 +305,7 @@ class TestDoSearch:
     toolset = AgentFinderToolset()
     mock_context = AsyncMock()
 
-    result = await toolset._get_agent_card(
+    result = await toolset.get_agent_card(
         mock_context, url="file:///etc/passwd"
     )
 
@@ -318,7 +318,7 @@ class TestDoSearch:
     toolset = AgentFinderToolset()
     mock_context = AsyncMock()
 
-    result = await toolset._connect_agent(
+    result = await toolset.connect_agent(
         mock_context,
         agent_card_url="ftp://example.com/agent.json",
         message="hello",
@@ -342,7 +342,7 @@ class TestGetAgentCard:
         return_value=json_content,
     ):
       mock_context = AsyncMock()
-      result = await toolset._get_agent_card(
+      result = await toolset.get_agent_card(
           mock_context, url="https://example.com/tool.json"
       )
 
@@ -361,7 +361,7 @@ class TestGetAgentCard:
         return_value=md_content,
     ):
       mock_context = AsyncMock()
-      result = await toolset._get_agent_card(
+      result = await toolset.get_agent_card(
           mock_context,
           url="https://example.com/SKILL.md",
       )
