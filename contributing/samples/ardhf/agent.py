@@ -88,6 +88,7 @@ agent_finder_toolset = AgentFinderToolset(
 
 root_agent = Agent(
     name="ardhf_discovery_agent",
+    model="gemini-flash-latest",
     description=(
         "An agent that discovers and connects to agentic resources "
         "using the HuggingFace Discover (ARD) registry."

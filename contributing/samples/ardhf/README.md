@@ -17,7 +17,43 @@ The core workflow is **discover → inspect → connect**:
 
 ## Quick Start
 
-### 1. Create the agent (`agent.py`)
+### 1. Clone and install
+
+```bash
+# Clone the repo and check out the PR branch
+git clone https://github.com/google/adk-python-community.git
+cd adk-python-community
+
+# Create a virtual environment and install with the ardhf extra
+uv venv .venv
+source .venv/bin/activate
+uv pip install -e ".[ardhf]"
+```
+
+### 2. Run the sample agent
+
+```bash
+cd contributing/samples/ardhf
+adk web .
+```
+
+Open `http://localhost:8765` in your browser and try: *"Search for code review skills"*
+
+### 3. (Optional) Use the challenge server for offline testing
+
+```bash
+# Install hf-discover for the deterministic challenge server
+uv pip install hf-discover
+
+# Start the challenge server (separate terminal)
+hf-discover challenge serve --port 8090
+
+# Run the sample against it
+cd contributing/samples/ardhf
+ARDHF_REGISTRY_URL=http://127.0.0.1:8090 adk web .
+```
+
+### Minimal agent code
 
 ```python
 from google.adk import Agent
@@ -25,25 +61,13 @@ from google.adk_community.tools.ardhf import AgentFinderToolset
 
 root_agent = Agent(
     name="discovery_agent",
-    description="An agent that discovers and connects to agentic resources.",
+    model="gemini-flash-latest",
     instruction="Search for agents, skills, and tools when you need a capability.",
     tools=[AgentFinderToolset()],
 )
 ```
 
-### 2. Run the app
-
-```bash
-# Interactive web UI
-adk web .
-
-# Or run programmatically
-adk run .
-```
-
-The agent is an ADK app — serve it with `adk web` for the interactive UI,
-or `adk run` for CLI mode.  The toolset provides all discovery and connection
-tools automatically.
+The toolset provides all discovery and connection tools automatically.
 
 ## Available Tools
 
