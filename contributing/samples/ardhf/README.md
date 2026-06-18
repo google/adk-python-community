@@ -270,15 +270,15 @@ hf_toolset = AgentFinderToolset(
     registry_url="https://huggingface-hf-discover.hf.space",
     tool_name_prefix="hf",
 )
-internal_toolset = AgentFinderToolset(
-    registry_url="https://internal.example.com/ard",
-    tool_name_prefix="internal",
+github_toolset = AgentFinderToolset(
+    registry_url="https://agentfinder.github.com/api/v1",
+    tool_name_prefix="gh",
 )
 
 agent = Agent(
     name="multi_registry_agent",
     instruction="Search multiple registries for the best tool.",
-    tools=[hf_toolset, internal_toolset],
+    tools=[hf_toolset, github_toolset],
 )
 ```
 

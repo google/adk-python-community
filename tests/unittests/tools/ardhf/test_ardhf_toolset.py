@@ -33,7 +33,7 @@ import pytest
 
 from google.adk_community.tools.ardhf.ardhf_toolset import (
     AgentFinderToolset,
-    _artifact_type_for_kind,
+    _artifact_types_for_kind,
     _extract_text_from_a2a_response,
     _registry_search_url,
     _remote_fetch,
@@ -77,32 +77,29 @@ class TestRegistrySearchUrl:
     )
 
 
-class TestArtifactTypeForKind:
+class TestArtifactTypesForKind:
   """Tests for kind-to-media-type mapping."""
 
   def test_skill_kind(self):
-    assert _artifact_type_for_kind("skill") == "application/ai-skill"
+    assert _artifact_types_for_kind("skill") == ["application/ai-skill"]
 
   def test_mcp_kind(self):
-    assert (
-        _artifact_type_for_kind("mcp")
-        == "application/mcp-server-card+json"
-    )
+    types = _artifact_types_for_kind("mcp")
+    assert "application/mcp-server-card+json" in types
+    assert "application/mcp-server+json" in types
 
   def test_space_kind(self):
-    assert (
-        _artifact_type_for_kind("space")
-        == "application/vnd.huggingface.space+json"
-    )
+    assert _artifact_types_for_kind("space") == [
+        "application/vnd.huggingface.space+json"
+    ]
 
   def test_a2a_kind(self):
-    assert (
-        _artifact_type_for_kind("a2a")
-        == "application/a2a-agent-card+json"
-    )
+    assert _artifact_types_for_kind("a2a") == [
+        "application/a2a-agent-card+json"
+    ]
 
   def test_unknown_kind_returns_none(self):
-    assert _artifact_type_for_kind("unknown") is None
+    assert _artifact_types_for_kind("unknown") is None
 
 
 class TestToolsetGetTools:
@@ -278,9 +275,7 @@ class TestDoSearch:
           artifact_type="application/custom+json",
       )
       _, kwargs = mock_search.call_args
-      assert (
-          kwargs["artifact_type"] == "application/custom+json"
-      )
+      assert kwargs["artifact_types"] == ["application/custom+json"]
 
   @pytest.mark.asyncio
   async def test_get_agent_card_returns_error_for_unreachable(self):

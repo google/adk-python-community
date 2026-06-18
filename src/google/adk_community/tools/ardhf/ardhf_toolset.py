@@ -75,31 +75,34 @@ def _registry_search_url(registry_url: str) -> str:
   return urljoin(f"{normalised}/", "search")
 
 
-_KIND_TO_MEDIA_TYPE: dict[str, str] = {
-    "skill": "application/ai-skill",
-    "mcp": "application/mcp-server-card+json",
-    "space": "application/vnd.huggingface.space+json",
-    "a2a": "application/a2a-agent-card+json",
+_KIND_TO_MEDIA_TYPES: dict[str, list[str]] = {
+    "skill": ["application/ai-skill"],
+    "mcp": [
+        "application/mcp-server-card+json",
+        "application/mcp-server+json",
+    ],
+    "space": ["application/vnd.huggingface.space+json"],
+    "a2a": ["application/a2a-agent-card+json"],
 }
 
 
-def _artifact_type_for_kind(kind: str) -> str | None:
-  """Map a human-friendly kind label to its ARD media type."""
-  return _KIND_TO_MEDIA_TYPE.get(kind)
+def _artifact_types_for_kind(kind: str) -> list[str] | None:
+  """Map a human-friendly kind label to its ARD media type(s)."""
+  return _KIND_TO_MEDIA_TYPES.get(kind)
 
 
 def _remote_search(
     registry_url: str,
     query: str,
     *,
-    artifact_type: str | None = None,
+    artifact_types: list[str] | None = None,
     limit: int = 10,
     token: str | None = None,
 ) -> dict[str, Any]:
   """POST a SearchRequest to a remote ARD registry and return raw JSON."""
   search_query: dict[str, Any] = {"text": query}
-  if artifact_type is not None:
-    search_query["filter"] = {"type": [artifact_type]}
+  if artifact_types is not None:
+    search_query["filter"] = {"type": artifact_types}
 
   request_body = {
       "query": search_query,
@@ -271,20 +274,20 @@ class AgentFinderToolset(BaseToolset):
     # Clamp limit to the valid range.
     limit = max(1, min(limit, 100))
 
-    # Resolve human-friendly kind to media type.
-    resolved_type = (
-        _artifact_type_for_kind(artifact_type) if artifact_type else None
+    # Resolve human-friendly kind to media type(s).
+    resolved_types = (
+        _artifact_types_for_kind(artifact_type) if artifact_type else None
     )
-    if resolved_type is None and artifact_type is not None:
+    if resolved_types is None and artifact_type is not None:
       # Assume it is already a raw media type string.
-      resolved_type = artifact_type
+      resolved_types = [artifact_type]
 
     try:
       if self._local:
         return await asyncio.to_thread(
             _local_search,
             query,
-            artifact_type=resolved_type,
+            artifact_type=resolved_types[0] if resolved_types else None,
             limit=limit,
             token=self._token,
         )
@@ -292,7 +295,7 @@ class AgentFinderToolset(BaseToolset):
           _remote_search,
           self._registry_url,
           query,
-          artifact_type=resolved_type,
+          artifact_types=resolved_types,
           limit=limit,
           token=self._token,
       )
