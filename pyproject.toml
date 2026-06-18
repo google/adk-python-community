@@ -50,6 +50,11 @@ sdc-agents = [
     "sdc-agents>=4.3.3; python_version >= '3.11'",
 ]
 spraay = ["web3>=6.0.0"]
+hitl = [
+    "aiosqlite>=0.20.0",
+    "fastapi>=0.110.0",
+    "sqlalchemy>=2.0.0",
+]
 
 
 [tool.pyink]
