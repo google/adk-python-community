@@ -17,6 +17,11 @@
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("fastapi")
+pytest.importorskip("aiosqlite")
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
