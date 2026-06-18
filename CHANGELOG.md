@@ -1,11 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Features
-
-* **hitl:** add production-ready Human-in-the-Loop approval gateway for ADK agents — includes `@hitl_tool` decorator, FastAPI approval service with SQLite persistence, ADK 1.x adapter, and reference Streamlit dashboard (`contributing/samples/hitl_approval`)
-
 ## [0.5.0](https://github.com/google/adk-python-community/compare/v0.4.1...v0.5.0) (2026-05-20)
 
 
