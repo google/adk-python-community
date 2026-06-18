@@ -49,10 +49,11 @@ class OpenMemoryService(BaseMemoryService):
       api_key: str = "",  # Required parameter (empty string triggers validation)
       config: Optional[OpenMemoryServiceConfig] = None,
   ):
-    """Initializes the OpenMemory service.
+    """Initializes the OpenMemory service for CaviraOSS OpenMemory.
 
     Args:
-        base_url: Base URL of the OpenMemory instance (default: http://localhost:3000).
+        base_url: Base URL of the OpenMemory instance (default: http://localhost:8080).
+                  CaviraOSS OpenMemory runs on port 8080 by default.
         api_key: API key for authentication. **Required** - must be provided.
         config: OpenMemoryServiceConfig instance. If None, uses defaults.
     

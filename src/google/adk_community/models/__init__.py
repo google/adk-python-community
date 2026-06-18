@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import artifacts
-from . import memory
-from . import models
-from . import sessions
-from . import version
+"""Community models for ADK."""
 
-__version__ = version.__version__
+from .openai_llm import OpenAI
+
+from google.adk.models.registry import LLMRegistry
+
+__all__ = ["OpenAI"]
+
+LLMRegistry.register(OpenAI)
