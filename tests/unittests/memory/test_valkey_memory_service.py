@@ -1,0 +1,780 @@
+# Copyright 2025 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from unittest.mock import AsyncMock
+from unittest.mock import patch
+
+from google.adk.events.event import Event
+from google.adk.sessions.session import Session
+from google.genai import types
+import pytest
+
+from google.adk_community.memory.valkey_memory_service import ValkeyMemoryService
+from google.adk_community.memory.valkey_memory_service import ValkeyMemoryServiceConfig
+
+MOCK_APP_NAME = "test-app"
+MOCK_USER_ID = "test-user"
+MOCK_SESSION_ID = "session-1"
+
+
+async def _mock_embed_fn(texts: list[str]) -> list[list[float]]:
+  """Simple mock embedding function returning fixed-dim vectors."""
+  return [[0.1] * 768 for _ in texts]
+
+
+MOCK_SESSION = Session(
+    app_name=MOCK_APP_NAME,
+    user_id=MOCK_USER_ID,
+    id=MOCK_SESSION_ID,
+    last_update_time=1000,
+    events=[
+        Event(
+            id="event-1",
+            invocation_id="inv-1",
+            author="user",
+            timestamp=12345,
+            content=types.Content(
+                parts=[types.Part(text="Hello, I like Python.")]
+            ),
+        ),
+        Event(
+            id="event-2",
+            invocation_id="inv-2",
+            author="model",
+            timestamp=12346,
+            content=types.Content(
+                parts=[
+                    types.Part(text="Python is a great programming language.")
+                ]
+            ),
+        ),
+        # Empty event, should be ignored
+        Event(
+            id="event-3",
+            invocation_id="inv-3",
+            author="user",
+            timestamp=12347,
+        ),
+        # Function call event, should be ignored
+        Event(
+            id="event-4",
+            invocation_id="inv-4",
+            author="agent",
+            timestamp=12348,
+            content=types.Content(
+                parts=[
+                    types.Part(
+                        function_call=types.FunctionCall(name="test_function")
+                    )
+                ]
+            ),
+        ),
+    ],
+)
+
+MOCK_SESSION_WITH_EMPTY_EVENTS = Session(
+    app_name=MOCK_APP_NAME,
+    user_id=MOCK_USER_ID,
+    id=MOCK_SESSION_ID,
+    last_update_time=1000,
+)
+
+
+@pytest.fixture
+def mock_valkey_client():
+  """Mock valkey-glide client for testing."""
+  client = AsyncMock()
+  client.hset = AsyncMock(return_value=1)
+  client.expire = AsyncMock(return_value=True)
+  client.exec = AsyncMock(return_value=[])
+  return client
+
+
+@pytest.fixture
+def memory_service(mock_valkey_client):
+  """Create ValkeyMemoryService instance for testing."""
+  service = ValkeyMemoryService(
+      client=mock_valkey_client,
+      embedding_function=_mock_embed_fn,
+  )
+  service._index_created = True
+  return service
+
+
+@pytest.fixture
+def memory_service_with_config(mock_valkey_client):
+  """Create ValkeyMemoryService with custom config."""
+  config = ValkeyMemoryServiceConfig(
+      similarity_top_k=5,
+      key_prefix="custom:mem",
+      index_name="custom_idx",
+      ttl_seconds=3600,
+      embedding_dimensions=768,
+      vector_distance_threshold=0.5,
+  )
+  service = ValkeyMemoryService(
+      client=mock_valkey_client,
+      embedding_function=_mock_embed_fn,
+      config=config,
+  )
+  service._index_created = True
+  return service
+
+
+class TestValkeyMemoryServiceConfig:
+  """Tests for ValkeyMemoryServiceConfig."""
+
+  def test_default_config(self):
+    """Test default configuration values."""
+    config = ValkeyMemoryServiceConfig()
+    assert config.similarity_top_k == 10
+    assert config.key_prefix == "adk:memory"
+    assert config.index_name == "adk_memory_idx"
+    assert config.ttl_seconds is None
+    assert config.embedding_dimensions == 768
+    assert config.distance_metric == "COSINE"
+    assert config.vector_distance_threshold is None
+
+  def test_custom_config(self):
+    """Test custom configuration values."""
+    config = ValkeyMemoryServiceConfig(
+        similarity_top_k=20,
+        key_prefix="my:prefix",
+        index_name="my_index",
+        ttl_seconds=7200,
+        embedding_dimensions=1536,
+        distance_metric="L2",
+        vector_distance_threshold=0.8,
+    )
+    assert config.similarity_top_k == 20
+    assert config.key_prefix == "my:prefix"
+    assert config.index_name == "my_index"
+    assert config.ttl_seconds == 7200
+    assert config.embedding_dimensions == 1536
+    assert config.distance_metric == "L2"
+    assert config.vector_distance_threshold == 0.8
+
+  def test_config_validation_top_k(self):
+    """Test similarity_top_k validation."""
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(similarity_top_k=0)
+
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(similarity_top_k=1001)
+
+  def test_config_validation_distance_metric(self):
+    """Test distance_metric validation rejects invalid values."""
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(distance_metric="HAMMING")
+
+    with pytest.raises(Exception):
+      ValkeyMemoryServiceConfig(distance_metric="invalid")
+
+  def test_config_distance_metric_case_insensitive(self):
+    """Test that distance_metric is case-insensitive and normalized."""
+    config = ValkeyMemoryServiceConfig(distance_metric="cosine")
+    assert config.distance_metric == "COSINE"
+
+    config = ValkeyMemoryServiceConfig(distance_metric="l2")
+    assert config.distance_metric == "L2"
+
+    config = ValkeyMemoryServiceConfig(distance_metric="ip")
+    assert config.distance_metric == "IP"
+
+
+class TestValkeyMemoryServiceInit:
+  """Tests for ValkeyMemoryService initialization."""
+
+  def test_client_required(self):
+    """Test that client is required."""
+    with pytest.raises(ValueError, match="client is required"):
+      ValkeyMemoryService(client=None, embedding_function=_mock_embed_fn)
+
+  def test_embedding_function_required(self, mock_valkey_client):
+    """Test that embedding_function is required."""
+    with pytest.raises(ValueError, match="embedding_function is required"):
+      ValkeyMemoryService(client=mock_valkey_client, embedding_function=None)
+
+  def test_init_with_defaults(self, mock_valkey_client):
+    """Test initialization with default config."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+    assert service._client is mock_valkey_client
+    assert service._config.similarity_top_k == 10
+    assert service._index_created is False
+
+  def test_init_with_config(self, mock_valkey_client):
+    """Test initialization with custom config."""
+    config = ValkeyMemoryServiceConfig(similarity_top_k=5)
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+        config=config,
+    )
+    assert service._config.similarity_top_k == 5
+
+
+class TestValkeyMemoryServiceCreateIndex:
+  """Tests for create_index."""
+
+  @pytest.mark.asyncio
+  async def test_create_index_success(self, mock_valkey_client):
+    """Test successful index creation."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+      mock_create.return_value = "OK"
+      await service.create_index()
+
+      assert service._index_created is True
+      mock_create.assert_called_once()
+
+  @pytest.mark.asyncio
+  async def test_create_index_already_exists(self, mock_valkey_client):
+    """Test that existing index is handled gracefully."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+      mock_create.side_effect = Exception("Index already exists")
+      await service.create_index()
+      assert service._index_created is True
+
+  @pytest.mark.asyncio
+  async def test_create_index_unexpected_error(self, mock_valkey_client):
+    """Test that unexpected errors are raised."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+      mock_create.side_effect = Exception("Connection refused")
+      with pytest.raises(Exception, match="Connection refused"):
+        await service.create_index()
+      assert service._index_created is False
+
+
+class TestValkeyMemoryServiceAddSession:
+  """Tests for add_session_to_memory."""
+
+  @pytest.mark.asyncio
+  async def test_add_session_success(self, memory_service, mock_valkey_client):
+    """Test successful addition of session memories."""
+    with patch("glide.Batch") as MockBatch:
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      await memory_service.add_session_to_memory(MOCK_SESSION)
+
+      # Should call exec once with the batch
+      mock_valkey_client.exec.assert_called_once_with(
+          mock_batch_instance, raise_on_error=True
+      )
+      # Batch should be created as non-atomic
+      MockBatch.assert_called_once_with(is_atomic=False)
+
+  @pytest.mark.asyncio
+  async def test_add_session_filters_empty_events(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that events without text content are filtered out."""
+    await memory_service.add_session_to_memory(MOCK_SESSION_WITH_EMPTY_EVENTS)
+    mock_valkey_client.exec.assert_not_called()
+
+  @pytest.mark.asyncio
+  async def test_add_session_with_ttl(
+      self, memory_service_with_config, mock_valkey_client
+  ):
+    """Test that TTL is set when configured."""
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      expire_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: expire_calls.append(
+          args
+      )
+
+      await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+
+      # 2 valid events -> 2 hset + 2 expire calls on the batch
+      assert len(hset_calls) == 2
+      assert len(expire_calls) == 2
+      # TTL should be 3600
+      assert expire_calls[0][1] == 3600
+
+  @pytest.mark.asyncio
+  async def test_add_session_no_ttl_by_default(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that no TTL is set when not configured."""
+    with patch("glide.Batch") as MockBatch:
+      expire_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: expire_calls.append(
+          args
+      )
+
+      await memory_service.add_session_to_memory(MOCK_SESSION)
+
+      assert len(expire_calls) == 0
+
+  @pytest.mark.asyncio
+  async def test_add_session_embedding_error(self, mock_valkey_client):
+    """Test handling of embedding function failure."""
+
+    async def _failing_embed(texts):
+      raise RuntimeError("Embedding service unavailable")
+
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_failing_embed,
+    )
+    service._index_created = True
+
+    # Should not raise, just log error
+    await service.add_session_to_memory(MOCK_SESSION)
+    mock_valkey_client.exec.assert_not_called()
+
+  @pytest.mark.asyncio
+  async def test_add_session_batch_exec_error(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that batch exec failure raises RuntimeError."""
+    mock_valkey_client.exec.side_effect = Exception("Connection error")
+
+    with patch("glide.Batch") as MockBatch:
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      with pytest.raises(RuntimeError, match="Memory ingestion failed"):
+        await memory_service.add_session_to_memory(MOCK_SESSION)
+      mock_valkey_client.exec.assert_called_once()
+
+  @pytest.mark.asyncio
+  async def test_add_session_custom_key_prefix(
+      self, memory_service_with_config, mock_valkey_client
+  ):
+    """Test that custom key prefix is used."""
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      await memory_service_with_config.add_session_to_memory(MOCK_SESSION)
+
+      key = hset_calls[0][0]
+      assert key.startswith("custom:mem:")
+
+  @pytest.mark.asyncio
+  async def test_add_session_creates_index_if_needed(self, mock_valkey_client):
+    """Test that create_index is called if not yet created."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    with (
+        patch("glide.ft.create", new_callable=AsyncMock) as mock_create,
+        patch("glide.Batch") as MockBatch,
+    ):
+      mock_create.return_value = "OK"
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: None
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      await service.add_session_to_memory(MOCK_SESSION)
+      mock_create.assert_called_once()
+      assert service._index_created is True
+
+
+class TestValkeyMemoryServiceAddEvents:
+  """Tests for add_events_to_memory."""
+
+  @pytest.mark.asyncio
+  async def test_add_events_success(self, memory_service, mock_valkey_client):
+    """Test incremental event ingestion."""
+    events = [
+        Event(
+            id="ev-1",
+            invocation_id="inv-1",
+            author="user",
+            timestamp=100,
+            content=types.Content(parts=[types.Part(text="Hello world")]),
+        ),
+    ]
+
+    with patch("glide.Batch") as MockBatch:
+      hset_calls = []
+      mock_batch_instance = MockBatch.return_value
+      mock_batch_instance.hset = lambda *args, **kwargs: hset_calls.append(args)
+      mock_batch_instance.expire = lambda *args, **kwargs: None
+
+      await memory_service.add_events_to_memory(
+          app_name="myapp",
+          user_id="user1",
+          events=events,
+          session_id="sess-1",
+      )
+
+      assert len(hset_calls) == 1
+      fields = hset_calls[0][1]
+      assert fields["content"] == "Hello world"
+      assert fields["app_name"] == "myapp"
+      assert fields["user_id"] == "user1"
+      assert fields["session_id"] == "sess-1"
+      mock_valkey_client.exec.assert_called_once()
+
+  @pytest.mark.asyncio
+  async def test_add_events_filters_empty(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that empty events are skipped."""
+    events = [
+        Event(id="ev-empty", invocation_id="inv-1", author="user"),
+    ]
+
+    await memory_service.add_events_to_memory(
+        app_name="myapp",
+        user_id="user1",
+        events=events,
+    )
+
+    mock_valkey_client.exec.assert_not_called()
+
+
+class TestValkeyMemoryServiceSearch:
+  """Tests for search_memory."""
+
+  @pytest.mark.asyncio
+  async def test_search_memory_success(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test successful memory search using KNN."""
+    search_result = [
+        2,
+        {
+            b"adk:memory:abc123": {
+                b"content": b"I love Python programming",
+                b"author": b"user",
+                b"timestamp": b"12345",
+                b"__embedding_score": b"0.15",
+            },
+            b"adk:memory:def456": {
+                b"content": b"Python has great libraries",
+                b"author": b"model",
+                b"timestamp": b"12346",
+                b"__embedding_score": b"0.25",
+            },
+        },
+    ]
+
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.return_value = search_result
+
+      result = await memory_service.search_memory(
+          app_name=MOCK_APP_NAME,
+          user_id=MOCK_USER_ID,
+          query="Python",
+      )
+
+      assert len(result.memories) == 2
+      assert (
+          result.memories[0].content.parts[0].text
+          == "I love Python programming"
+      )
+      assert result.memories[0].author == "user"
+
+  @pytest.mark.asyncio
+  async def test_search_memory_empty_result(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test search when no results."""
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.return_value = [0, {}]
+
+      result = await memory_service.search_memory(
+          app_name=MOCK_APP_NAME,
+          user_id=MOCK_USER_ID,
+          query="anything",
+      )
+      assert len(result.memories) == 0
+
+  @pytest.mark.asyncio
+  async def test_search_memory_uses_knn_query(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that search builds a KNN query with TAG filters."""
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.return_value = [0, {}]
+
+      await memory_service.search_memory(
+          app_name="my-app",
+          user_id="user-123",
+          query="test query",
+      )
+
+      call_args = mock_search.call_args
+      query_str = call_args[0][2]
+      assert "my\\-app" in query_str
+      assert "user\\-123" in query_str
+      assert "KNN" in query_str
+      assert "@embedding" in query_str
+
+  @pytest.mark.asyncio
+  async def test_search_memory_passes_query_vec(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that query embedding is passed as params."""
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.return_value = [0, {}]
+
+      await memory_service.search_memory(
+          app_name=MOCK_APP_NAME,
+          user_id=MOCK_USER_ID,
+          query="test",
+      )
+
+      call_args = mock_search.call_args
+      options = call_args[0][3]
+      assert "query_vec" in options.params
+      assert isinstance(options.params["query_vec"], bytes)
+
+  @pytest.mark.asyncio
+  async def test_search_memory_distance_threshold(
+      self, memory_service_with_config, mock_valkey_client
+  ):
+    """Test that distance threshold filters results."""
+    search_result = [
+        2,
+        {
+            b"adk:memory:close": {
+                b"content": b"Close match",
+                b"author": b"user",
+                b"timestamp": b"1",
+                b"__embedding_score": b"0.3",
+            },
+            b"adk:memory:far": {
+                b"content": b"Far match",
+                b"author": b"user",
+                b"timestamp": b"2",
+                b"__embedding_score": b"0.9",
+            },
+        },
+    ]
+
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.return_value = search_result
+
+      # Threshold is 0.5, so only "Close match" (0.3) should pass
+      result = await memory_service_with_config.search_memory(
+          app_name=MOCK_APP_NAME,
+          user_id=MOCK_USER_ID,
+          query="test",
+      )
+
+      assert len(result.memories) == 1
+      assert result.memories[0].content.parts[0].text == "Close match"
+
+  @pytest.mark.asyncio
+  async def test_search_memory_embedding_error(self, mock_valkey_client):
+    """Test graceful handling of embedding failure during search."""
+
+    async def _failing_embed(texts):
+      raise RuntimeError("Embedding service down")
+
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_failing_embed,
+    )
+    service._index_created = True
+
+    result = await service.search_memory(
+        app_name=MOCK_APP_NAME,
+        user_id=MOCK_USER_ID,
+        query="test",
+    )
+    assert len(result.memories) == 0
+
+  @pytest.mark.asyncio
+  async def test_search_memory_ft_search_error(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test graceful handling of FT.SEARCH failure."""
+    with patch("glide.ft.search", new_callable=AsyncMock) as mock_search:
+      mock_search.side_effect = Exception("Connection error")
+
+      result = await memory_service.search_memory(
+          app_name=MOCK_APP_NAME,
+          user_id=MOCK_USER_ID,
+          query="test",
+      )
+      assert len(result.memories) == 0
+
+
+class TestValkeyMemoryServiceBuildQuery:
+  """Tests for _build_knn_query."""
+
+  def test_basic_knn_query(self, memory_service):
+    """Test KNN query construction."""
+    query = memory_service._build_knn_query("myapp", "user1", 10)
+    assert "@app_name:{myapp}" in query
+    assert "@user_id:{user1}" in query
+    assert "KNN 10 @embedding" in query
+
+  def test_hyphenated_values(self, memory_service):
+    """Test escaping of hyphens in TAG values."""
+    query = memory_service._build_knn_query("my-app", "user-1", 5)
+    assert "my\\-app" in query
+    assert "user\\-1" in query
+
+  def test_special_characters_dots(self, memory_service):
+    """Test escaping of dots in TAG values."""
+    query = memory_service._build_knn_query("com.example.app", "user.1", 10)
+    assert "com\\.example\\.app" in query
+    assert "user\\.1" in query
+
+  def test_special_characters_colons(self, memory_service):
+    """Test escaping of colons in TAG values."""
+    query = memory_service._build_knn_query("app:v2", "user:123", 10)
+    assert "app\\:v2" in query
+    assert "user\\:123" in query
+
+  def test_special_characters_at_sign(self, memory_service):
+    """Test escaping of @ sign in TAG values."""
+    query = memory_service._build_knn_query("app@org", "user@domain", 10)
+    assert "app\\@org" in query
+    assert "user\\@domain" in query
+
+  def test_special_characters_spaces(self, memory_service):
+    """Test escaping of spaces in TAG values."""
+    query = memory_service._build_knn_query("my app", "user 1", 10)
+    assert "my\\ app" in query
+    assert "user\\ 1" in query
+
+
+class TestValkeyMemoryServiceClose:
+  """Tests for close method."""
+
+  @pytest.mark.asyncio
+  async def test_close_does_not_close_client(
+      self, memory_service, mock_valkey_client
+  ):
+    """Test that close does not close the underlying client."""
+    await memory_service.close()
+    mock_valkey_client.close.assert_not_called()
+
+
+class TestValkeyMemoryServiceEnsureIndex:
+  """Tests for _ensure_index with asyncio.Lock."""
+
+  @pytest.mark.asyncio
+  async def test_ensure_index_skips_if_already_created(
+      self, mock_valkey_client
+  ):
+    """Test that _ensure_index does not call create_index if already done."""
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+    service._index_created = True
+
+    with patch("glide.ft.create", new_callable=AsyncMock) as mock_create:
+      await service._ensure_index()
+      mock_create.assert_not_called()
+
+  @pytest.mark.asyncio
+  async def test_ensure_index_calls_create_index_once(self, mock_valkey_client):
+    """Test that concurrent calls to _ensure_index only create index once."""
+    import asyncio
+
+    service = ValkeyMemoryService(
+        client=mock_valkey_client,
+        embedding_function=_mock_embed_fn,
+    )
+
+    call_count = 0
+
+    async def mock_create(*args, **kwargs):
+      nonlocal call_count
+      call_count += 1
+      await asyncio.sleep(0.01)  # Simulate async work
+      return "OK"
+
+    with patch("glide.ft.create", side_effect=mock_create):
+      # Launch multiple concurrent ensure_index calls
+      await asyncio.gather(
+          service._ensure_index(),
+          service._ensure_index(),
+          service._ensure_index(),
+      )
+
+      # Should only call create once due to lock
+      assert call_count == 1
+      assert service._index_created is True
+
+
+class TestValkeyMemoryServiceEscapeTagValue:
+  """Tests for _escape_tag_value static method."""
+
+  def test_no_special_characters(self):
+    """Test that plain values are unchanged."""
+    assert ValkeyMemoryService._escape_tag_value("myapp") == "myapp"
+
+  def test_hyphen_escaped(self):
+    """Test hyphen escaping."""
+    assert ValkeyMemoryService._escape_tag_value("my-app") == "my\\-app"
+
+  def test_dot_escaped(self):
+    """Test dot escaping."""
+    assert (
+        ValkeyMemoryService._escape_tag_value("com.example.app")
+        == "com\\.example\\.app"
+    )
+
+  def test_colon_escaped(self):
+    """Test colon escaping."""
+    assert ValkeyMemoryService._escape_tag_value("app:v2") == "app\\:v2"
+
+  def test_at_sign_escaped(self):
+    """Test @ sign escaping."""
+    assert (
+        ValkeyMemoryService._escape_tag_value("user@domain") == "user\\@domain"
+    )
+
+  def test_space_escaped(self):
+    """Test space escaping."""
+    assert ValkeyMemoryService._escape_tag_value("my app") == "my\\ app"
+
+  def test_multiple_special_chars(self):
+    """Test multiple special characters in one value."""
+    result = ValkeyMemoryService._escape_tag_value("a-b.c:d@e")
+    assert result == "a\\-b\\.c\\:d\\@e"
+
+  def test_question_mark_escaped(self):
+    """Test question mark escaping (wildcard glob in TAG queries)."""
+    assert ValkeyMemoryService._escape_tag_value("app?") == "app\\?"
+    assert ValkeyMemoryService._escape_tag_value("a?b?c") == "a\\?b\\?c"
