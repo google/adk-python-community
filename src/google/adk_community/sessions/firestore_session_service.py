@@ -47,6 +47,7 @@ import asyncio
 from collections import deque
 from collections.abc import Awaitable
 from collections.abc import Callable
+import copy
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -75,8 +76,6 @@ DEFAULT_SESSIONS_COLLECTION = "sessions"
 DEFAULT_EVENTS_COLLECTION = "events"
 DEFAULT_APP_STATE_COLLECTION = "app_states"
 DEFAULT_USER_STATE_COLLECTION = "user_states"
-
-_SessionLockKey = tuple[str, str, str]
 
 # Transient Firestore / gRPC failures worth retrying. Matched by class name to
 # avoid a hard dependency on google.api_core being importable everywhere.
@@ -141,6 +140,10 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       client: Any = None,
       root_collection: Optional[str] = None,
       *,
+      sessions_collection: str = DEFAULT_SESSIONS_COLLECTION,
+      events_collection: str = DEFAULT_EVENTS_COLLECTION,
+      app_state_collection: str = DEFAULT_APP_STATE_COLLECTION,
+      user_state_collection: str = DEFAULT_USER_STATE_COLLECTION,
       durable_mode: bool = False,
       buffer_max_events: int = 10,
       flush_interval_seconds: float = 120.0,
@@ -155,6 +158,14 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       client: An optional Firestore ``AsyncClient``. If not provided, a new one
         is created (requires ``google-cloud-firestore``).
       root_collection: Root collection name. Defaults to ``'adk-session'``.
+      sessions_collection: Subcollection name for sessions. Defaults to
+        ``'sessions'``.
+      events_collection: Subcollection name for events. Defaults to
+        ``'events'``.
+      app_state_collection: Root collection for app-scoped state. Defaults to
+        ``'app_states'``.
+      user_state_collection: Root collection for user-scoped state. Defaults
+        to ``'user_states'``.
       durable_mode: When True, every event is persisted immediately and no
         buffering happens.
       buffer_max_events: Flush a session once this many events are buffered.
@@ -172,12 +183,13 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
           " Install it with: pip install google-adk-community[firestore]"
       ) from e
 
+    self._firestore = firestore
     self.client = client if client is not None else firestore.AsyncClient()
     self.root_collection = root_collection or DEFAULT_ROOT_COLLECTION
-    self.sessions_collection = DEFAULT_SESSIONS_COLLECTION
-    self.events_collection = DEFAULT_EVENTS_COLLECTION
-    self.app_state_collection = DEFAULT_APP_STATE_COLLECTION
-    self.user_state_collection = DEFAULT_USER_STATE_COLLECTION
+    self.sessions_collection = sessions_collection
+    self.events_collection = events_collection
+    self.app_state_collection = app_state_collection
+    self.user_state_collection = user_state_collection
 
     self._durable_mode = durable_mode
     self._buffer_max_events = buffer_max_events
@@ -224,8 +236,6 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       user_state: dict[str, Any],
       session_state: dict[str, Any],
   ) -> dict[str, Any]:
-    import copy
-
     merged = copy.deepcopy(session_state)
     for key, value in app_state.items():
       merged[State.APP_PREFIX + key] = value
@@ -258,8 +268,6 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       session_id: Optional[str] = None,
   ) -> Session:
     """Creates a new session (raises AlreadyExistsError on a duplicate id)."""
-    from google.cloud import firestore
-
     session_id = session_id or str(uuid.uuid4())
     deltas = _session_util.extract_state_delta(state or {})
     session_ref = self._get_sessions_ref(app_name, user_id).document(session_id)
@@ -270,8 +278,8 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
         "appName": app_name,
         "userId": user_id,
         "state": deltas["session"],
-        "createTime": firestore.SERVER_TIMESTAMP,
-        "updateTime": firestore.SERVER_TIMESTAMP,
+        "createTime": self._firestore.SERVER_TIMESTAMP,
+        "updateTime": self._firestore.SERVER_TIMESTAMP,
         "revision": 1,
     }
 
@@ -546,8 +554,6 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
 
   async def _persist_batch(self, session: Session, events: list[Event]) -> None:
     """Persists a batch of events for one session in a single transaction."""
-    from google.cloud import firestore
-
     session_ref = self._get_sessions_ref(
         session.app_name, session.user_id
     ).document(session.id)
@@ -628,7 +634,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
           session_ref,
           {
               "state": session_only_state,
-              "updateTime": firestore.SERVER_TIMESTAMP,
+              "updateTime": self._firestore.SERVER_TIMESTAMP,
               "revision": new_revision,
           },
       )
