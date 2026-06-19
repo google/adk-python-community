@@ -12,26 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from google.adk_community.plugins.agent_governance_plugin import (
-    AgentGovernancePlugin,
-)
-from google.adk_community.plugins.taxonomy import (
-    DefaultSkillPolicy,
-    SkillPolicy,
-    TaxonomyPipeline,
-    TaxonomyPlugin,
-    TaxonomyRegistry,
-    TaxonomyResolver,
-    TaxonomyTerm,
+"""FastAPI application entry point."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from . import routes
+from .store import init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(
+    title="ADK HITL Approval API",
+    description="Human-in-the-Loop approval layer for Google ADK agents.",
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
-__all__ = [
-    "AgentGovernancePlugin",
-    "DefaultSkillPolicy",
-    "SkillPolicy",
-    "TaxonomyPipeline",
-    "TaxonomyPlugin",
-    "TaxonomyRegistry",
-    "TaxonomyResolver",
-    "TaxonomyTerm",
-]
+app.include_router(routes.router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
