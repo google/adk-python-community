@@ -144,6 +144,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       events_collection: str = DEFAULT_EVENTS_COLLECTION,
       app_state_collection: str = DEFAULT_APP_STATE_COLLECTION,
       user_state_collection: str = DEFAULT_USER_STATE_COLLECTION,
+      flat_layout: bool = False,
       durable_mode: bool = False,
       buffer_max_events: int = 10,
       flush_interval_seconds: float = 120.0,
@@ -166,6 +167,10 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
         ``'app_states'``.
       user_state_collection: Root collection for user-scoped state. Defaults
         to ``'user_states'``.
+      flat_layout: When True, session documents live directly in
+        ``root_collection/{session_id}`` (no ``{app}/users/{user}/sessions/``
+        nesting). Useful when the session id already encodes the user (e.g.
+        ``{phone}-{date}``). Defaults to False.
       durable_mode: When True, every event is persisted immediately and no
         buffering happens.
       buffer_max_events: Flush a session once this many events are buffered.
@@ -190,6 +195,9 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     self.events_collection = events_collection
     self.app_state_collection = app_state_collection
     self.user_state_collection = user_state_collection
+    # flat_layout=True: sessions/{session_id} (no {app}/users/{user} nesting)
+    # flat_layout=False (default): {root}/{app}/users/{user}/{sessions}/{session_id}
+    self._flat_layout = flat_layout
 
     self._durable_mode = durable_mode
     self._buffer_max_events = buffer_max_events
@@ -211,6 +219,8 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
   # -- Firestore refs / helpers ---------------------------------------------
 
   def _get_sessions_ref(self, app_name: str, user_id: str) -> Any:
+    if self._flat_layout:
+      return self.client.collection(self.root_collection)
     return (
         self.client.collection(self.root_collection)
         .document(app_name)
@@ -371,7 +381,14 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       self, *, app_name: str, user_id: Optional[str] = None
   ) -> ListSessionsResponse:
     """Lists sessions for an app (optionally a single user)."""
-    if user_id:
+    if self._flat_layout:
+      query = self.client.collection(self.root_collection).where(
+          "appName", "==", app_name
+      )
+      if user_id:
+        query = query.where("userId", "==", user_id)
+      docs = await query.get()
+    elif user_id:
       docs = await (
           self._get_sessions_ref(app_name, user_id)
           .where("appName", "==", app_name)
