@@ -40,7 +40,7 @@ documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
 firestore = [
-    "google-cloud-firestore>=2.11.0, <3.0.0",  # For BufferedFirestoreSessionService
+    "google-cloud-firestore>=2.11,<3",
 ]
 s3 = [
     "aioboto3>=13.0.0",  # For S3ArtifactService

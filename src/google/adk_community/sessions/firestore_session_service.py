@@ -18,30 +18,27 @@
 ``google.adk.integrations.firestore.FirestoreSessionService`` (same collection
 hierarchy, app/user/session state scoping, optimistic concurrency via a
 ``revision`` field, and idempotent event documents keyed by ``event.id``) but
-**owns** the Firestore I/O so it can persist a whole batch of buffered events in
-a **single transaction**.
+**owns** the Firestore I/O so it can persist a whole batch of buffered events
+in a **single transaction**.
 
-Collection hierarchy::
+Collection hierarchy (matches the ADK builtin)::
 
     adk-session/{app}/users/{user}/sessions/{session}/events/{event}
     app_states/{app}
     user_states/{app}/users/{user}
 
 Events accumulate in a per-session in-memory buffer and flush when the buffer
-reaches ``buffer_max_events``, when ``flush_interval_seconds`` elapses (the
-background task started by :meth:`start`), when ``flush_session`` / ``flush_all``
-/ ``flush`` is called, or when :meth:`stop` runs. Set ``durable_mode=True`` to
-persist every event immediately (no buffering).
+reaches ``buffer_max_events``, when ``flush_interval_seconds`` elapses (via
+the background task started by :meth:`start`), when ``flush_session`` /
+``flush_all`` / ``flush`` is called, or when :meth:`stop` runs. Set
+``durable_mode=True`` to persist every event immediately (no buffering).
 
-Batching does not change the event-document count, but it collapses the repeated
-session-doc + state-doc updates and per-event transactions from N to 1 (fewer
-round-trips and less optimistic-lock contention). On an abrupt process death
-before a flush, up to ``flush_interval_seconds`` of events (or
-``buffer_max_events - 1`` per session) may be lost; ``stop()`` flushes on
-graceful shutdown but cannot protect against crashes.
+Batching collapses the repeated session-doc + state-doc updates and per-event
+transactions from N to 1 (fewer round-trips, less optimistic-lock contention).
+On an abrupt process death before a flush, up to ``flush_interval_seconds`` of
+events (or ``buffer_max_events - 1`` per session) may be lost; :meth:`stop`
+flushes on graceful shutdown.
 """
-
-from __future__ import annotations
 
 import asyncio
 from collections import deque
@@ -56,7 +53,6 @@ import logging
 import random
 import time
 from typing import Any
-from typing import Optional
 import uuid
 
 from google.adk.errors.already_exists_error import AlreadyExistsError
@@ -77,8 +73,6 @@ DEFAULT_EVENTS_COLLECTION = "events"
 DEFAULT_APP_STATE_COLLECTION = "app_states"
 DEFAULT_USER_STATE_COLLECTION = "user_states"
 
-# Transient Firestore / gRPC failures worth retrying. Matched by class name to
-# avoid a hard dependency on google.api_core being importable everywhere.
 _RETRYABLE_ERROR_NAMES = frozenset({
     "DeadlineExceeded",
     "ServiceUnavailable",
@@ -117,9 +111,7 @@ def is_retryable_error(exc: BaseException) -> bool:
   name = type(exc).__name__
   if name in _NON_RETRYABLE_ERROR_NAMES:
     return False
-  if name in _RETRYABLE_ERROR_NAMES:
-    return True
-  return False
+  return name in _RETRYABLE_ERROR_NAMES
 
 
 @dataclass
@@ -138,7 +130,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
   def __init__(
       self,
       client: Any = None,
-      root_collection: Optional[str] = None,
+      root_collection: str | None = None,
       *,
       sessions_collection: str = DEFAULT_SESSIONS_COLLECTION,
       events_collection: str = DEFAULT_EVENTS_COLLECTION,
@@ -156,26 +148,25 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     """Initializes the buffered Firestore session service.
 
     Args:
-      client: An optional Firestore ``AsyncClient``. If not provided, a new one
-        is created (requires ``google-cloud-firestore``).
+      client: An optional Firestore ``AsyncClient``. If not provided, a new
+        one is created (requires ``google-cloud-firestore``).
       root_collection: Root collection name. Defaults to ``'adk-session'``.
-      sessions_collection: Subcollection name for sessions. Defaults to
+      sessions_collection: Sessions subcollection name. Defaults to
         ``'sessions'``.
-      events_collection: Subcollection name for events. Defaults to
-        ``'events'``.
-      app_state_collection: Root collection for app-scoped state. Defaults to
+      events_collection: Events subcollection name. Defaults to ``'events'``.
+      app_state_collection: Collection for app-scoped state. Defaults to
         ``'app_states'``.
-      user_state_collection: Root collection for user-scoped state. Defaults
-        to ``'user_states'``.
-      flat_layout: When True, session documents live directly in
-        ``root_collection/{session_id}`` (no ``{app}/users/{user}/sessions/``
-        nesting). Useful when the session id already encodes the user (e.g.
-        ``{phone}-{date}``). Defaults to False.
-      durable_mode: When True, every event is persisted immediately and no
-        buffering happens.
-      buffer_max_events: Flush a session once this many events are buffered.
+      user_state_collection: Collection for user-scoped state. Defaults to
+        ``'user_states'``.
+      flat_layout: When ``True``, session documents are stored directly at
+        ``root_collection/{session_id}`` instead of the default nested ADK
+        path. Useful when the session id already encodes the user (e.g.
+        ``{phone}-{date}``) or to match an existing flat collection.
+      durable_mode: When ``True``, every event is persisted immediately (no
+        buffering). Equivalent to the builtin service behaviour.
+      buffer_max_events: Flush when this many events are buffered per session.
       flush_interval_seconds: Background flush cadence (see :meth:`start`).
-      max_retry_attempts: Max attempts when a flush hits a retryable error.
+      max_retry_attempts: Max attempts on a retryable Firestore error.
       retry_base_delay_seconds: Base delay for exponential backoff with jitter.
       clock: Monotonic clock, injectable for tests.
       sleeper: Async sleep function, injectable for tests.
@@ -195,10 +186,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     self.events_collection = events_collection
     self.app_state_collection = app_state_collection
     self.user_state_collection = user_state_collection
-    # flat_layout=True: sessions/{session_id} (no {app}/users/{user} nesting)
-    # flat_layout=False (default): {root}/{app}/users/{user}/{sessions}/{session_id}
     self._flat_layout = flat_layout
-
     self._durable_mode = durable_mode
     self._buffer_max_events = buffer_max_events
     self._flush_interval_seconds = flush_interval_seconds
@@ -206,17 +194,13 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     self._retry_base_delay_seconds = retry_base_delay_seconds
     self._clock = clock
     self._sleeper = sleeper
-    # Injectable so tests can drive a fake client without the real transactional
-    # retry wrapper.
     self._transactional = firestore.async_transactional
 
     self._buffers: dict[str, _SessionBuffer] = {}
     self._session_refs: dict[str, Session] = {}
     self._buffers_guard = asyncio.Lock()
-    self._task: Optional[asyncio.Task[None]] = None
+    self._task: asyncio.Task[None] | None = None
     self._check_interval = max(1.0, min(flush_interval_seconds, 5.0))
-
-  # -- Firestore refs / helpers ---------------------------------------------
 
   def _get_sessions_ref(self, app_name: str, user_id: str) -> Any:
     if self._flat_layout:
@@ -266,16 +250,14 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     except (ValueError, TypeError):
       return 0.0
 
-  # -- CRUD ------------------------------------------------------------------
-
   @override
   async def create_session(
       self,
       *,
       app_name: str,
       user_id: str,
-      state: Optional[dict[str, Any]] = None,
-      session_id: Optional[str] = None,
+      state: dict[str, Any] | None = None,
+      session_id: str | None = None,
   ) -> Session:
     """Creates a new session (raises AlreadyExistsError on a duplicate id)."""
     session_id = session_id or str(uuid.uuid4())
@@ -334,8 +316,8 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       app_name: str,
       user_id: str,
       session_id: str,
-      config: Optional[GetSessionConfig] = None,
-  ) -> Optional[Session]:
+      config: GetSessionConfig | None = None,
+  ) -> Session | None:
     """Gets a session, merging persisted and not-yet-flushed buffered events."""
     session_ref = self._get_sessions_ref(app_name, user_id).document(session_id)
     doc = await session_ref.get()
@@ -378,7 +360,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
 
   @override
   async def list_sessions(
-      self, *, app_name: str, user_id: Optional[str] = None
+      self, *, app_name: str, user_id: str | None = None
   ) -> ListSessionsResponse:
     """Lists sessions for an app (optionally a single user)."""
     if self._flat_layout:
@@ -468,8 +450,6 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     """Returns the raw (un-prefixed) user-scoped state for an app/user."""
     return dict(await self._read_state(self._user_state_ref(app_name, user_id)))
 
-  # -- buffered append -------------------------------------------------------
-
   @override
   async def append_event(self, session: Session, event: Event) -> Event:
     """Appends an event in memory and buffers (or immediately persists) it."""
@@ -500,12 +480,38 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     for session_id in list(self._buffers.keys()):
       try:
         await self._flush(session_id, explicit=False)
-      except Exception:  # noqa: BLE001 - never abort shutdown; already logged
+      except Exception:  # noqa: BLE001
         logger.exception("flush_all_session_failed session_id=%s", session_id)
 
   async def flush(self) -> None:
     """ADK lifecycle hook (Runner.close()): flushes all buffered sessions."""
     await self.flush_all()
+
+  async def start(self) -> None:
+    """Starts the background periodic-flush task (idempotent)."""
+    if self._task is not None and not self._task.done():
+      return
+    self._task = asyncio.create_task(self._periodic_flush_loop())
+
+  async def stop(self) -> None:
+    """Stops the background task and performs a final flush (idempotent)."""
+    task = self._task
+    self._task = None
+    if task is not None:
+      task.cancel()
+      try:
+        await task
+      except asyncio.CancelledError:
+        pass
+    await self.flush_all()
+
+  async def close(self) -> None:
+    """Closes the underlying Firestore AsyncClient."""
+    closer = getattr(self.client, "close", None)
+    if closer is not None:
+      result = closer()
+      if asyncio.iscoroutine(result):
+        await result
 
   async def _flush(self, session_id: str, *, explicit: bool) -> None:
     buffer = self._buffers.get(session_id)
@@ -514,7 +520,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
 
     async with buffer.lock:
       if buffer.flush_in_progress:
-        return  # only one flush per session at a time
+        return
       if not buffer.pending_events:
         buffer.last_flush_monotonic = self._clock()
         return
@@ -524,7 +530,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       buffer.last_flush_monotonic = self._clock()
       session = self._session_refs.get(session_id)
 
-    if session is None:  # pragma: no cover - defensive
+    if session is None:  # pragma: no cover
       async with buffer.lock:
         buffer.pending_events.extendleft(reversed(batch))
         buffer.flush_in_progress = False
@@ -532,7 +538,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
 
     try:
       await self._persist_with_retry(session, batch, session_id)
-    except Exception as exc:  # noqa: BLE001 - reclassified; never silently dropped
+    except Exception as exc:  # noqa: BLE001
       async with buffer.lock:
         buffer.pending_events.extendleft(reversed(batch))
         buffer.flush_in_progress = False
@@ -554,7 +560,7 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
       try:
         await self._persist_batch(session, batch)
         return
-      except Exception as exc:  # noqa: BLE001 - retryable vs permanent
+      except Exception as exc:  # noqa: BLE001
         if not is_retryable_error(exc) or attempt >= self._max_retry_attempts:
           logger.error(
               "session_flush_failed session_id=%s events=%s attempt=%s"
@@ -625,12 +631,11 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
         event_ref = session_ref.collection(self.events_collection).document(
             event.id
         )
+        # Use event's own timestamp so intra-batch order survives a shared commit time.
         transaction.set(
             event_ref,
             {
                 "event_data": event.model_dump(exclude_none=True, mode="json"),
-                # The event's own timestamp (not SERVER_TIMESTAMP) so order is
-                # preserved within a batch that shares a commit time.
                 "timestamp": datetime.fromtimestamp(
                     event.timestamp, tz=timezone.utc
                 ),
@@ -664,34 +669,6 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     if events:
       session.last_update_time = events[-1].timestamp
 
-  # -- periodic flushing -----------------------------------------------------
-
-  async def start(self) -> None:
-    """Starts the background periodic-flush task (idempotent)."""
-    if self._task is not None and not self._task.done():
-      return
-    self._task = asyncio.create_task(self._periodic_flush_loop())
-
-  async def stop(self) -> None:
-    """Stops the background task and performs a final flush (idempotent)."""
-    task = self._task
-    self._task = None
-    if task is not None:
-      task.cancel()
-      try:
-        await task
-      except asyncio.CancelledError:
-        pass
-    await self.flush_all()
-
-  async def close(self) -> None:
-    """Closes the underlying Firestore AsyncClient."""
-    closer = getattr(self.client, "close", None)
-    if closer is not None:
-      result = closer()
-      if asyncio.iscoroutine(result):
-        await result
-
   async def _periodic_flush_loop(self) -> None:
     try:
       while True:
@@ -704,8 +681,11 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
     now = self._clock()
     tasks: list[asyncio.Task[None]] = []
     for session_id, buffer in list(self._buffers.items()):
-      due = (now - buffer.last_flush_monotonic) >= self._flush_interval_seconds
-      if buffer.pending_events and due:
+      if (
+          buffer.pending_events
+          and (now - buffer.last_flush_monotonic)
+          >= self._flush_interval_seconds
+      ):
         tasks.append(
             asyncio.create_task(self._safe_background_flush(session_id))
         )
@@ -714,10 +694,8 @@ class BufferedFirestoreSessionService(BaseSessionService):  # type: ignore[misc]
   async def _safe_background_flush(self, session_id: str) -> None:
     try:
       await self._flush(session_id, explicit=False)
-    except Exception:  # noqa: BLE001 - background task must not raise unhandled
+    except Exception:  # noqa: BLE001
       logger.exception("background_flush_failed session_id=%s", session_id)
-
-  # -- internal helpers ------------------------------------------------------
 
   async def _get_or_create_buffer(self, session: Session) -> _SessionBuffer:
     async with self._buffers_guard:
