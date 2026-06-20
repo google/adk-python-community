@@ -175,7 +175,7 @@ class RedisSessionService(BaseSessionService):
         for session_data in sessions.values():
             session = Session.model_validate(session_data)
             session.events = []
-            session.state = {}
+            session = await self._merge_state(app_name, user_id, session)
             sessions_without_events.append(session)
 
         return ListSessionsResponse(sessions=sessions_without_events)

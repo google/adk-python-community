@@ -178,7 +178,7 @@ class TestRedisSessionService:
         """Test creating multiple sessions and listing them.
 
         list_sessions() is expected to return lightweight session summaries,
-        i.e., with events and state stripped for performance.
+        i.e., with events stripped for performance but state preserved (from app/user state).
         """
         app_name = "test_app"
         user_id = "test_user"
@@ -212,9 +212,59 @@ class TestRedisSessionService:
         assert returned_session_ids == set(session_ids)
 
         for s in sessions:
-            # list_sessions returns summaries: events and state removed for perf.
+            # list_sessions returns summaries: events stripped but state preserved via _merge_state().
             assert len(s.events) == 0
-            assert s.state == {}
+            # State is preserved (though empty in this test since no app/user state was set)
+            assert isinstance(s.state, dict)
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_preserves_app_user_state(self, redis_service):
+        """Test that list_sessions preserves app and user state via _merge_state."""
+        app_name = "test_app"
+        user_id = "test_user"
+
+        self._setup_redis_mocks(redis_service)
+
+        # Create a session
+        session = await redis_service.create_session(
+            app_name=app_name,
+            user_id=user_id,
+            session_id="test_session",
+            state={"title": "My Session Title", "_ag_ui_thread_id": "thread123"},
+        )
+
+        # Mock app and user state in Redis
+        redis_service.cache.hgetall = AsyncMock(
+            side_effect=[
+                {b"shared_config": orjson.dumps("app_level_value")},  # app state
+                {b"user_pref": orjson.dumps("user_level_value")},  # user state
+            ]
+        )
+
+        sessions_data = {session.id: session.model_dump()}
+        self._setup_redis_mocks(redis_service, sessions_data)
+
+        # Override hgetall mock again after _setup_redis_mocks
+        redis_service.cache.hgetall = AsyncMock(
+            side_effect=[
+                {b"shared_config": orjson.dumps("app_level_value")},  # app state
+                {b"user_pref": orjson.dumps("user_level_value")},  # user state
+            ]
+        )
+
+        list_sessions_response = await redis_service.list_sessions(
+            app_name=app_name, user_id=user_id
+        )
+        sessions = list_sessions_response.sessions
+
+        assert len(sessions) == 1
+        # Events are stripped
+        assert len(sessions[0].events) == 0
+        # But state is preserved via _merge_state (app/user state merged)
+        assert "app:shared_config" in sessions[0].state
+        assert sessions[0].state["app:shared_config"] == "app_level_value"
+        assert "user:user_pref" in sessions[0].state
+        assert sessions[0].state["user:user_pref"] == "user_level_value"
 
     @pytest.mark.asyncio
     async def test_session_state_management(self, redis_service):
