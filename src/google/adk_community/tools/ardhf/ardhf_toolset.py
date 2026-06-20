@@ -173,46 +173,50 @@ def _local_search(
 
 
 def _extract_text_from_a2a_response(a2a_response: Any) -> list[str]:
-  """Extract text strings from an A2A client response event.
+  """Extract text strings from an A2A client StreamResponse.
 
-  The response from ``A2AClient.send_message`` can be either a tuple
-  of ``(Task, update)`` or an ``A2AMessage``.  This helper walks the
-  parts and collects all text content.
+  The a2a-sdk 1.x ``send_message`` yields ``StreamResponse`` protobuf
+  messages.  Each may contain a ``task`` (with artifacts and status) or
+  a ``message`` (with parts).  This helper walks through and collects
+  all text content.
   """
   texts: list[str] = []
 
-  try:
-    from a2a.types import Message as A2AMessage
-    from a2a.types import TextPart as A2ATextPart
-  except ImportError:
-    return texts
-
   def _extract_from_parts(
-      parts: list[Any] | None,
+      parts: Any,
   ) -> None:
     if not parts:
       return
     for part in parts:
-      root = getattr(part, "root", None)
-      if isinstance(root, A2ATextPart):
-        texts.append(root.text)
+      # Protobuf Part: check if the 'text' oneof is set.
+      if hasattr(part, "HasField") and part.HasField("text"):
+        texts.append(part.text)
+      # Pydantic Part (older SDKs): check for root.text.
+      elif hasattr(part, "root") and hasattr(part.root, "text"):
+        texts.append(part.root.text)
 
-  if isinstance(a2a_response, tuple):
+  # StreamResponse has oneof: task, message, status_update, artifact_update.
+  if hasattr(a2a_response, "HasField"):
+    # Protobuf StreamResponse
+    if a2a_response.HasField("task"):
+      task = a2a_response.task
+      for artifact in task.artifacts:
+        _extract_from_parts(artifact.parts)
+      if task.HasField("status") and task.status.HasField("message"):
+        _extract_from_parts(task.status.message.parts)
+    elif a2a_response.HasField("message"):
+      _extract_from_parts(a2a_response.message.parts)
+  elif isinstance(a2a_response, tuple):
+    # Legacy tuple format (Task, update)
     task = a2a_response[0]
     if task is not None:
-      # Extract from task artifacts.
       for artifact in getattr(task, "artifacts", None) or []:
         _extract_from_parts(getattr(artifact, "parts", None))
-      # Extract from task status message.
       status = getattr(task, "status", None)
       if status is not None:
         status_msg = getattr(status, "message", None)
         if status_msg is not None:
-          _extract_from_parts(
-              getattr(status_msg, "parts", None)
-          )
-  elif isinstance(a2a_response, A2AMessage):
-    _extract_from_parts(getattr(a2a_response, "parts", None))
+          _extract_from_parts(getattr(status_msg, "parts", None))
 
   return texts
 
@@ -492,9 +496,13 @@ class AgentFinderToolset(BaseToolset):
       from a2a.client.client_factory import (
           ClientFactory as A2AClientFactory,
       )
-      from a2a.types import Message as A2AMessage
-      from a2a.types import Part as A2APart
-      from a2a.types import TextPart as A2ATextPart
+      from a2a.types import (
+          Message as A2AMessage,
+          Part as A2APart,
+          Role as A2ARole,
+          SendMessageConfiguration,
+          SendMessageRequest,
+      )
     except ImportError:
       return {
           "error": (
@@ -522,41 +530,133 @@ class AgentFinderToolset(BaseToolset):
         agent_card = await resolver.get_agent_card(
             relative_card_path=relative_path,
         )
+        agent_name = getattr(agent_card, "name", "unknown")
 
-        # Create an A2A client for this agent.
-        factory = A2AClientFactory(
-            config=A2AClientConfig(httpx_client=http_client),
-        )
-        a2a_client = factory.create(agent_card)
+        # Try the SDK-based A2A client first.
+        try:
+          factory = A2AClientFactory(
+              config=A2AClientConfig(httpx_client=http_client),
+          )
+          a2a_client = factory.create(agent_card)
 
-        # Build and send the message.
-        request = A2AMessage(
-            message_id=str(uuid.uuid4()),
-            parts=[A2APart(root=A2ATextPart(text=message))],
-            role="user",
-        )
-
-        response_texts: list[str] = []
-        async for a2a_response in a2a_client.send_message(
-            request=request,
-        ):
-          response_texts.extend(
-              _extract_text_from_a2a_response(a2a_response)
+          # a2a-sdk >=1.x uses protobuf: Part(text=...) and
+          # SendMessageRequest wrapping a Message.
+          a2a_msg = A2AMessage(
+              message_id=str(uuid.uuid4()),
+              parts=[A2APart(text=message)],
+              role=A2ARole.ROLE_USER,
+          )
+          request = SendMessageRequest(
+              message=a2a_msg,
+              configuration=SendMessageConfiguration(),
           )
 
-        agent_name = getattr(agent_card, "name", "unknown")
-        response_text = "\n".join(response_texts) if response_texts else ""
+          response_texts: list[str] = []
+          async for a2a_response in a2a_client.send_message(
+              request=request,
+          ):
+            response_texts.extend(
+                _extract_text_from_a2a_response(a2a_response)
+            )
 
-        return {
-            "response": response_text,
-            "agent_name": agent_name,
-            "agent_url": agent_card_url,
-        }
+          response_text = (
+              "\n".join(response_texts) if response_texts else ""
+          )
+          return {
+              "response": response_text,
+              "agent_name": agent_name,
+              "agent_url": agent_card_url,
+          }
+
+        except Exception as sdk_exc:
+          # SDK call failed (e.g. interface URL differs from card
+          # URL and has SSL / connectivity issues).  Fall back to
+          # raw JSON-RPC POST at the card URL's base.
+          logger.info(
+              "SDK A2A call failed (%s), trying JSON-RPC "
+              "fallback to %s",
+              sdk_exc,
+              base_url,
+          )
+          return await self._connect_agent_jsonrpc_fallback(
+              http_client=http_client,
+              base_url=base_url,
+              agent_name=agent_name,
+              agent_card_url=agent_card_url,
+              message=message,
+          )
 
     except Exception as exc:
       logger.warning(
           "A2A connect failed for %s: %s", agent_card_url, exc
       )
+      return {
+          "error": (
+              f"Failed to communicate with agent at"
+              f" {agent_card_url}: {exc}"
+          ),
+      }
+
+  async def _connect_agent_jsonrpc_fallback(
+      self,
+      *,
+      http_client: Any,
+      base_url: str,
+      agent_name: str,
+      agent_card_url: str,
+      message: str,
+  ) -> dict[str, Any]:
+    """Send an A2A message via raw JSON-RPC POST.
+
+    This fallback is used when the SDK-based client fails (e.g. due to
+    the agent card's interface URL differing from the card fetch URL
+    with SSL or connectivity issues).  We POST a ``message/send``
+    JSON-RPC request directly to the card URL's base.
+    """
+    jsonrpc_payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "message/send",
+        "params": {
+            "message": {
+                "messageId": str(uuid.uuid4()),
+                "role": "user",
+                "parts": [{"kind": "text", "text": message}],
+            },
+        },
+    }
+    try:
+      resp = await http_client.post(
+          f"{base_url}/",
+          json=jsonrpc_payload,
+          headers={"Content-Type": "application/json"},
+      )
+      resp.raise_for_status()
+      data = resp.json()
+
+      # Extract text from the JSON-RPC result.
+      result = data.get("result", {})
+      texts: list[str] = []
+      for artifact in result.get("artifacts", []):
+        for part in artifact.get("parts", []):
+          if part.get("kind") == "text" and "text" in part:
+            texts.append(part["text"])
+
+      # Also check status message.
+      status = result.get("status", {})
+      status_msg = status.get("message", {})
+      if isinstance(status_msg, dict):
+        for part in status_msg.get("parts", []):
+          if part.get("kind") == "text" and "text" in part:
+            texts.append(part["text"])
+
+      return {
+          "response": "\n".join(texts) if texts else "",
+          "agent_name": agent_name,
+          "agent_url": agent_card_url,
+          "method": "jsonrpc_fallback",
+      }
+    except Exception as exc:
       return {
           "error": (
               f"Failed to communicate with agent at"

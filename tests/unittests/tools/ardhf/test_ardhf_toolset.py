@@ -401,68 +401,82 @@ class TestGetAgentCard:
 class TestExtractTextFromA2aResponse:
   """Tests for the _extract_text_from_a2a_response helper."""
 
-  def test_extracts_text_from_message(self):
-    """Text is extracted from an A2AMessage with TextPart."""
+  def test_extracts_text_from_stream_response_message(self):
+    """Text is extracted from a StreamResponse with a message."""
     try:
-      from a2a.types import Message as A2AMessage
-      from a2a.types import Part as A2APart
-      from a2a.types import TextPart as A2ATextPart
+      from a2a.types import (
+          Message as A2AMessage,
+          Part as A2APart,
+          Role as A2ARole,
+          StreamResponse,
+      )
     except ImportError:
       pytest.skip("a2a SDK not installed")
 
+    stream_resp = StreamResponse()
     msg = A2AMessage(
         message_id="test-1",
-        parts=[A2APart(root=A2ATextPart(text="Hello from agent"))],
-        role="agent",
+        parts=[A2APart(text="Hello from agent")],
+        role=A2ARole.ROLE_AGENT,
     )
+    stream_resp.message.CopyFrom(msg)
 
-    texts = _extract_text_from_a2a_response(msg)
+    texts = _extract_text_from_a2a_response(stream_resp)
 
     assert texts == ["Hello from agent"]
 
-  def test_extracts_text_from_task_tuple(self):
-    """Text is extracted from a (Task, None) tuple response."""
+  def test_extracts_text_from_stream_response_task(self):
+    """Text is extracted from a StreamResponse with a task."""
     try:
-      from a2a.types import Artifact
-      from a2a.types import Part as A2APart
-      from a2a.types import Task as A2ATask
-      from a2a.types import TaskState
-      from a2a.types import TaskStatus
-      from a2a.types import TextPart as A2ATextPart
+      from a2a.types import (
+          Artifact,
+          Part as A2APart,
+          StreamResponse,
+          Task as A2ATask,
+          TaskState,
+          TaskStatus,
+      )
     except ImportError:
       pytest.skip("a2a SDK not installed")
 
+    stream_resp = StreamResponse()
     task = A2ATask(
         id="task-1",
-        contextId="ctx-1",
-        status=TaskStatus(state=TaskState.completed),
-        artifacts=[
-            Artifact(
-                artifactId="art-1",
-                parts=[
-                    A2APart(root=A2ATextPart(text="Task result"))
-                ],
-            )
-        ],
+        context_id="ctx-1",
     )
+    task.status.CopyFrom(
+        TaskStatus(state=TaskState.TASK_STATE_COMPLETED)
+    )
+    artifact = Artifact(artifact_id="art-1")
+    artifact.parts.append(A2APart(text="Task result"))
+    task.artifacts.append(artifact)
+    stream_resp.task.CopyFrom(task)
 
-    texts = _extract_text_from_a2a_response((task, None))
+    texts = _extract_text_from_a2a_response(stream_resp)
 
     assert "Task result" in texts
+
+  def test_extracts_text_from_legacy_tuple(self):
+    """Text is extracted from a legacy (task, update) tuple."""
+    # Simulate a legacy pydantic-style response with mock objects
+    # that have root.text but NOT HasField (pydantic path).
+    mock_part = MagicMock(spec=["root"])
+    mock_part.root = MagicMock(spec=["text"])
+    mock_part.root.text = "Legacy result"
+    mock_artifact = MagicMock(spec=["parts"])
+    mock_artifact.parts = [mock_part]
+    mock_task = MagicMock(spec=["artifacts", "status"])
+    mock_task.artifacts = [mock_artifact]
+    mock_task.status = None
+
+    texts = _extract_text_from_a2a_response((mock_task, None))
+
+    assert "Legacy result" in texts
 
   def test_returns_empty_for_unknown_type(self):
     """An unknown response type returns an empty list."""
     texts = _extract_text_from_a2a_response("unexpected")
     assert texts == []
-
-  def test_returns_empty_when_a2a_not_installed(self):
-    """Returns empty list when a2a SDK is not available."""
-    with patch.dict(
-        "sys.modules", {"a2a": None, "a2a.types": None}
-    ):
-      # Re-import to pick up the patched modules.
-      texts = _extract_text_from_a2a_response("anything")
-      assert texts == []
 
 
 class TestConnectAgent:
@@ -534,25 +548,30 @@ class TestConnectAgent:
   async def test_connect_agent_success_with_mocked_a2a(self):
     """connect_agent returns response text from a mocked A2A agent."""
     try:
-      from a2a.types import AgentCard
-      from a2a.types import Message as A2AMessage
-      from a2a.types import Part as A2APart
-      from a2a.types import TextPart as A2ATextPart
+      from a2a.types import (
+          AgentCard,
+          Message as A2AMessage,
+          Part as A2APart,
+          Role as A2ARole,
+          StreamResponse,
+      )
     except ImportError:
       pytest.skip("a2a SDK not installed")
 
     mock_agent_card = MagicMock(spec=AgentCard)
     mock_agent_card.name = "test-agent"
-    mock_agent_card.url = "http://localhost:9999/a2a"
 
-    mock_response = A2AMessage(
+    # Build a StreamResponse with a message containing text.
+    stream_resp = StreamResponse()
+    msg = A2AMessage(
         message_id="resp-1",
-        parts=[A2APart(root=A2ATextPart(text="I can help!"))],
-        role="agent",
+        parts=[A2APart(text="I can help!")],
+        role=A2ARole.ROLE_AGENT,
     )
+    stream_resp.message.CopyFrom(msg)
 
     async def mock_send_message(**kwargs):
-      yield mock_response
+      yield stream_resp
 
     mock_client = MagicMock()
     mock_client.send_message = mock_send_message
