@@ -12,17 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community memory services for ADK."""
+"""SOS Memory Agent sample package."""
 
-from .open_memory_service import OpenMemoryService
-from .open_memory_service import OpenMemoryServiceConfig
-from .sos_memory_service import SOSMemoryService
-from .sos_memory_service import SOSMemoryServiceConfig
+from .agent import root_agent
 
-__all__ = [
-    "OpenMemoryService",
-    "OpenMemoryServiceConfig",
-    "SOSMemoryService",
-    "SOSMemoryServiceConfig",
-]
-
+__all__ = ["root_agent"]
