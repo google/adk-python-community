@@ -14,6 +14,7 @@
 
 from . import artifacts
 from . import memory
+from . import planners
 from . import sessions
 from . import version
 
