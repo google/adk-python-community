@@ -15,6 +15,12 @@
 from google.adk_community.plugins.agent_governance_plugin import (
     AgentGovernancePlugin,
 )
+from google.adk_community.plugins.delegation_auth_plugin import (
+    CredentialVerifier,
+    DelegationAuthPlugin,
+    StructuralVerifier,
+    VerificationResult,
+)
 from google.adk_community.plugins.taxonomy import (
     DefaultSkillPolicy,
     SkillPolicy,
@@ -27,6 +33,10 @@ from google.adk_community.plugins.taxonomy import (
 
 __all__ = [
     "AgentGovernancePlugin",
+    "CredentialVerifier",
+    "DelegationAuthPlugin",
+    "StructuralVerifier",
+    "VerificationResult",
     "DefaultSkillPolicy",
     "SkillPolicy",
     "TaxonomyPipeline",
