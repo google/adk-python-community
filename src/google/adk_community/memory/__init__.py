@@ -14,11 +14,14 @@
 
 """Community memory services for ADK."""
 
+from .dakera_memory_service import DakeraMemoryService
+from .dakera_memory_service import DakeraMemoryServiceConfig
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
 
 __all__ = [
+    "DakeraMemoryService",
+    "DakeraMemoryServiceConfig",
     "OpenMemoryService",
     "OpenMemoryServiceConfig",
 ]
-
