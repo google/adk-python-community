@@ -14,11 +14,14 @@
 
 """Community memory services for ADK."""
 
+from .milvus_memory_service import MilvusMemoryService
+from .milvus_memory_service import MilvusMemoryServiceConfig
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
 
 __all__ = [
+    "MilvusMemoryService",
+    "MilvusMemoryServiceConfig",
     "OpenMemoryService",
     "OpenMemoryServiceConfig",
 ]
-
