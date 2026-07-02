@@ -207,6 +207,10 @@ async def test_milvus_lite_memory_e2e(tmp_path: Path):
     not os.getenv("OPENAI_API_KEY"),
     reason="Set OPENAI_API_KEY to run OpenAI embeddings E2E.",
 )
+@pytest.mark.skipif(
+    os.getenv("RUN_OPENAI_EMBEDDING_E2E") != "1",
+    reason="Set RUN_OPENAI_EMBEDDING_E2E=1 to run OpenAI embeddings E2E.",
+)
 async def test_milvus_lite_memory_openai_embedding_e2e(tmp_path: Path):
   await _run_memory_e2e(
       _lite_config(tmp_path, dimension=_OPENAI_EMBEDDING_DIMENSION),
@@ -223,6 +227,10 @@ async def test_milvus_lite_memory_openai_embedding_e2e(tmp_path: Path):
     not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"),
     reason="Set GEMINI_API_KEY or GOOGLE_API_KEY to run Google embeddings E2E.",
 )
+@pytest.mark.skipif(
+    os.getenv("RUN_GOOGLE_EMBEDDING_E2E") != "1",
+    reason="Set RUN_GOOGLE_EMBEDDING_E2E=1 to run Google embeddings E2E.",
+)
 async def test_milvus_lite_memory_google_embedding_e2e(tmp_path: Path):
   await _run_memory_e2e(
       _lite_config(tmp_path, dimension=_GOOGLE_EMBEDDING_DIMENSION),
@@ -231,6 +239,10 @@ async def test_milvus_lite_memory_google_embedding_e2e(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("RUN_ZILLIZ_CLOUD_E2E") != "1",
+    reason="Set RUN_ZILLIZ_CLOUD_E2E=1 to run Zilliz Cloud E2E.",
+)
 @pytest.mark.skipif(
     not os.getenv("ZILLIZ_URI") or not os.getenv("ZILLIZ_TOKEN"),
     reason="Set ZILLIZ_URI and ZILLIZ_TOKEN to run Zilliz Cloud E2E.",
@@ -243,12 +255,20 @@ async def test_zilliz_cloud_memory_e2e():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
+    os.getenv("RUN_ZILLIZ_CLOUD_E2E") != "1",
+    reason="Set RUN_ZILLIZ_CLOUD_E2E=1 to run Zilliz Cloud E2E.",
+)
+@pytest.mark.skipif(
     not os.getenv("ZILLIZ_URI") or not os.getenv("ZILLIZ_TOKEN"),
     reason="Set ZILLIZ_URI and ZILLIZ_TOKEN to run Zilliz Cloud E2E.",
 )
 @pytest.mark.skipif(
     not os.getenv("OPENAI_API_KEY"),
     reason="Set OPENAI_API_KEY to run OpenAI embeddings E2E.",
+)
+@pytest.mark.skipif(
+    os.getenv("RUN_OPENAI_EMBEDDING_E2E") != "1",
+    reason="Set RUN_OPENAI_EMBEDDING_E2E=1 to run OpenAI embeddings E2E.",
 )
 async def test_zilliz_cloud_memory_openai_embedding_e2e():
   await _run_memory_e2e(
@@ -259,12 +279,20 @@ async def test_zilliz_cloud_memory_openai_embedding_e2e():
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
+    os.getenv("RUN_ZILLIZ_CLOUD_E2E") != "1",
+    reason="Set RUN_ZILLIZ_CLOUD_E2E=1 to run Zilliz Cloud E2E.",
+)
+@pytest.mark.skipif(
     not os.getenv("ZILLIZ_URI") or not os.getenv("ZILLIZ_TOKEN"),
     reason="Set ZILLIZ_URI and ZILLIZ_TOKEN to run Zilliz Cloud E2E.",
 )
 @pytest.mark.skipif(
     not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"),
     reason="Set GEMINI_API_KEY or GOOGLE_API_KEY to run Google embeddings E2E.",
+)
+@pytest.mark.skipif(
+    os.getenv("RUN_GOOGLE_EMBEDDING_E2E") != "1",
+    reason="Set RUN_GOOGLE_EMBEDDING_E2E=1 to run Google embeddings E2E.",
 )
 async def test_zilliz_cloud_memory_google_embedding_e2e():
   await _run_memory_e2e(

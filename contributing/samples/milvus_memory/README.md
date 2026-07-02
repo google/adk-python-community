@@ -40,6 +40,9 @@ Cloud. If you use a non-default Milvus database, set `MILVUS_DB_NAME`.
 
 ## Use with Runner
 
+`MilvusMemoryService` accepts any embedding function that returns one vector per
+input text. This example uses Gemini embeddings:
+
 ```python
 from google.adk.agents import Agent
 from google.adk.runners import Runner
@@ -76,6 +79,34 @@ runner = Runner(
     agent=agent,
     session_service=InMemorySessionService(),
     memory_service=memory_service,
+)
+```
+
+You can also use another hosted embedding provider as long as `dimension`
+matches the returned vectors. For example, OpenAI `text-embedding-3-small`
+returns 1536-dimensional vectors:
+
+```python
+import os
+
+import httpx
+
+
+def embedding_function(texts):
+    response = httpx.post(
+        "https://api.openai.com/v1/embeddings",
+        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"},
+        json={"model": "text-embedding-3-small", "input": list(texts)},
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = sorted(response.json()["data"], key=lambda item: item["index"])
+    return [item["embedding"] for item in data]
+
+
+memory_service = MilvusMemoryService(
+    embedding_function=embedding_function,
+    dimension=1536,
 )
 ```
 
