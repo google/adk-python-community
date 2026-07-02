@@ -1,4 +1,4 @@
-# Copyright 2025 Google LLC
+# Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Community memory services for ADK."""
+"""Milvus RAG tools for Google ADK agents."""
 
-from .milvus_memory_service import MilvusMemoryService
-from .milvus_memory_service import MilvusMemoryServiceConfig
-from .open_memory_service import OpenMemoryService
-from .open_memory_service import OpenMemoryServiceConfig
+from .milvus_toolset import MilvusSimilaritySearchTool
+from .milvus_toolset import MilvusToolset
+from .milvus_toolset import MilvusToolSettings
+from .milvus_toolset import MilvusVectorStore
+from .milvus_toolset import MilvusVectorStoreSettings
 
 __all__ = [
-    "MilvusMemoryService",
-    "MilvusMemoryServiceConfig",
-    "OpenMemoryService",
-    "OpenMemoryServiceConfig",
+    "MilvusSimilaritySearchTool",
+    "MilvusToolset",
+    "MilvusToolSettings",
+    "MilvusVectorStore",
+    "MilvusVectorStoreSettings",
 ]
