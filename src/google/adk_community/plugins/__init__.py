@@ -15,6 +15,14 @@
 from google.adk_community.plugins.agent_governance_plugin import (
     AgentGovernancePlugin,
 )
+from google.adk_community.plugins.authority_routing_plugin import (
+    AuthorityRoutingPlugin,
+    CallableRouter,
+    Posture,
+    PostureRouter,
+    PostureVerdict,
+    stricter,
+)
 from google.adk_community.plugins.taxonomy import (
     DefaultSkillPolicy,
     SkillPolicy,
@@ -27,11 +35,17 @@ from google.adk_community.plugins.taxonomy import (
 
 __all__ = [
     "AgentGovernancePlugin",
+    "AuthorityRoutingPlugin",
+    "CallableRouter",
     "DefaultSkillPolicy",
+    "Posture",
+    "PostureRouter",
+    "PostureVerdict",
     "SkillPolicy",
     "TaxonomyPipeline",
     "TaxonomyPlugin",
     "TaxonomyRegistry",
     "TaxonomyResolver",
     "TaxonomyTerm",
+    "stricter",
 ]
