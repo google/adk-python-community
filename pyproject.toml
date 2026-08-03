@@ -55,6 +55,7 @@ hitl = [
     "fastapi>=0.110.0",
     "sqlalchemy>=2.0.0",
 ]
+ardhf = ["hf-agentfinder>=1.0.0"]
 
 
 [tool.pyink]
