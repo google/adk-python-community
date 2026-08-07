@@ -98,12 +98,17 @@ class TulipGovernancePlugin(BasePlugin):
 
   Example::
 
+      from google.adk.apps.app import App
+      from google.adk.runners import Runner
       from google.adk_community.plugins import TulipGovernancePlugin
       from tulip.control import Action
       from tulip.security.policy import ControlPolicy
 
       plugin = TulipGovernancePlugin(
+          # require_verification_score=0.0: see the "Note on ControlPolicy"
+          # in this module's docstring before changing this.
           policy=ControlPolicy(
+              require_verification_score=0.0,
               deny_for={"irreversible"},
               require_human_for={"production", "payment"},
           ),
@@ -114,7 +119,10 @@ class TulipGovernancePlugin(BasePlugin):
               environment="production",
           ),
       )
-      runner = Runner(agent=my_agent, plugins=[plugin], ...)
+      # plugins go on the App, not on Runner directly — Runner(plugins=...)
+      # is deprecated.
+      app = App(name="my_app", root_agent=my_agent, plugins=[plugin])
+      runner = Runner(app=app, ...)
   """
 
   def __init__(
@@ -175,18 +183,20 @@ class TulipGovernancePlugin(BasePlugin):
     action = self._build_action(tool, tool_args)
     decision = self._approve(action, policy=self._policy)
 
-    if self.trail is not None:
-      self.trail.record(
-          "tool_admission",
-          {
-              "principal": self._principal,
-              "tool": tool.name,
-              "action": action.name,
-              "asset": action.asset,
-              "outcome": decision.outcome,
-              "reason": decision.reason,
-          },
-      )
+    # self.trail is always set by this point: _setup() only leaves
+    # self._approve non-None (the guard above) after also setting self.trail,
+    # so there is no reachable state here where it is still None.
+    self.trail.record(
+        "tool_admission",
+        {
+            "principal": self._principal,
+            "tool": tool.name,
+            "action": action.name,
+            "asset": action.asset,
+            "outcome": decision.outcome,
+            "reason": decision.reason,
+        },
+    )
 
     if decision.outcome == "deny":
       logger.warning(
