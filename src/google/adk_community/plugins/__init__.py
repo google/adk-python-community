@@ -24,6 +24,9 @@ from google.adk_community.plugins.taxonomy import (
     TaxonomyResolver,
     TaxonomyTerm,
 )
+from google.adk_community.plugins.tulip_governance_plugin import (
+    TulipGovernancePlugin,
+)
 
 __all__ = [
     "AgentGovernancePlugin",
@@ -34,4 +37,5 @@ __all__ = [
     "TaxonomyRegistry",
     "TaxonomyResolver",
     "TaxonomyTerm",
+    "TulipGovernancePlugin",
 ]

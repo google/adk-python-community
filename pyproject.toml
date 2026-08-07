@@ -42,9 +42,13 @@ documentation = "https://google.github.io/adk-docs/"
 s3 = [
     "aioboto3>=13.0.0",  # For S3ArtifactService
 ]
+tulip = [
+    "tulip-agents>=2.3,<3",  # For TulipGovernancePlugin
+]
 test = [
     "pytest>=8.4.2",
     "pytest-asyncio>=1.2.0",
+    "tulip-agents>=2.3,<3",  # TulipGovernancePlugin's tests run against the real package
 ]
 sdc-agents = [
     "sdc-agents>=4.3.3; python_version >= '3.11'",
