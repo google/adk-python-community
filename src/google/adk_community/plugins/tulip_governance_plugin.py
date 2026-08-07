@@ -96,6 +96,27 @@ class TulipGovernancePlugin(BasePlugin):
       a follow-up; today "held" means "not this turn," and the caller
       (or a human, out of band) decides what happens next.
 
+      This plugin only ever sees tool calls — ``before_tool_callback``
+      has no visibility into what the model *says* in a plain-text
+      response. Harmful or misleading conversational content (no tool
+      call involved) is structurally outside what any admission gate
+      built on this hook can catch, regardless of how the ``action``
+      callback is written. Measured directly against a real, independent,
+      human-labeled benchmark (1,476 rows, Atarogic/ASSEBench,
+      Apache-2.0): a reasonable ``action`` callback caught 88.7% of real
+      labeled risks, and every miss traced to one of two causes — a gap
+      in the callback's own risk heuristic (fixable by widening it), or a
+      risk expressed as conversational text rather than a tool call (not
+      fixable from inside this hook at all). See
+      https://gist.github.com/fede-kamel/2ece9704d15978b9eb45e8c7dde5e8bc
+      for the full methodology, including a first attempt at tightening
+      the callback that *reduced* recall from 91.3% to 23.6% by defaulting
+      ambiguous cases to allow instead of hold — kept in the writeup
+      rather than erased, because it's the actual lesson: an ``action``
+      callback for this plugin must default an ambiguous case to
+      ``require_human``, never to allow. A gate that fails open on
+      uncertainty is worse than no gate.
+
   Example::
 
       from google.adk.apps.app import App
