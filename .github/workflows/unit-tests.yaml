@@ -36,5 +36,11 @@ jobs:
       - name: Run unit tests with pytest
         run: |
           source .venv/bin/activate
-          # Run all tests in the tests/unittests directory
-          pytest tests/unittests
+          # Run all tests in tests/unittests AND tests/plugins. The latter
+          # was never covered here -- confirmed live, not assumed: CI never
+          # ran a single test under tests/plugins/, including the existing
+          # AgentGovernancePlugin and TaxonomyPlugin suites, since this
+          # workflow only ever pointed at tests/unittests. Tests for any
+          # plugin needing an optional extra not installed here skip
+          # cleanly via pytest.importorskip rather than fail.
+          pytest tests/unittests tests/plugins
