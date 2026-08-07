@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ADK plugin for Tulip admission-gate policy enforcement.
+"""ADK plugin for Tuliplabs admission-gate policy enforcement.
 
-Evaluates a Tulip ``ControlPolicy`` before tool execution using Tulip's
-admission gate (https://tulipagents.ai) — a policy check in real code,
-outside the model, between a tool call and its side effect. Every decision
-is appended to a tamper-evident, hash-chained ``AuditTrail`` regardless of
-outcome, whether the call proceeds or not.
+Evaluates a Tuliplabs ``ControlPolicy`` before tool execution using
+Tuliplabs' admission gate (https://tulipagents.ai) — a policy check in
+real code, outside the model, between a tool call and its side effect.
+Every decision is appended to a tamper-evident, hash-chained
+``AuditTrail`` regardless of outcome, whether the call proceeds or not.
 
-Unlike a binary allow/deny check, Tulip's policy has three outcomes: allow,
+Unlike a binary allow/deny check, Tuliplabs' policy has three outcomes: allow,
 require a human, or deny. This plugin does not collapse ``require_human``
 into either of the other two — it short-circuits the call with a distinct
 ``held_for_approval`` response, separate from ``policy_denied``, so the
@@ -29,7 +29,7 @@ route accordingly. See the ``Scope`` note on
 :class:`TulipGovernancePlugin` for what that does and does not do today.
 
 Note on ``ControlPolicy``: ``require_verification_score`` defaults to 0.8
-in Tulip, and ``approve()`` treats an action with no ``VerificationResult``
+in tulip-agents, and ``approve()`` treats an action with no ``VerificationResult``
 as failing that bar — "no verification provided" — which escalates to at
 least ``require_human``. This plugin has no fact/evidence step to produce a
 ``VerificationResult`` for an arbitrary ADK tool call, so it never passes
@@ -58,10 +58,10 @@ class _TulipUnavailableError(ImportError):
 
 
 class TulipGovernancePlugin(BasePlugin):
-  """ADK plugin that gates tool calls behind Tulip's admission control.
+  """ADK plugin that gates tool calls behind Tuliplabs' admission control.
 
-  For every tool call, builds a Tulip ``Action`` describing its risk and
-  weighs it against a ``ControlPolicy`` with Tulip's ``approve()`` — a
+  For every tool call, builds a Tuliplabs ``Action`` describing its risk and
+  weighs it against a ``ControlPolicy`` with Tuliplabs' ``approve()`` — a
   policy check in real code, outside the model. The decision (allow /
   require a human / deny) is appended to a SHA-256 hash-chained
   ``AuditTrail`` either way, so a denied or held call is recorded exactly
@@ -92,7 +92,7 @@ class TulipGovernancePlugin(BasePlugin):
       ``held_for_approval`` response — it does not pause the run and wait
       for a person to decide, then let the original call proceed. Wiring
       that resume path (e.g. through this repository's own
-      ``tools/hitl`` gateway, or Tulip's own approval bridge) is left to
+      ``tools/hitl`` gateway, or Tuliplabs' own approval bridge) is left to
       a follow-up; today "held" means "not this turn," and the caller
       (or a human, out of band) decides what happens next.
 
@@ -192,7 +192,7 @@ class TulipGovernancePlugin(BasePlugin):
       tool_args: dict[str, Any],
       tool_context: ToolContext,
   ) -> Optional[dict]:
-    """Evaluate the Tulip policy before a tool call.
+    """Evaluate the Tuliplabs policy before a tool call.
 
     Returns ``None`` to allow the tool to proceed, or a dict response to
     short-circuit execution when the policy denies the call or holds it
@@ -221,13 +221,13 @@ class TulipGovernancePlugin(BasePlugin):
 
     if decision.outcome == "deny":
       logger.warning(
-          "Tulip policy denied tool '%s': %s", tool.name, decision.reason
+          "Tuliplabs policy denied tool '%s': %s", tool.name, decision.reason
       )
       return {"error": "policy_denied", "reason": decision.reason}
 
     if decision.outcome == "require_human":
       logger.info(
-          "Tulip policy held tool '%s' for a human: %s",
+          "Tuliplabs policy held tool '%s' for a human: %s",
           tool.name,
           decision.reason,
       )
