@@ -21,12 +21,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 from google.adk.sessions.base_session_service import GetSessionConfig
-from google.adk_community.sessions.redis_session_service import RedisSessionService
+from google.adk_community.sessions.redis_session_service import (
+    RedisKeys,
+    RedisSessionService,
+)
 from google.genai import types
 
 
 class TestRedisSessionService:
     """Test cases for RedisSessionService."""
+
+    def test_user_sessions_key_uses_single_prefix_separator(self):
+        """Test user sessions key does not duplicate the app prefix separator."""
+        assert (
+            RedisKeys.user_sessions("test_app", "test_user")
+            == "app:test_app:test_user"
+        )
 
     @pytest_asyncio.fixture
     async def redis_service(self):
