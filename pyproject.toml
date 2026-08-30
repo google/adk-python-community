@@ -39,6 +39,7 @@ changelog = "https://github.com/google/adk-python-community/blob/main/CHANGELOG.
 documentation = "https://google.github.io/adk-docs/"
 
 [project.optional-dependencies]
+mongo = ["pymongo>=4.9,<5.0.0"]
 s3 = [
     "aioboto3>=13.0.0",  # For S3ArtifactService
 ]
