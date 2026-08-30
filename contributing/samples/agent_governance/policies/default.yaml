@@ -1,0 +1,25 @@
+apiVersion: governance.toolkit/v1
+name: adk-demo-policy
+description: Example governance policy for Google ADK agents
+rules:
+  - name: block-shell-execution
+    condition: "action in ['shell_exec', 'code_exec', 'file_delete']"
+    action: deny
+    description: Block dangerous system-level tool calls
+    priority: 100
+
+  - name: rate-limit-api-calls
+    condition: "action == 'api_call'"
+    action: allow
+    limit: "100/hour"
+    description: Rate limit external API calls
+    priority: 50
+
+  - name: require-approval-for-payments
+    condition: "action == 'process_payment'"
+    action: require_approval
+    approvers: ["admin@example.com"]
+    description: Payment actions require human approval
+    priority: 90
+
+default_action: allow

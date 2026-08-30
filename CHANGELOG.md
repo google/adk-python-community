@@ -1,0 +1,59 @@
+# Changelog
+
+## [0.5.0](https://github.com/google/adk-python-community/compare/v0.4.1...v0.5.0) (2026-05-20)
+
+
+### Features
+
+* add AgentGovernancePlugin for tool-call governance ([#141](https://github.com/google/adk-python-community/issues/141)) ([f9bfa20](https://github.com/google/adk-python-community/commit/f9bfa2043bbf8aa32d3c9734245cb83aa5175c94))
+* add S3ArtifactService with native async and atomic versioning ([#115](https://github.com/google/adk-python-community/issues/115)) ([d07ad02](https://github.com/google/adk-python-community/commit/d07ad02fd592f47ef84aaf7f94ac1bd7505c6ec0))
+* **spraay:** Add Spraay batch payment tools for Base ([#95](https://github.com/google/adk-python-community/issues/95)) ([8172fd3](https://github.com/google/adk-python-community/commit/8172fd397603b282ef710673b35ce0be68b2d511))
+
+
+### Bug Fixes
+
+* resolve CI test failures for Redis temp state and S3 deps ([#125](https://github.com/google/adk-python-community/issues/125)) ([0624450](https://github.com/google/adk-python-community/commit/0624450abb3dbe412e327ab2c42b433033c6de7e))
+
+
+### Misc
+
+* **ci:** update gemini-review workflow ([#120](https://github.com/google/adk-python-community/issues/120), [#122](https://github.com/google/adk-python-community/issues/122), [#123](https://github.com/google/adk-python-community/issues/123), [#124](https://github.com/google/adk-python-community/issues/124)) ([0ad6813](https://github.com/google/adk-python-community/commit/0ad68137469ab7fb3573b50483e189c473b59086), [6acdb23](https://github.com/google/adk-python-community/commit/6acdb2398021e9431c5a0bfc00a391333e35ea99), [1a824e0](https://github.com/google/adk-python-community/commit/1a824e0c79f57ee59a64c3cdbfcb460a79410683), [57df5aa](https://github.com/google/adk-python-community/commit/57df5aaec4204bd89c91d37ba9f06a43903c77a3))
+
+## [0.4.1](https://github.com/google/adk-python-community/compare/v0.4.0...v0.4.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* **release:** configure git identity from RELEASE_PAT in finalize ([#81](https://github.com/google/adk-python-community/issues/81)) ([2b0c576](https://github.com/google/adk-python-community/commit/2b0c5768ef0a6e43af392e8ddd42433229507b4b))
+* **release:** dispatch release-please on release/candidate branch ([#84](https://github.com/google/adk-python-community/issues/84)) ([81c5371](https://github.com/google/adk-python-community/commit/81c5371c05b4a72959d935d0c51cee52e2e57218))
+* **release:** skip release-please when release/candidate is renamed ([#83](https://github.com/google/adk-python-community/issues/83)) ([f620dab](https://github.com/google/adk-python-community/commit/f620dabd527e1d7f84980c254ac1f4ffc244cf24))
+* **release:** use gh api for branch check in release-please ([#85](https://github.com/google/adk-python-community/issues/85)) ([14da7e9](https://github.com/google/adk-python-community/commit/14da7e9d7a1fc51c984e753d2e39dfb9ebfc61a8))
+* **release:** use last-release-sha instead of tags for release-please ([#78](https://github.com/google/adk-python-community/issues/78)) ([d2af60a](https://github.com/google/adk-python-community/commit/d2af60ab334d0bb44d27eaf0b88797f5fc5aa18f))
+
+## [0.4.0](https://github.com/google/adk-python-community/compare/v0.3.1...v0.4.0) (2026-02-17)
+
+
+### Features
+
+* add release tag workflow ([#75](https://github.com/google/adk-python-community/issues/75)) ([bb9c361](https://github.com/google/adk-python-community/commit/bb9c361069d71802b68e5f11284a373c5bb8829d))
+
+## [0.3.1](https://github.com/google/adk-python-community/compare/v0.3.0...v0.3.1) (2026-02-12)
+
+
+### Bug Fixes
+
+* update PR label to tagged after release finalize ([#67](https://github.com/google/adk-python-community/issues/67)) ([43047c7](https://github.com/google/adk-python-community/commit/43047c7faf9396b016ef59cdf53559a669df4b70))
+
+## [0.3.0](https://github.com/google/adk-python-community/compare/v0.2.0...v0.3.0) (2026-02-07)
+
+
+### Features
+
+* refactor release workflow to use candidate branch ([#62](https://github.com/google/adk-python-community/issues/62)) ([89c3897](https://github.com/google/adk-python-community/commit/89c38971c57b8c88d88ce6e9a45dea85f856fd72))
+
+
+### Bug Fixes
+
+* add workflow_dispatch trigger to release-please workflow ([#52](https://github.com/google/adk-python-community/issues/52)) ([974ff14](https://github.com/google/adk-python-community/commit/974ff14057390aaf70dab0ee9fa39bc598ce28f4))
+* set release-as at runtime instead of committing to config ([#54](https://github.com/google/adk-python-community/issues/54)) ([b31ff43](https://github.com/google/adk-python-community/commit/b31ff43c801e6045387228a32968838a56d3a176))
+* skip release-please on changelog PR merge ([#64](https://github.com/google/adk-python-community/issues/64)) ([22bee6f](https://github.com/google/adk-python-community/commit/22bee6f5b7b3004da9bb3f05d8071818510d4ce0))
