@@ -16,9 +16,9 @@ from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.tools import FunctionTool
 
-
 _TAX_RATE = 0.16
 load_dotenv()
+
 
 # Tool 1
 def get_invoice_status(service: str) -> dict:
@@ -71,18 +71,21 @@ tax_tool = FunctionTool(func=calculate_service_tax)
 
 # Agent
 root_agent = Agent(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     name="financial_advisor_agent",
-    description="Financial advisor agent for managing invoices and calculating service taxes.",
+    description=(
+        "Financial advisor agent for managing invoices and calculating service"
+        " taxes."
+    ),
     instruction=(
-        "You are an AI agent designed to assist users with financial"
-        " inquiries related to invoices and service tax calculations.\n"
-        "**Available Tools:**\n"
-        "1. get_invoice_status(service): Retrieves the status of invoices\n"
-        "2. calculate_service_tax(amount): Calculates the tax for a given amount\n"
-        "Use these tools to assist users with their financial inquiries.\n"
-        "If the user asks about other financial topics, respond politely"
-        " that you can only assist with invoice status and tax calculations.\n"
+        "You are an AI agent designed to assist users with financial inquiries"
+        " related to invoices and service tax calculations.\n**Available"
+        " Tools:**\n1. get_invoice_status(service): Retrieves the status of"
+        " invoices\n2. calculate_service_tax(amount): Calculates the tax for a"
+        " given amount\nUse these tools to assist users with their financial"
+        " inquiries.\nIf the user asks about other financial topics, respond"
+        " politely that you can only assist with invoice status and tax"
+        " calculations.\n"
     ),
     tools=[invoice_tool, tax_tool],
 )

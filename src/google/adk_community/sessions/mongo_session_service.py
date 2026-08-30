@@ -11,11 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from typing import Any
 from typing import Optional
+from typing import TYPE_CHECKING
 import uuid
 
 from google.adk.errors.already_exists_error import AlreadyExistsError
@@ -26,14 +29,21 @@ from google.adk.sessions import State
 from google.adk.sessions.base_session_service import BaseSessionService
 from google.adk.sessions.base_session_service import GetSessionConfig
 from google.adk.sessions.base_session_service import ListSessionsResponse
-from pymongo import ASCENDING
-from pymongo import AsyncMongoClient
-from pymongo import DESCENDING
-from pymongo.asynchronous.collection import AsyncCollection
-from pymongo.errors import DuplicateKeyError
+import orjson
 from typing_extensions import override
 
+from .utils import _json_serializer
+
+if TYPE_CHECKING:
+  from pymongo import AsyncMongoClient
+  from pymongo.asynchronous.collection import AsyncCollection
+
 logger = logging.getLogger("google_adk." + __name__)
+
+
+def _normalize_value(value: Any) -> Any:
+  """Convert a value through the shared JSON serializer into BSON types."""
+  return orjson.loads(orjson.dumps(value, default=_json_serializer))
 
 
 class MongoKeys:
@@ -53,7 +63,12 @@ class MongoKeys:
 
 
 class MongoSessionService(BaseSessionService):
-  """Session service backed by MongoDB."""
+  """Session service backed by MongoDB.
+
+  The MongoDB client is bound to the event loop where it is constructed. When
+  loop affinity matters, construct the client on the target loop and pass it
+  through ``client=``.
+  """
 
   def __init__(
       self,
@@ -64,15 +79,25 @@ class MongoSessionService(BaseSessionService):
       state_collection: str = "session_state",
       default_app_name: Optional[str] = "adk-mongo-session-service",
   ) -> None:
+    try:
+      import pymongo
+    except ImportError as exc:
+      raise ImportError(
+          "pymongo is required to use MongoSessionService. "
+          "Install it with: pip install google-adk-community[mongo]"
+      ) from exc
+
     if bool(connection_string) == bool(client):
       raise ValueError(
           "Provide either 'connection_string' or 'client', but not both."
       )
-    self._client = client or AsyncMongoClient(connection_string)
-    self._sessions: AsyncCollection = self._client[database_name][
-        session_collection
-    ]
-    self._kv: AsyncCollection = self._client[database_name][state_collection]
+    self._client = client or pymongo.AsyncMongoClient(connection_string)
+    db = self._client[database_name]
+    self._sessions: AsyncCollection = db[session_collection]
+    self._kv: AsyncCollection = db[state_collection]
+    self._ascending = pymongo.ASCENDING
+    self._descending = pymongo.DESCENDING
+    self._duplicate_key_error = pymongo.errors.DuplicateKeyError
     self._default_app_name = default_app_name
     self._indexes_built = False
     self._indexes_lock = asyncio.Lock()
@@ -102,20 +127,26 @@ class MongoSessionService(BaseSessionService):
         "app_name": app_name,
         "user_id": user_id,
         "id": session_id,
-        "state": state_deltas.get("session", {}),
+        "state": {
+            key: _normalize_value(value)
+            for key, value in state_deltas.get("session", {}).items()
+        },
         "events": [],
         "last_update_time": time.time(),
     }
 
     try:
       await self._sessions.insert_one(session_doc)
-    except DuplicateKeyError as exc:
+    except self._duplicate_key_error as exc:
       raise AlreadyExistsError(
           f"Session with id {session_id} already exists."
       ) from exc
 
     session = self._doc_to_session(session_doc)
-    return await self._merge_state(session)
+    app_doc, user_doc = await self._fetch_state(
+        session.app_name, session.user_id
+    )
+    return self._merge_state(session, app_doc, user_doc)
 
   @override
   async def get_session(
@@ -137,7 +168,10 @@ class MongoSessionService(BaseSessionService):
 
     session = self._doc_to_session(doc)
     session = self._apply_event_filters(session, config)
-    return await self._merge_state(session)
+    app_doc, user_doc = await self._fetch_state(
+        session.app_name, session.user_id
+    )
+    return self._merge_state(session, app_doc, user_doc)
 
   @override
   async def list_sessions(
@@ -146,6 +180,7 @@ class MongoSessionService(BaseSessionService):
       app_name: str,
       user_id: Optional[str] = None,
   ) -> ListSessionsResponse:
+    """List all matching sessions, materialized because no pagination is exposed."""
     app_name = self._resolve_app_name(app_name)
     await self._ensure_indexes()
 
@@ -164,11 +199,39 @@ class MongoSessionService(BaseSessionService):
           app_name,
       )
 
-    sessions: list[Session] = []
-    for doc in docs:
-      session = self._doc_to_session(doc)
-      merged = await self._merge_state(session)
-      sessions.append(merged)
+    sessions: list[Session] = [self._doc_to_session(doc) for doc in docs]
+    app_doc = await self._kv.find_one({"_id": MongoKeys.app_state(app_name)})
+    if user_id is not None:
+      user_docs = {}
+      user_doc = await self._kv.find_one(
+          {"_id": MongoKeys.user_state(app_name, user_id)}
+      )
+      if user_doc:
+        user_docs[user_doc["_id"]] = user_doc
+    else:
+      user_ids = {session.user_id for session in sessions}
+      user_docs = {}
+      if user_ids:
+        cursor = self._kv.find({
+            "_id": {
+                "$in": [
+                    MongoKeys.user_state(app_name, current_user_id)
+                    for current_user_id in user_ids
+                ]
+            }
+        })
+        user_docs = {
+            doc["_id"]: doc for doc in await cursor.to_list(length=None)
+        }
+
+    sessions = [
+        self._merge_state(
+            session,
+            app_doc,
+            user_docs.get(MongoKeys.user_state(app_name, session.user_id)),
+        )
+        for session in sessions
+    ]
 
     return ListSessionsResponse(sessions=sessions)
 
@@ -196,6 +259,9 @@ class MongoSessionService(BaseSessionService):
 
     event = await super().append_event(session, event)
     session.last_update_time = event.timestamp
+    for key in list(session.state):
+      if key.startswith(State.TEMP_PREFIX):
+        del session.state[key]
 
     state_delta = event.actions.state_delta if event.actions else None
     state_deltas = _session_util.extract_state_delta(state_delta or {})
@@ -208,12 +274,14 @@ class MongoSessionService(BaseSessionService):
     )
 
     updates: dict[str, Any] = {
-        "$push": {"events": event.model_dump(mode="json", exclude_none=True)},
+        "$push": {
+            "events": _normalize_value(event.model_dump(exclude_none=True))
+        },
         "$set": {"last_update_time": event.timestamp},
     }
 
     session_state_set = {
-        f"state.{key}": value
+        f"state.{key}": _normalize_value(value)
         for key, value in state_deltas["session"].items()
         if value is not None
     }
@@ -253,28 +321,39 @@ class MongoSessionService(BaseSessionService):
       if self._indexes_built:
         return
       await self._sessions.create_index(
-          [("app_name", ASCENDING), ("user_id", ASCENDING), ("id", ASCENDING)],
+          [
+              ("app_name", self._ascending),
+              ("user_id", self._ascending),
+              ("id", self._ascending),
+          ],
           unique=True,
           name="session_identity_idx",
       )
       await self._sessions.create_index(
           [
-              ("app_name", ASCENDING),
-              ("user_id", ASCENDING),
-              ("last_update_time", DESCENDING),
+              ("app_name", self._ascending),
+              ("user_id", self._ascending),
+              ("last_update_time", self._descending),
           ],
           name="session_last_update_idx",
       )
       self._indexes_built = True
 
-  async def _merge_state(self, session: Session) -> Session:
+  async def _fetch_state(
+      self, app_name: str, user_id: str
+  ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     app_doc, user_doc = await asyncio.gather(
-        self._kv.find_one({"_id": MongoKeys.app_state(session.app_name)}),
-        self._kv.find_one(
-            {"_id": MongoKeys.user_state(session.app_name, session.user_id)}
-        ),
+        self._kv.find_one({"_id": MongoKeys.app_state(app_name)}),
+        self._kv.find_one({"_id": MongoKeys.user_state(app_name, user_id)}),
     )
+    return app_doc, user_doc
 
+  def _merge_state(
+      self,
+      session: Session,
+      app_doc: Optional[dict[str, Any]],
+      user_doc: Optional[dict[str, Any]],
+  ) -> Session:
     merged_state = dict(session.state)
     if app_doc and app_doc.get("state"):
       for key, value in app_doc["state"].items():
@@ -294,13 +373,17 @@ class MongoSessionService(BaseSessionService):
   ) -> None:
     tasks = []
     if app_state_delta:
-      tasks.append(self._update_state_document(
-          MongoKeys.app_state(app_name), app_state_delta
-      ))
+      tasks.append(
+          self._update_state_document(
+              MongoKeys.app_state(app_name), app_state_delta
+          )
+      )
     if user_state_delta:
-      tasks.append(self._update_state_document(
-          MongoKeys.user_state(app_name, user_id), user_state_delta
-      ))
+      tasks.append(
+          self._update_state_document(
+              MongoKeys.user_state(app_name, user_id), user_state_delta
+          )
+      )
     if tasks:
       await asyncio.gather(*tasks)
 
@@ -310,13 +393,11 @@ class MongoSessionService(BaseSessionService):
       delta: dict[str, Any],
   ) -> None:
     set_ops = {
-        f"state.{k}": v
+        f"state.{k}": _normalize_value(v)
         for k, v in delta.items()
         if v is not None
     }
-    unset_ops = {
-        f"state.{k}": "" for k, v in delta.items() if v is None
-    }
+    unset_ops = {f"state.{k}": "" for k, v in delta.items() if v is None}
 
     update: dict[str, Any] = {}
     if set_ops:

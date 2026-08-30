@@ -25,8 +25,8 @@ from mongo_service_agent import root_agent
 from google.adk_community.sessions import MongoSessionService
 
 APP_NAME = "financial_advisor_agent"
-USER_ID = "juante_jc_11"
-SESSION_ID = "session_07"
+USER_ID = "demo_user"
+SESSION_ID = "demo_session"
 
 
 async def main():

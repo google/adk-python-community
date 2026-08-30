@@ -14,14 +14,18 @@
 
 from datetime import datetime
 from datetime import timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+
+import pytest
+
+pytest.importorskip("pymongo")
 
 from google.adk.events import Event
 from google.adk.events.event_actions import EventActions
 from google.adk.sessions import State
 from google.adk.sessions.base_session_service import GetSessionConfig
-import pytest
 import pytest_asyncio
 
 from google.adk_community.sessions.mongo_session_service import MongoKeys
@@ -46,6 +50,7 @@ class TestMongoSessionService:
 
     kv_collection = AsyncMock()
     kv_collection.find_one = AsyncMock(return_value=None)
+    kv_collection.find = MagicMock()
     kv_collection.update_one = AsyncMock()
 
     db = MagicMock()
@@ -280,3 +285,136 @@ class TestMongoSessionService:
     sessions_collection.delete_one.assert_awaited_once_with(
         {"_id": MongoKeys.session("test_app", "user", "session-1")}
     )
+
+  @pytest.mark.asyncio
+  async def test_non_bson_state_values_are_normalized(self, mongo_service):
+    """Session, app, and user state use the shared JSON serializer."""
+    service, sessions_collection, kv_collection = mongo_service
+    kv_collection.find_one.return_value = None
+    state = {
+        "session_set": {"value"},
+        "session_decimal": Decimal("1.25"),
+        "session_datetime": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "session_bytes": b"bytes",
+        f"{State.APP_PREFIX}app_set": {"value"},
+        f"{State.USER_PREFIX}user_set": {"value"},
+    }
+
+    await service.create_session(
+        app_name="app", user_id="user", session_id="session", state=state
+    )
+
+    inserted = sessions_collection.insert_one.await_args.args[0]
+    assert inserted["state"] == {
+        "session_set": ["value"],
+        "session_decimal": 1.25,
+        "session_datetime": "2025-01-01T00:00:00+00:00",
+        "session_bytes": "Ynl0ZXM=",
+    }
+    updates = [
+        call.args[1] for call in kv_collection.update_one.await_args_list
+    ]
+    set_values = {
+        key: value
+        for update in updates
+        for key, value in update.get("$set", {}).items()
+    }
+    assert set_values["state.app_set"] == ["value"]
+    assert set_values["state.user_set"] == ["value"]
+
+  @pytest.mark.asyncio
+  async def test_event_is_stored_as_nested_document(self, mongo_service):
+    """Events remain addressable Mongo documents after normalization."""
+    service, sessions_collection, kv_collection = mongo_service
+    kv_collection.find_one.return_value = None
+    session = await service.create_session(
+        app_name="app", user_id="user", session_id="session"
+    )
+
+    event = Event(author="user", timestamp=1.0)
+    await service.append_event(session, event)
+
+    update = sessions_collection.update_one.await_args.args[1]
+    stored_event = update["$push"]["events"]
+    assert isinstance(stored_event, dict)
+    assert stored_event["author"] == "user"
+    assert not isinstance(stored_event, bytes)
+
+  @pytest.mark.asyncio
+  async def test_list_sessions_fetches_shared_state_once(self, mongo_service):
+    """Listing sessions for one user does not issue per-session state reads."""
+    service, sessions_collection, kv_collection = mongo_service
+    app_name = "app"
+    user_id = "user"
+    docs = [
+        {
+            "_id": MongoKeys.session(app_name, user_id, f"s{i}"),
+            "app_name": app_name,
+            "user_id": user_id,
+            "id": f"s{i}",
+            "state": {},
+        }
+        for i in range(3)
+    ]
+    session_cursor = MagicMock()
+    session_cursor.to_list = AsyncMock(return_value=docs)
+    sessions_collection.find.return_value = session_cursor
+    kv_collection.find_one.side_effect = [
+        {"_id": MongoKeys.app_state(app_name), "state": {"a": 1}},
+        {"_id": MongoKeys.user_state(app_name, user_id), "state": {"u": 2}},
+    ]
+
+    response = await service.list_sessions(app_name=app_name, user_id=user_id)
+
+    assert len(response.sessions) == 3
+    assert kv_collection.find_one.await_count == 2
+    assert all(
+        session.state[State.APP_PREFIX + "a"] == 1
+        for session in response.sessions
+    )
+    assert all(
+        session.state[State.USER_PREFIX + "u"] == 2
+        for session in response.sessions
+    )
+
+  @pytest.mark.asyncio
+  async def test_list_sessions_bulk_fetches_users(self, mongo_service):
+    """Listing all users uses one state query and attributes state correctly."""
+    service, sessions_collection, kv_collection = mongo_service
+    app_name = "app"
+    docs = [
+        {
+            "_id": MongoKeys.session(app_name, user_id, session_id),
+            "app_name": app_name,
+            "user_id": user_id,
+            "id": session_id,
+            "state": {},
+        }
+        for user_id, session_id in (("user1", "s1"), ("user2", "s2"))
+    ]
+    session_cursor = MagicMock()
+    session_cursor.to_list = AsyncMock(return_value=docs)
+    sessions_collection.find.return_value = session_cursor
+    user_cursor = MagicMock()
+    user_cursor.to_list = AsyncMock(
+        return_value=[
+            {
+                "_id": MongoKeys.user_state(app_name, user_id),
+                "state": {"value": user_id},
+            }
+            for user_id in ("user1", "user2")
+        ]
+    )
+    kv_collection.find.return_value = user_cursor
+    kv_collection.find_one.return_value = None
+
+    response = await service.list_sessions(app_name=app_name)
+
+    assert kv_collection.find.call_count == 1
+    assert [
+        session.state[State.USER_PREFIX + "value"]
+        for session in response.sessions
+    ] == [
+        "user1",
+        "user2",
+    ]

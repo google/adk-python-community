@@ -5,7 +5,7 @@ community `MongoSessionService`.
 
 ## Prerequisites
 
-- Python 3.9+ (Python 3.11+ recommended)
+- Python 3.10+ (Python 3.11+ recommended)
 - A running MongoDB instance (local or Atlas) and a connection string with
   create/read/write permissions
 - ADK and ADK Community installed
@@ -16,7 +16,7 @@ community `MongoSessionService`.
 ### 1. Install dependencies
 
 ```bash
-pip install google-adk google-adk-community python-dotenv
+ pip install "google-adk-community[mongo]" google-adk python-dotenv
 ```
 
 ### 2. Configure environment variables
