@@ -36,11 +36,13 @@ from google.adk_community.tools.spraay.constants import (
     BASE_CHAIN_ID,
     BASE_RPC_URL,
     ERC20_APPROVE_ABI,
+    MAX_FEE_BPS,
     MAX_RECIPIENTS,
     MAX_UINT256,
     SPRAAY_ABI,
     SPRAAY_CONTRACT_ADDRESS,
     SPRAAY_FEE_BPS,
+    ZERO_ADDRESS,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,9 +112,28 @@ def _validate_recipients(recipients: list[str]) -> list[str]:
     return checksummed
 
 
-def _calculate_fee(total_wei: int) -> int:
-    """Calculate the Spraay protocol fee (0.3%)."""
-    return (total_wei * SPRAAY_FEE_BPS) // 10000
+def _get_fee_bps(spraay_contract) -> int:
+    """Read the current protocol fee (basis points) from the contract.
+
+    The fee is owner-adjustable on-chain (capped at MAX_FEE_BPS), so it is
+    read live rather than hardcoded. Falls back to SPRAAY_FEE_BPS if the
+    read fails or returns an implausible value.
+    """
+    try:
+        fee_bps = spraay_contract.functions.feeBps().call()
+        if isinstance(fee_bps, int) and 0 <= fee_bps <= MAX_FEE_BPS:
+            return fee_bps
+    except Exception:  # pragma: no cover - network dependent
+        logger.warning(
+            "Could not read feeBps() from contract; falling back to %s bps.",
+            SPRAAY_FEE_BPS,
+        )
+    return SPRAAY_FEE_BPS
+
+
+def _calculate_fee(total_wei: int, fee_bps: int = SPRAAY_FEE_BPS) -> int:
+    """Calculate the Spraay protocol fee for a total amount."""
+    return (total_wei * fee_bps) // 10000
 
 
 def _verify_chain_id(w3) -> None:
@@ -168,29 +189,32 @@ def spraay_batch_eth(
         if amount_wei <= 0:
             return {"status": "error", "error": "Amount must be greater than 0."}
 
-        total_wei = amount_wei * len(checksummed)
-        fee_wei = _calculate_fee(total_wei)
-        total_with_fee = total_wei + fee_wei
-
         contract = w3.eth.contract(
             address=w3.to_checksum_address(contract_address),
             abi=SPRAAY_ABI,
         )
 
-        tx = contract.functions.spraayETH(
-            checksummed, amount_wei
+        total_wei = amount_wei * len(checksummed)
+        fee_wei = _calculate_fee(total_wei, _get_fee_bps(contract))
+        total_with_fee = total_wei + fee_wei
+
+        # sprayEqual with token=address(0) is the contract's native-ETH
+        # equal-amount path. msg.value must cover total + fee.
+        tx = contract.functions.sprayEqual(
+            ZERO_ADDRESS, checksummed, amount_wei
         ).build_transaction(
             {
                 "from": account.address,
                 "value": total_with_fee,
-                "nonce": w3.eth.get_transaction_count(account.address),
+                "nonce": w3.eth.get_transaction_count(account.address, "pending"),
                 "chainId": BASE_CHAIN_ID,
-                "gas": 0,  # Will be estimated
             }
         )
 
-        # Add 10% gas buffer to prevent 'out of gas' errors
-        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
+        # build_transaction estimates gas (no "gas" placeholder: some RPCs,
+        # including the default Base RPC, treat an explicit 0 as a hard cap
+        # and reject estimation). Add a 10% buffer to the estimate.
+        tx["gas"] = int(tx["gas"] * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -256,8 +280,10 @@ def spraay_batch_token(
         if amount_units <= 0:
             return {"status": "error", "error": "Amount must be greater than 0."}
 
+        spraay_contract = w3.eth.contract(address=spraay_addr, abi=SPRAAY_ABI)
+
         total_units = amount_units * len(checksummed)
-        fee_units = (total_units * SPRAAY_FEE_BPS) // 10000
+        fee_units = _calculate_fee(total_units, _get_fee_bps(spraay_contract))
         total_with_fee = total_units + fee_units
 
         result = {"approval_tx_hash": None}
@@ -274,13 +300,12 @@ def spraay_batch_token(
             ).build_transaction(
                 {
                     "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
+                    "nonce": w3.eth.get_transaction_count(account.address, "pending"),
                     "chainId": BASE_CHAIN_ID,
-                    "gas": 0,
                 }
             )
-            # Add 10% gas buffer
-            approve_tx["gas"] = int(w3.eth.estimate_gas(approve_tx) * 1.1)
+            # build_transaction estimated gas; add a 10% buffer.
+            approve_tx["gas"] = int(approve_tx["gas"] * 1.1)
             signed_approve = account.sign_transaction(approve_tx)
             approve_hash = w3.eth.send_raw_transaction(
                 signed_approve.raw_transaction
@@ -288,22 +313,22 @@ def spraay_batch_token(
             w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
             result["approval_tx_hash"] = approve_hash.hex()
 
-        # Execute batch transfer
-        spraay_contract = w3.eth.contract(address=spraay_addr, abi=SPRAAY_ABI)
-        nonce = w3.eth.get_transaction_count(account.address)
+        # Execute batch transfer. sprayEqual with a token address is the
+        # contract's ERC-20 equal-amount path; the contract pulls
+        # total + fee via transferFrom, so the allowance above covers it.
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
 
-        tx = spraay_contract.functions.spraayToken(
+        tx = spraay_contract.functions.sprayEqual(
             token_addr, checksummed, amount_units
         ).build_transaction(
             {
                 "from": account.address,
                 "nonce": nonce,
                 "chainId": BASE_CHAIN_ID,
-                "gas": 0,
             }
         )
-        # Add 10% gas buffer
-        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
+        # build_transaction estimated gas; add a 10% buffer.
+        tx["gas"] = int(tx["gas"] * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -370,28 +395,30 @@ def spraay_batch_eth_variable(
         if any(a <= 0 for a in amounts_wei):
             return {"status": "error", "error": "All amounts must be greater than 0."}
 
-        total_wei = sum(amounts_wei)
-        fee_wei = _calculate_fee(total_wei)
-        total_with_fee = total_wei + fee_wei
-
         contract = w3.eth.contract(
             address=w3.to_checksum_address(contract_address),
             abi=SPRAAY_ABI,
         )
 
-        tx = contract.functions.spraayETHVariable(
-            checksummed, amounts_wei
+        total_wei = sum(amounts_wei)
+        fee_wei = _calculate_fee(total_wei, _get_fee_bps(contract))
+        total_with_fee = total_wei + fee_wei
+
+        # sprayETH takes an array of Recipient structs: (address, amount).
+        recipient_structs = list(zip(checksummed, amounts_wei))
+
+        tx = contract.functions.sprayETH(
+            recipient_structs
         ).build_transaction(
             {
                 "from": account.address,
                 "value": total_with_fee,
-                "nonce": w3.eth.get_transaction_count(account.address),
+                "nonce": w3.eth.get_transaction_count(account.address, "pending"),
                 "chainId": BASE_CHAIN_ID,
-                "gas": 0,
             }
         )
-        # Add 10% gas buffer
-        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
+        # build_transaction estimated gas; add a 10% buffer.
+        tx["gas"] = int(tx["gas"] * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -464,8 +491,10 @@ def spraay_batch_token_variable(
         if any(a <= 0 for a in amounts_units):
             return {"status": "error", "error": "All amounts must be greater than 0."}
 
+        spraay_contract = w3.eth.contract(address=spraay_addr, abi=SPRAAY_ABI)
+
         total_units = sum(amounts_units)
-        fee_units = (total_units * SPRAAY_FEE_BPS) // 10000
+        fee_units = _calculate_fee(total_units, _get_fee_bps(spraay_contract))
         total_with_fee = total_units + fee_units
 
         result = {"approval_tx_hash": None}
@@ -482,13 +511,12 @@ def spraay_batch_token_variable(
             ).build_transaction(
                 {
                     "from": account.address,
-                    "nonce": w3.eth.get_transaction_count(account.address),
+                    "nonce": w3.eth.get_transaction_count(account.address, "pending"),
                     "chainId": BASE_CHAIN_ID,
-                    "gas": 0,
                 }
             )
-            # Add 10% gas buffer
-            approve_tx["gas"] = int(w3.eth.estimate_gas(approve_tx) * 1.1)
+            # build_transaction estimated gas; add a 10% buffer.
+            approve_tx["gas"] = int(approve_tx["gas"] * 1.1)
             signed_approve = account.sign_transaction(approve_tx)
             approve_hash = w3.eth.send_raw_transaction(
                 signed_approve.raw_transaction
@@ -496,22 +524,24 @@ def spraay_batch_token_variable(
             w3.eth.wait_for_transaction_receipt(approve_hash, timeout=120)
             result["approval_tx_hash"] = approve_hash.hex()
 
-        # Execute batch transfer
-        spraay_contract = w3.eth.contract(address=spraay_addr, abi=SPRAAY_ABI)
-        nonce = w3.eth.get_transaction_count(account.address)
+        # Execute batch transfer. sprayToken takes an array of Recipient
+        # structs: (address, amount). The contract pulls total + fee via
+        # transferFrom, so the allowance above covers it.
+        nonce = w3.eth.get_transaction_count(account.address, "pending")
 
-        tx = spraay_contract.functions.spraayTokenVariable(
-            token_addr, checksummed, amounts_units
+        recipient_structs = list(zip(checksummed, amounts_units))
+
+        tx = spraay_contract.functions.sprayToken(
+            token_addr, recipient_structs
         ).build_transaction(
             {
                 "from": account.address,
                 "nonce": nonce,
                 "chainId": BASE_CHAIN_ID,
-                "gas": 0,
             }
         )
-        # Add 10% gas buffer
-        tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.1)
+        # build_transaction estimated gas; add a 10% buffer.
+        tx["gas"] = int(tx["gas"] * 1.1)
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 

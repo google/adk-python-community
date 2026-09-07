@@ -17,63 +17,142 @@
 # Spraay contract on Base Mainnet
 SPRAAY_CONTRACT_ADDRESS = "0x1646452F98E36A3c9Cfc3eDD8868221E207B5eEC"
 
+# Sentinel address: sprayEqual uses address(0) as the token to send native ETH.
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
 # Base Mainnet chain configuration
 BASE_CHAIN_ID = 8453
 BASE_RPC_URL = "https://mainnet.base.org"
 
-# Protocol fee: 0.3%
-SPRAAY_FEE_BPS = 30  # basis points
+# Protocol fee fallback in basis points (30 = 0.3%). The contract's fee is
+# mutable by its owner (capped on-chain at 5%), so the live value is read
+# from feeBps() at call time; this constant is only used if that read fails.
+SPRAAY_FEE_BPS = 30
 
-# Maximum recipients per transaction
+# Maximum recipients per transaction (mirrors the contract's MAX_RECIPIENTS)
 MAX_RECIPIENTS = 200
+
+# On-chain fee cap in basis points (mirrors the contract's MAX_FEE_BPS = 5%)
+MAX_FEE_BPS = 500
 
 # ERC-20 max approval
 MAX_UINT256 = 2**256 - 1
 
-# Spraay contract ABI (relevant functions only)
+# SprayContract ABI (relevant functions only).
+# Copied verbatim from the verified source of
+# 0x1646452F98E36A3c9Cfc3eDD8868221E207B5eEC on Base (chain 8453), as
+# published on Sourcify. Do not hand-edit; regenerate from the verified ABI.
 SPRAAY_ABI = [
     {
-        "inputs": [
-            {"internalType": "address[]", "name": "_recipients", "type": "address[]"},
-            {"internalType": "uint256", "name": "_amount", "type": "uint256"},
-        ],
-        "name": "spraayETH",
-        "outputs": [],
-        "stateMutability": "payable",
+        "name": "sprayETH",
         "type": "function",
+        "inputs": [
+            {
+                "name": "recipients",
+                "type": "tuple[]",
+                "components": [
+                    {
+                        "name": "recipient",
+                        "type": "address",
+                        "internalType": "address payable"
+                    },
+                    {
+                        "name": "amount",
+                        "type": "uint256",
+                        "internalType": "uint256"
+                    }
+                ],
+                "internalType": "struct SprayContract.Recipient[]"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "payable"
     },
     {
-        "inputs": [
-            {"internalType": "address", "name": "_token", "type": "address"},
-            {"internalType": "address[]", "name": "_recipients", "type": "address[]"},
-            {"internalType": "uint256", "name": "_amount", "type": "uint256"},
-        ],
-        "name": "spraayToken",
-        "outputs": [],
-        "stateMutability": "nonpayable",
+        "name": "sprayToken",
         "type": "function",
+        "inputs": [
+            {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+            },
+            {
+                "name": "recipients",
+                "type": "tuple[]",
+                "components": [
+                    {
+                        "name": "recipient",
+                        "type": "address",
+                        "internalType": "address payable"
+                    },
+                    {
+                        "name": "amount",
+                        "type": "uint256",
+                        "internalType": "uint256"
+                    }
+                ],
+                "internalType": "struct SprayContract.Recipient[]"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
     },
     {
-        "inputs": [
-            {"internalType": "address[]", "name": "_recipients", "type": "address[]"},
-            {"internalType": "uint256[]", "name": "_amounts", "type": "uint256[]"},
-        ],
-        "name": "spraayETHVariable",
-        "outputs": [],
-        "stateMutability": "payable",
+        "name": "sprayEqual",
         "type": "function",
+        "inputs": [
+            {
+                "name": "token",
+                "type": "address",
+                "internalType": "address"
+            },
+            {
+                "name": "recipients",
+                "type": "address[]",
+                "internalType": "address payable[]"
+            },
+            {
+                "name": "amountPerRecipient",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "payable"
     },
     {
-        "inputs": [
-            {"internalType": "address", "name": "_token", "type": "address"},
-            {"internalType": "address[]", "name": "_recipients", "type": "address[]"},
-            {"internalType": "uint256[]", "name": "_amounts", "type": "uint256[]"},
-        ],
-        "name": "spraayTokenVariable",
-        "outputs": [],
-        "stateMutability": "nonpayable",
+        "name": "feeBps",
         "type": "function",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "stateMutability": "view"
     },
+    {
+        "name": "calculateTotalCost",
+        "type": "function",
+        "inputs": [
+            {
+                "name": "totalAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "stateMutability": "view"
+    }
 ]
 
 # ERC-20 approve ABI

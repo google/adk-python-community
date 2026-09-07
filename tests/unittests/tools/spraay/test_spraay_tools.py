@@ -21,12 +21,16 @@ from unittest.mock import MagicMock, patch
 from google.adk_community.tools.spraay import spraay_tools as spraay_module
 from google.adk_community.tools.spraay.constants import (
     BASE_CHAIN_ID,
+    MAX_FEE_BPS,
     MAX_RECIPIENTS,
+    SPRAAY_ABI,
     SPRAAY_CONTRACT_ADDRESS,
     SPRAAY_FEE_BPS,
+    ZERO_ADDRESS,
 )
 from google.adk_community.tools.spraay.spraay_tools import (
     _calculate_fee,
+    _get_fee_bps,
     _validate_recipients,
     spraay_batch_eth,
     spraay_batch_eth_variable,
@@ -200,6 +204,177 @@ class TestSpraayBatchTokenVariable(unittest.TestCase):
         )
         self.assertEqual(result["status"], "error")
         self.assertIn("SPRAAY_PRIVATE_KEY", result["error"])
+
+
+class TestAbiMatchesDeployedContract(unittest.TestCase):
+    """Regression tests pinning the ABI to the verified deployed contract.
+
+    The deployed SprayContract (0x1646452F98E36A3c9Cfc3eDD8868221E207B5eEC
+    on Base) exposes sprayETH/sprayToken (Recipient[] structs) and
+    sprayEqual. These tests fail if the ABI drifts from the verified
+    on-chain interface again.
+    """
+
+    def _fn(self, name):
+        matches = [e for e in SPRAAY_ABI if e.get("name") == name]
+        self.assertEqual(len(matches), 1, f"expected exactly one {name} in ABI")
+        return matches[0]
+
+    def test_abi_function_names(self):
+        """ABI must contain exactly the deployed payment + fee functions."""
+        names = {e["name"] for e in SPRAAY_ABI if e.get("type") == "function"}
+        self.assertEqual(
+            names,
+            {"sprayETH", "sprayToken", "sprayEqual", "feeBps",
+             "calculateTotalCost"},
+        )
+
+    def test_spray_eth_takes_recipient_structs(self):
+        """sprayETH takes a single Recipient[] (address, uint256) argument."""
+        fn = self._fn("sprayETH")
+        self.assertEqual(len(fn["inputs"]), 1)
+        arg = fn["inputs"][0]
+        self.assertEqual(arg["type"], "tuple[]")
+        self.assertEqual(
+            [(c["name"], c["type"]) for c in arg["components"]],
+            [("recipient", "address"), ("amount", "uint256")],
+        )
+        self.assertEqual(fn["stateMutability"], "payable")
+
+    def test_spray_token_takes_recipient_structs(self):
+        """sprayToken takes (address token, Recipient[] recipients)."""
+        fn = self._fn("sprayToken")
+        self.assertEqual(
+            [i["type"] for i in fn["inputs"]], ["address", "tuple[]"]
+        )
+
+    def test_spray_equal_signature(self):
+        """sprayEqual takes (address, address[], uint256) and is payable."""
+        fn = self._fn("sprayEqual")
+        self.assertEqual(
+            [i["type"] for i in fn["inputs"]],
+            ["address", "address[]", "uint256"],
+        )
+        self.assertEqual(fn["stateMutability"], "payable")
+
+
+class TestGetFeeBps(unittest.TestCase):
+    """Tests for the live fee read with fallback."""
+
+    def test_uses_onchain_value(self):
+        """A plausible on-chain feeBps value should be used."""
+        contract = MagicMock()
+        contract.functions.feeBps.return_value.call.return_value = 25
+        self.assertEqual(_get_fee_bps(contract), 25)
+
+    def test_fallback_on_error(self):
+        """RPC failure should fall back to SPRAAY_FEE_BPS."""
+        contract = MagicMock()
+        contract.functions.feeBps.return_value.call.side_effect = Exception(
+            "rpc down"
+        )
+        self.assertEqual(_get_fee_bps(contract), SPRAAY_FEE_BPS)
+
+    def test_fallback_on_implausible_value(self):
+        """Values above the on-chain MAX_FEE_BPS cap should be rejected."""
+        contract = MagicMock()
+        contract.functions.feeBps.return_value.call.return_value = (
+            MAX_FEE_BPS + 1
+        )
+        self.assertEqual(_get_fee_bps(contract), SPRAAY_FEE_BPS)
+
+
+class TestCallConstruction(unittest.TestCase):
+    """Tests that tools build calls against the deployed function names."""
+
+    def _mock_w3(self):
+        mock_w3 = _make_mock_w3()
+        mock_w3.to_wei.side_effect = lambda x, _: int(float(str(x)) * 10**18)
+        mock_w3.from_wei.side_effect = lambda x, _: x / 10**18
+        mock_w3.to_checksum_address.side_effect = lambda x: x
+        mock_w3.eth.get_transaction_count.return_value = 1
+        mock_w3.eth.estimate_gas.return_value = 100_000
+        tx_hash = MagicMock()
+        tx_hash.hex.return_value = "0xabc"
+        mock_w3.eth.send_raw_transaction.return_value = tx_hash
+        return mock_w3
+
+    def _contract(self, mock_w3):
+        contract = MagicMock()
+        contract.functions.feeBps.return_value.call.return_value = 30
+        for fn in ("sprayEqual", "sprayETH", "sprayToken"):
+            getattr(
+                contract.functions, fn
+            ).return_value.build_transaction.return_value = {"gas": 100_000}
+        mock_w3.eth.contract.return_value = contract
+        return contract
+
+    @patch.object(spraay_module, "_validate_recipients")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
+    def test_equal_eth_uses_spray_equal_with_zero_address(
+        self, mock_web3, mock_account, mock_validate
+    ):
+        """Equal ETH sends must call sprayEqual(address(0), ...)."""
+        mock_w3 = self._mock_w3()
+        contract = self._contract(mock_w3)
+        mock_web3.return_value = mock_w3
+        mock_account.return_value = MagicMock()
+        mock_validate.return_value = [ADDR_1, ADDR_2]
+
+        result = spraay_batch_eth([ADDR_1, ADDR_2], "0.01")
+
+        self.assertEqual(result["status"], "success")
+        args = contract.functions.sprayEqual.call_args[0]
+        self.assertEqual(args[0], ZERO_ADDRESS)
+        self.assertEqual(args[1], [ADDR_1, ADDR_2])
+        self.assertEqual(args[2], 10**16)
+
+    @patch.object(spraay_module, "_validate_recipients")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
+    def test_variable_eth_uses_spray_eth_structs(
+        self, mock_web3, mock_account, mock_validate
+    ):
+        """Variable ETH sends must call sprayETH with (address, amount) structs."""
+        mock_w3 = self._mock_w3()
+        contract = self._contract(mock_w3)
+        mock_web3.return_value = mock_w3
+        mock_account.return_value = MagicMock()
+        mock_validate.return_value = [ADDR_1, ADDR_2]
+
+        result = spraay_batch_eth_variable([ADDR_1, ADDR_2], ["0.1", "0.25"])
+
+        self.assertEqual(result["status"], "success")
+        (structs,) = contract.functions.sprayETH.call_args[0]
+        self.assertEqual(
+            structs,
+            [(ADDR_1, 10**17), (ADDR_2, 25 * 10**16)],
+        )
+
+    @patch.object(spraay_module, "_validate_recipients")
+    @patch.object(spraay_module, "_get_account")
+    @patch.object(spraay_module, "_get_web3")
+    def test_variable_token_uses_spray_token_structs(
+        self, mock_web3, mock_account, mock_validate
+    ):
+        """Variable token sends must call sprayToken with structs."""
+        mock_w3 = self._mock_w3()
+        contract = self._contract(mock_w3)
+        # allowance already sufficient -> no approval tx
+        contract.functions.allowance.return_value.call.return_value = 2**255
+        mock_web3.return_value = mock_w3
+        mock_account.return_value = MagicMock()
+        mock_validate.return_value = [ADDR_1]
+
+        result = spraay_batch_token_variable(
+            TOKEN_ADDR, [ADDR_1], ["10"], token_decimals=6
+        )
+
+        self.assertEqual(result["status"], "success")
+        token_arg, structs = contract.functions.sprayToken.call_args[0]
+        self.assertEqual(token_arg, TOKEN_ADDR)
+        self.assertEqual(structs, [(ADDR_1, 10_000_000)])
 
 
 class TestConstants(unittest.TestCase):
