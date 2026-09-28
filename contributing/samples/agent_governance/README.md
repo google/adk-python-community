@@ -7,7 +7,7 @@ An ADK plugin that enforces policy-as-code rules before tool execution using the
 ## Install
 
 ```bash
-pip install google-adk-community agentmesh-platform
+pip install google-adk-community agent-governance-toolkit-core
 ```
 
 ## Usage
@@ -57,7 +57,7 @@ contract). Allowed calls return `None`, letting the tool proceed normally.
 
 ## Fail-closed by default
 
-If `agentmesh-platform` is not installed, the plugin raises `ImportError`
+If `agent-governance-toolkit-core` is not installed, the plugin raises `ImportError`
 at construction time. Pass `fail_open=True` to degrade gracefully instead
 (all calls pass through with a logged warning).
 

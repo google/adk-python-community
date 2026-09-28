@@ -14,7 +14,7 @@
 
 """Tests for AgentGovernancePlugin.
 
-These tests mock the agentmesh-platform dependency so they run without
+These tests mock the agent-governance-toolkit-core dependency so they run without
 it installed, verifying the plugin's integration with the ADK plugin API.
 """
 
@@ -34,7 +34,7 @@ from google.adk_community.plugins.agent_governance_plugin import (
 
 
 # ---------------------------------------------------------------------------
-# Mock fixtures for agentmesh-platform
+# Mock fixtures for agent-governance-toolkit-core
 # ---------------------------------------------------------------------------
 
 
@@ -169,19 +169,34 @@ default_action: allow
     return policies
 
 
+@pytest.fixture()
+def block_agentmesh():
+    """Make every agentmesh import fail, even if the package is installed."""
+    with patch.dict(sys.modules):
+        _uninstall_fake_agentmesh()
+        # A None parent makes agentmesh and all of its submodules unimportable.
+        sys.modules["agentmesh"] = None
+        yield
+
+
 class TestAgentGovernancePlugin:
     """Tests for AgentGovernancePlugin construction and behavior."""
 
+    @pytest.mark.usefixtures("block_agentmesh")
     def test_raises_import_error_when_agentmesh_missing(self, tmp_path: Path):
-        """Plugin raises ImportError by default when agentmesh is missing."""
-        # Simulate agentmesh not being importable by patching _setup
-        with patch.object(
-            AgentGovernancePlugin,
-            "_setup",
-            side_effect=ImportError("agentmesh-platform is required"),
+        """Plugin raises ImportError naming the package to install."""
+        with pytest.raises(
+            ImportError, match="pip install agent-governance-toolkit-core"
         ):
-            with pytest.raises(ImportError, match="agentmesh-platform"):
-                AgentGovernancePlugin(policy_dir=tmp_path)
+            AgentGovernancePlugin(policy_dir=tmp_path)
+
+    @pytest.mark.usefixtures("block_agentmesh")
+    def test_fail_open_warns_with_install_hint_when_agentmesh_missing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ):
+        """With fail_open=True, the warning names the package to install."""
+        AgentGovernancePlugin(policy_dir=tmp_path, fail_open=True)
+        assert "pip install agent-governance-toolkit-core" in caplog.text
 
     def test_fail_open_mode_allows_construction(self, tmp_path: Path):
         """With fail_open=True, plugin degrades when engine returns no policies."""
