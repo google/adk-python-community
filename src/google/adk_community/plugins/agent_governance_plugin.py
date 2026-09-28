@@ -18,7 +18,7 @@ Evaluates policy-as-code rules before tool execution using the Agent
 Governance Toolkit (https://github.com/microsoft/agent-governance-toolkit).
 Denied tool calls are short-circuited with a policy violation response.
 
-Requires: ``pip install agentmesh-platform``
+Requires: ``pip install agent-governance-toolkit-core``
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 class _GovernanceUnavailableError(ImportError):
-    """Raised when agentmesh-platform is not installed and fail_open=False."""
+    """Raised when agent-governance-toolkit-core is not installed and fail_open=False."""
 
 
 class AgentGovernancePlugin(BasePlugin):
@@ -52,7 +52,7 @@ class AgentGovernancePlugin(BasePlugin):
             ``*.yaml`` policy files. Resolved relative to the caller's
             working directory. Must be provided explicitly.
         agent_did: Decentralized identifier for the agent.
-        fail_open: If ``True``, tool calls proceed when ``agentmesh-platform``
+        fail_open: If ``True``, tool calls proceed when ``agent-governance-toolkit-core``
             is not installed (logs a warning). If ``False`` (default), raises
             ``ImportError`` at construction time.
         strict: If ``True``, raises on policy load errors instead of
@@ -61,7 +61,7 @@ class AgentGovernancePlugin(BasePlugin):
             Defaults to ``False``.
 
     Raises:
-        ImportError: If ``agentmesh-platform`` is not installed and
+        ImportError: If ``agent-governance-toolkit-core`` is not installed and
             ``fail_open`` is False.
         RuntimeError: If ``strict`` is True and a policy file fails to load.
 
@@ -122,12 +122,12 @@ class AgentGovernancePlugin(BasePlugin):
         except ImportError:
             if not fail_open:
                 raise _GovernanceUnavailableError(
-                    "agentmesh-platform is required for governance enforcement. "
-                    "Install with: pip install agentmesh-platform"
+                    "agent-governance-toolkit-core is required for governance enforcement. "
+                    "Install with: pip install agent-governance-toolkit-core"
                 )
             logger.warning(
-                "agentmesh-platform not installed; governance checks disabled. "
-                "Install with: pip install agentmesh-platform"
+                "agent-governance-toolkit-core not installed; governance checks disabled. "
+                "Install with: pip install agent-governance-toolkit-core"
             )
 
     async def before_tool_callback(
