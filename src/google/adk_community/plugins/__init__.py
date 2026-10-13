@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from google.adk_community.plugins.agent_governance_plugin import (
-    AgentGovernancePlugin,
-)
-from google.adk_community.plugins.taxonomy import (
-    DefaultSkillPolicy,
-    SkillPolicy,
-    TaxonomyPipeline,
-    TaxonomyPlugin,
-    TaxonomyRegistry,
-    TaxonomyResolver,
-    TaxonomyTerm,
-)
+from google.adk_community.plugins.agent_governance_plugin import AgentGovernancePlugin
+from google.adk_community.plugins.taxonomy import DefaultSkillPolicy
+from google.adk_community.plugins.taxonomy import SkillPolicy
+from google.adk_community.plugins.taxonomy import TaxonomyPipeline
+from google.adk_community.plugins.taxonomy import TaxonomyPlugin
+from google.adk_community.plugins.taxonomy import TaxonomyRegistry
+from google.adk_community.plugins.taxonomy import TaxonomyResolver
+from google.adk_community.plugins.taxonomy import TaxonomyTerm
+from google.adk_community.plugins.vaid_identity_plugin import VaidIdentityPlugin
 
 __all__ = [
     "AgentGovernancePlugin",
@@ -34,4 +31,5 @@ __all__ = [
     "TaxonomyRegistry",
     "TaxonomyResolver",
     "TaxonomyTerm",
+    "VaidIdentityPlugin",
 ]
