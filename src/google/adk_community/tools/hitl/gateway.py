@@ -141,7 +141,7 @@ async def _poll_for_decision(
             data = resp.json()
             if data["status"] != "pending":
                 return data
-            await asyncio.sleep(POLL_INTERVAL_S + random.uniform(0, POLL_JITTER_S))
+            await asyncio.sleep(interval + random.uniform(0, POLL_JITTER_S))
     return None
 
 

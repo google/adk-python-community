@@ -113,3 +113,40 @@ async def test_escalated_tool_raises(mock_client_cls):
 
     with pytest.raises(PermissionError, match="escalated"):
         await wire_transfer(10000.0)
+
+
+@pytest.mark.asyncio
+@patch("google.adk_community.tools.hitl.gateway.random.uniform", return_value=0.0)
+@patch("google.adk_community.tools.hitl.gateway.asyncio.sleep", new_callable=AsyncMock)
+@patch("google.adk_community.tools.hitl.gateway.httpx.AsyncClient")
+async def test_custom_poll_interval_used_while_pending(
+    mock_client_cls, mock_sleep, _mock_uniform
+):
+    mock_client = _make_mock_client("approved")
+    pending_resp = MagicMock()
+    pending_resp.json.return_value = {"id": "abc-123", "status": "pending"}
+    approved_resp = MagicMock()
+    approved_resp.json.return_value = {"id": "abc-123", "status": "approved"}
+    mock_client.get.side_effect = [pending_resp, approved_resp]
+    mock_client_cls.return_value = mock_client
+
+    @hitl_tool(agent_name="test_agent", poll_interval=0.25)
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    result = await add(2, 3)
+    assert result["action_result"] == 5
+    mock_sleep.assert_awaited_once_with(0.25)
+
+
+@pytest.mark.asyncio
+@patch("google.adk_community.tools.hitl.gateway.httpx.AsyncClient")
+async def test_timeout_raises_timeout_error(mock_client_cls):
+    mock_client_cls.return_value = _make_mock_client("pending")
+
+    @hitl_tool(agent_name="test_agent", timeout=0.0)
+    def slow_action() -> str:
+        return "done"
+
+    with pytest.raises(TimeoutError, match="No decision received"):
+        await slow_action()
