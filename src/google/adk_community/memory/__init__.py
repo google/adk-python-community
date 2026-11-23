@@ -16,9 +16,13 @@
 
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
+from .valkey_memory_service import ValkeyMemoryService
+from .valkey_memory_service import ValkeyMemoryServiceConfig
 
 __all__ = [
     "OpenMemoryService",
     "OpenMemoryServiceConfig",
+    "ValkeyMemoryService",
+    "ValkeyMemoryServiceConfig",
 ]
 
