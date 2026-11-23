@@ -53,7 +53,7 @@ spraay = ["web3>=6.0.0"]
 hitl = [
     "aiosqlite>=0.20.0",
     "fastapi>=0.110.0",
-    "sqlalchemy>=2.0.0",
+    "sqlalchemy[asyncio]>=2.0.0",
 ]
 
 
