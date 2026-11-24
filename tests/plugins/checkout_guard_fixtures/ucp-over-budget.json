@@ -1,0 +1,81 @@
+{
+  "name": "ucp-over-budget",
+  "story": "The total is over the shopper's ceiling.",
+  "format": "ucp",
+  "merchant": "shop.example",
+  "mandate": {
+    "max_total": 3000,
+    "currency": "USD",
+    "items": [
+      {
+        "match": "coffee beans",
+        "max_quantity": 1
+      }
+    ]
+  },
+  "expect": {
+    "decision": "block",
+    "rules": [
+      "FP101"
+    ]
+  },
+  "checkout": {
+    "id": "chk_demo",
+    "status": "ready_for_complete",
+    "currency": "USD",
+    "line_items": [
+      {
+        "id": "line_1",
+        "item": {
+          "id": "BEAN-2LB",
+          "title": "Single-origin coffee beans, 2 lb",
+          "price": {
+            "amount": 3600,
+            "currency": "USD"
+          }
+        },
+        "quantity": 1,
+        "totals": [
+          {
+            "type": "subtotal",
+            "amount": 3600
+          },
+          {
+            "type": "total",
+            "amount": 3600
+          }
+        ]
+      }
+    ],
+    "totals": [
+      {
+        "type": "subtotal",
+        "display_text": "Subtotal",
+        "amount": 3600
+      },
+      {
+        "type": "fulfillment",
+        "display_text": "Shipping",
+        "amount": 0
+      },
+      {
+        "type": "tax",
+        "display_text": "Tax",
+        "amount": 297
+      },
+      {
+        "type": "total",
+        "display_text": "Total",
+        "amount": 3897
+      }
+    ],
+    "messages": [],
+    "links": [
+      {
+        "type": "terms_of_service",
+        "url": "https://beans.example/terms"
+      }
+    ],
+    "expires_at": "2026-11-22T18:00:00Z"
+  }
+}

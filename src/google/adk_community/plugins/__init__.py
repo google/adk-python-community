@@ -15,6 +15,8 @@
 from google.adk_community.plugins.agent_governance_plugin import (
     AgentGovernancePlugin,
 )
+from google.adk_community.plugins.checkout_guard import CheckoutGuardPlugin
+from google.adk_community.plugins.checkout_guard import ShopperMandate
 from google.adk_community.plugins.taxonomy import (
     DefaultSkillPolicy,
     SkillPolicy,
@@ -27,7 +29,9 @@ from google.adk_community.plugins.taxonomy import (
 
 __all__ = [
     "AgentGovernancePlugin",
+    "CheckoutGuardPlugin",
     "DefaultSkillPolicy",
+    "ShopperMandate",
     "SkillPolicy",
     "TaxonomyPipeline",
     "TaxonomyPlugin",
