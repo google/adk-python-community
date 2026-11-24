@@ -1,0 +1,107 @@
+{
+  "name": "ucp-trial-without-cancel-terms",
+  "story": "The shopper asked for a membership. It starts free, converts to paid, and no cancellation terms are given.",
+  "format": "ucp",
+  "merchant": "shop.example",
+  "mandate": {
+    "max_total": 2000,
+    "currency": "USD",
+    "allow_recurring": true,
+    "items": [
+      {
+        "match": "membership"
+      }
+    ]
+  },
+  "expect": {
+    "decision": "confirm",
+    "rules": [
+      "FP204",
+      "FP205"
+    ]
+  },
+  "checkout": {
+    "id": "chk_demo",
+    "status": "ready_for_complete",
+    "currency": "USD",
+    "line_items": [
+      {
+        "id": "line_1",
+        "item": {
+          "id": "BEAN-2LB",
+          "title": "Streaming membership",
+          "price": {
+            "amount": 0,
+            "currency": "USD"
+          }
+        },
+        "quantity": 1,
+        "totals": [
+          {
+            "type": "subtotal",
+            "amount": 0
+          },
+          {
+            "type": "total",
+            "amount": 0
+          }
+        ],
+        "purchase_options": [
+          {
+            "id": "trial",
+            "title": "Try free for 7 days",
+            "price": {
+              "amount": 0,
+              "currency": "USD"
+            },
+            "schedules": [
+              {
+                "description": {
+                  "plain": "$12.99 every month after your trial."
+                },
+                "totals": [
+                  {
+                    "type": "total",
+                    "amount": 1299
+                  }
+                ],
+                "interval": "P1M",
+                "starts_at": "2026-11-29T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "totals": [
+      {
+        "type": "subtotal",
+        "display_text": "Subtotal",
+        "amount": 0
+      },
+      {
+        "type": "fulfillment",
+        "display_text": "Shipping",
+        "amount": 0
+      },
+      {
+        "type": "tax",
+        "display_text": "Tax",
+        "amount": 0
+      },
+      {
+        "type": "total",
+        "display_text": "Total",
+        "amount": 0
+      }
+    ],
+    "messages": [],
+    "links": [
+      {
+        "type": "terms_of_service",
+        "url": "https://beans.example/terms"
+      }
+    ],
+    "expires_at": "2026-11-22T18:00:00Z"
+  }
+}

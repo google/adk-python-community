@@ -1,0 +1,134 @@
+{
+  "name": "ucp-subscription-by-default",
+  "story": "Subscribe & save is listed first, so it becomes the default when the agent does not pick an option.",
+  "format": "ucp",
+  "merchant": "shop.example",
+  "mandate": {
+    "max_total": 3000,
+    "currency": "USD",
+    "items": [
+      {
+        "match": "coffee beans",
+        "max_quantity": 1
+      }
+    ]
+  },
+  "expect": {
+    "decision": "block",
+    "rules": [
+      "FP201",
+      "FP203"
+    ]
+  },
+  "expect_fix": {
+    "line_item_id": "line_1",
+    "selected_purchase_option_id": "one-time"
+  },
+  "checkout": {
+    "id": "chk_demo",
+    "status": "ready_for_complete",
+    "currency": "USD",
+    "line_items": [
+      {
+        "id": "line_1",
+        "item": {
+          "id": "BEAN-2LB",
+          "title": "Single-origin coffee beans, 2 lb",
+          "price": {
+            "amount": 1530,
+            "currency": "USD"
+          }
+        },
+        "quantity": 1,
+        "totals": [
+          {
+            "type": "subtotal",
+            "amount": 1530
+          },
+          {
+            "type": "total",
+            "amount": 1530
+          }
+        ],
+        "purchase_options": [
+          {
+            "id": "sub-monthly",
+            "title": "Subscribe & save 15%",
+            "description": {
+              "plain": "A fresh 2 lb bag every month, 15% off."
+            },
+            "price": {
+              "amount": 1530,
+              "currency": "USD"
+            },
+            "schedules": [
+              {
+                "description": {
+                  "plain": "$15.30 every month from 22 Dec 2026 until you cancel."
+                },
+                "totals": [
+                  {
+                    "type": "total",
+                    "amount": 1530
+                  }
+                ],
+                "interval": "P1M",
+                "starts_at": "2026-12-22T00:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "one-time",
+            "title": "One-time purchase",
+            "price": {
+              "amount": 1800,
+              "currency": "USD"
+            }
+          }
+        ]
+      }
+    ],
+    "totals": [
+      {
+        "type": "subtotal",
+        "display_text": "Subtotal",
+        "amount": 1530
+      },
+      {
+        "type": "fulfillment",
+        "display_text": "Shipping",
+        "amount": 0
+      },
+      {
+        "type": "tax",
+        "display_text": "Tax",
+        "amount": 0
+      },
+      {
+        "type": "total",
+        "display_text": "Total",
+        "amount": 1530
+      }
+    ],
+    "messages": [],
+    "links": [
+      {
+        "type": "terms_of_service",
+        "url": "https://beans.example/terms"
+      }
+    ],
+    "expires_at": "2026-11-22T18:00:00Z",
+    "policies": [
+      {
+        "type": "dev.ucp.shopping.policy.subscription",
+        "description": {
+          "plain": "Cancel anytime from your account page before the next order ships."
+        },
+        "applies_to": [
+          "$.line_items[0]"
+        ],
+        "url": "https://beans.example/account/subscriptions"
+      }
+    ]
+  }
+}

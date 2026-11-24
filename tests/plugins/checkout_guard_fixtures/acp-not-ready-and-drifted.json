@@ -1,0 +1,120 @@
+{
+  "name": "acp-not-ready-and-drifted",
+  "story": "The shopper approved $102.89. The session is not ready yet and now says $107.89.",
+  "format": "acp",
+  "merchant": "shop.example",
+  "mandate": {
+    "max_total": 12000,
+    "currency": "USD",
+    "items": [
+      {
+        "match": "grinder",
+        "max_quantity": 1
+      }
+    ],
+    "ship_to_postal_code": "94110",
+    "advertised_price": 8900,
+    "approved_total": 10289
+  },
+  "expect": {
+    "decision": "confirm",
+    "rules": [
+      "FP102",
+      "FP103"
+    ]
+  },
+  "checkout": {
+    "id": "cs_demo",
+    "status": "not_ready_for_payment",
+    "currency": "usd",
+    "line_items": [
+      {
+        "id": "li_1",
+        "item": {
+          "id": "GRND-200"
+        },
+        "quantity": 1,
+        "name": "Burr Coffee Grinder",
+        "unit_amount": 8900,
+        "sku": "GRND-200",
+        "totals": [
+          {
+            "type": "subtotal",
+            "display_text": "Subtotal",
+            "amount": 8900
+          },
+          {
+            "type": "total",
+            "display_text": "Total",
+            "amount": 8900
+          }
+        ]
+      }
+    ],
+    "fulfillment_details": {
+      "name": "Test Shopper",
+      "address": {
+        "name": "Test Shopper",
+        "line_one": "1 Market St",
+        "city": "San Francisco",
+        "state": "CA",
+        "country": "US",
+        "postal_code": "94110"
+      }
+    },
+    "fulfillment_options": [
+      {
+        "type": "shipping",
+        "id": "ship_std",
+        "title": "Standard",
+        "totals": [
+          {
+            "type": "total",
+            "display_text": "Shipping",
+            "amount": 1099
+          }
+        ]
+      }
+    ],
+    "selected_fulfillment_options": [
+      {
+        "type": "shipping",
+        "option_id": "ship_std",
+        "item_ids": [
+          "li_1"
+        ]
+      }
+    ],
+    "totals": [
+      {
+        "type": "subtotal",
+        "display_text": "Subtotal",
+        "amount": 8900
+      },
+      {
+        "type": "fulfillment",
+        "display_text": "Standard shipping",
+        "amount": 1099
+      },
+      {
+        "type": "tax",
+        "display_text": "Sales tax",
+        "amount": 790
+      },
+      {
+        "type": "total",
+        "display_text": "Total",
+        "amount": 10789
+      }
+    ],
+    "messages": [],
+    "links": [
+      {
+        "type": "terms_of_use",
+        "url": "https://shop.example/terms"
+      }
+    ],
+    "capabilities": {},
+    "expires_at": "2026-11-22T18:00:00Z"
+  }
+}
