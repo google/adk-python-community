@@ -16,9 +16,12 @@
 
 from .open_memory_service import OpenMemoryService
 from .open_memory_service import OpenMemoryServiceConfig
+from .qdrant_memory_service import QdrantMemoryService
+from .qdrant_memory_service import QdrantMemoryServiceConfig
 
 __all__ = [
     "OpenMemoryService",
     "OpenMemoryServiceConfig",
+    "QdrantMemoryService",
+    "QdrantMemoryServiceConfig",
 ]
-
