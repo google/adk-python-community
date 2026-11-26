@@ -36,5 +36,5 @@ jobs:
       - name: Run unit tests with pytest
         run: |
           source .venv/bin/activate
-          # Run all tests in the tests/unittests directory
-          pytest tests/unittests
+          # Use the test paths configured in pyproject.toml.
+          pytest
