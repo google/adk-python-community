@@ -6,9 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         # Test against all Python versions supported in pyproject.toml
